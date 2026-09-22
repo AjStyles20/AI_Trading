@@ -63,7 +63,7 @@ def test_invalid_quantity_and_price_are_rejected():
 
 
 def test_rejects_sell_larger_than_current_position():
-    decision = risk_engine.evaluate_order(
+    decision = RiskEngine().evaluate_order(
         side="SELL", qty=2, price=100, execution_mode="paper",
         settings={"risk_max_order_notional": 1000},
         current_position_qty=1,
