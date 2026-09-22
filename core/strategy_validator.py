@@ -1,27 +1,14 @@
 from typing import Any, Dict, List
 
 import pandas as pd
+from core.safe_strategy_runtime import safe_strategy_runtime
 
 
 class StrategyValidator:
     def validate(self, strategy_code: str, df: pd.DataFrame) -> Dict[str, Any]:
         warnings: List[str] = []
-        local_scope = {"df": df.copy(), "pd": pd}
-
         try:
-            exec(strategy_code, {}, local_scope)
-        except Exception as exc:
-            return {
-                "valid": False,
-                "warnings": warnings,
-                "errors": [f"Python execution failed: {exc}"],
-            }
-
-        try:
-            if "strategy" in local_scope:
-                result_df = local_scope["strategy"](df.copy())
-            else:
-                result_df = local_scope.get("df")
+            result_df = safe_strategy_runtime.execute(strategy_code, df)
         except Exception as exc:
             return {
                 "valid": False,
