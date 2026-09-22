@@ -129,12 +129,25 @@ class LiveTradingManager:
                         asset_type=asset_type,
                         metadata={"interval": interval},
                     )
+                    account = broker.get_account_summary(settings, execution_mode)
+                    account_equity = account.get("equity")
+                    current_position_qty = None
+                    positions = account.get("positions", [])
+                    for position in positions:
+                        if position.get("symbol") == symbol:
+                            current_position_qty = float(position.get("qty", 0.0))
+                            break
+                    if current_position_qty is None and broker_id == "paper":
+                        current_position_qty = 0.0
+
                     risk = risk_engine.evaluate_order(
                         side=order.side,
                         qty=order.qty,
                         price=order.price,
                         execution_mode=execution_mode,
                         settings=settings,
+                        current_position_qty=current_position_qty,
+                        account_equity=float(account_equity) if account_equity is not None else None,
                     )
                     if not risk.approved:
                         self.log(f"RISK BLOCKED ORDER: {'; '.join(risk.reasons)}")
