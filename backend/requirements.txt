@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+langchain
+langchain-openai
+langchain-core
+pydantic
+chromadb
+pandas
+numpy
