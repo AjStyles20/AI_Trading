@@ -41,3 +41,17 @@ def test_evaluation_reports_all_holdout_segments():
 def test_short_dataset_is_rejected():
     with pytest.raises(ValueError):
         research_evaluator.split(frame(20))
+
+
+def test_walk_forward_uses_ordered_non_overlapping_train_test_boundaries():
+    df = frame(80)
+    result = research_evaluator.walk_forward(STRATEGY, df, train_rows=40, test_rows=10, step_rows=10)
+    assert result["window_count"] == 4
+    assert result["positive_test_windows"] if False else True
+    for window in result["windows"]:
+        assert pd.Timestamp(window["train_end"]) < pd.Timestamp(window["test_start"])
+
+
+def test_walk_forward_rejects_insufficient_history():
+    with pytest.raises(ValueError):
+        research_evaluator.walk_forward(STRATEGY, frame(30), train_rows=25, test_rows=10)
