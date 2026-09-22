@@ -39,6 +39,8 @@ class RiskEngine:
         settings: Dict[str, Any] | None = None,
         current_position_qty: float | None = None,
         account_equity: float | None = None,
+        day_start_equity: float | None = None,
+        peak_equity: float | None = None,
     ) -> RiskDecision:
         settings = settings or {}
         reasons: List[str] = []
@@ -82,6 +84,28 @@ class RiskEngine:
                         f"{max_position_pct:.2f}% per-position equity limit "
                         f"({max_position_notional:.2f})."
                     )
+
+        max_daily_loss_pct = float(settings.get("risk_max_daily_loss_pct", 3.0))
+        if not 0 < max_daily_loss_pct <= 100:
+            reasons.append("risk_max_daily_loss_pct must be between 0 and 100.")
+        elif account_equity is not None and day_start_equity is not None and day_start_equity > 0:
+            daily_loss_pct = max(0.0, (day_start_equity - account_equity) / day_start_equity * 100.0)
+            if daily_loss_pct >= max_daily_loss_pct:
+                reasons.append(
+                    f"Daily loss {daily_loss_pct:.2f}% reached configured limit "
+                    f"{max_daily_loss_pct:.2f}%."
+                )
+
+        max_drawdown_pct = float(settings.get("risk_max_drawdown_pct", 10.0))
+        if not 0 < max_drawdown_pct <= 100:
+            reasons.append("risk_max_drawdown_pct must be between 0 and 100.")
+        elif account_equity is not None and peak_equity is not None and peak_equity > 0:
+            drawdown_pct = max(0.0, (peak_equity - account_equity) / peak_equity * 100.0)
+            if drawdown_pct >= max_drawdown_pct:
+                reasons.append(
+                    f"Account drawdown {drawdown_pct:.2f}% reached configured limit "
+                    f"{max_drawdown_pct:.2f}%."
+                )
 
         if execution_mode == "live":
             live_enabled = bool(settings.get("risk_live_trading_enabled", False))
