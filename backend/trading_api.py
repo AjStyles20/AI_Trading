@@ -122,16 +122,19 @@ class LiveTradingManager:
                     self.log(f"SIGNAL DETECTED: {signal} at ${last_price}")
 
                     settings = get_settings() or {}
+                    account_equity, current_position_qty = get_risk_context(
+                        broker, symbol, settings, execution_mode, broker_id
+                    )
+                    order_qty = resolve_strategy_quantity(
+                        result_df, signal, last_price, account_equity, current_position_qty
+                    )
                     order = BrokerOrder(
                         symbol=symbol,
                         side=signal,
-                        qty=1.0,
+                        qty=order_qty,
                         price=last_price,
                         asset_type=asset_type,
                         metadata={"interval": interval},
-                    )
-                    account_equity, current_position_qty = get_risk_context(
-                        broker, symbol, settings, execution_mode, broker_id
                     )
 
                     risk = risk_engine.evaluate_order(
@@ -226,6 +229,31 @@ def get_risk_context(broker, symbol: str, settings: Dict[str, Any], execution_mo
         raise ValueError(f"Live risk validation requires position state for {symbol}.")
 
     return account_equity, current_position_qty
+
+
+def resolve_strategy_quantity(result_df, signal: str, price: float, account_equity: float | None, current_position_qty: float | None) -> float:
+    """Translate strategy position_size_pct into an executable quantity."""
+    if signal == "SELL":
+        if current_position_qty is None or current_position_qty <= 0:
+            return 0.0
+        return float(current_position_qty)
+
+    if account_equity is None or account_equity <= 0:
+        return 0.0
+
+    position_size_pct = 10.0
+    if "position_size_pct" in result_df.columns:
+        raw_pct = result_df.iloc[-1]["position_size_pct"]
+        try:
+            position_size_pct = float(raw_pct)
+        except (TypeError, ValueError):
+            return 0.0
+
+    if not 0 < position_size_pct <= 100:
+        return 0.0
+
+    target_notional = account_equity * (position_size_pct / 100.0)
+    return target_notional / price if price > 0 else 0.0
 
 
 def resolve_market_price(symbol: str, asset_type: str) -> float:
