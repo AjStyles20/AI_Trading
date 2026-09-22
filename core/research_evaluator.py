@@ -76,6 +76,64 @@ class ResearchEvaluator:
             )
             output["segments"][name] = metrics
         return output
+    def walk_forward(
+        self,
+        strategy_code: str,
+        df: pd.DataFrame,
+        train_rows: int,
+        test_rows: int,
+        step_rows: int | None = None,
+        initial_balance: float = 10000.0,
+        fee_pct: float = 0.1,
+        slippage_pct: float = 0.05,
+    ) -> Dict[str, Any]:
+        if train_rows < 20 or test_rows < 5:
+            raise ValueError("Walk-forward requires train_rows >= 20 and test_rows >= 5.")
+        step = step_rows or test_rows
+        if step < 1:
+            raise ValueError("step_rows must be positive.")
+        if len(df) < train_rows + test_rows:
+            raise ValueError("Dataset is too short for one complete walk-forward window.")
+
+        windows = []
+        start = 0
+        window_id = 1
+        while start + train_rows + test_rows <= len(df):
+            train = df.iloc[start:start + train_rows].copy()
+            test = df.iloc[start + train_rows:start + train_rows + test_rows].copy()
+            test_signals = safe_strategy_runtime.execute(strategy_code, test)
+            metrics = backtest_engine.run_backtest(
+                test_signals,
+                initial_balance=initial_balance,
+                fee_pct=fee_pct,
+                slippage_pct=slippage_pct,
+            )
+            windows.append({
+                "window": window_id,
+                "train_start": str(train.index[0]),
+                "train_end": str(train.index[-1]),
+                "test_start": str(test.index[0]),
+                "test_end": str(test.index[-1]),
+                "test_metrics": metrics,
+            })
+            window_id += 1
+            start += step
+
+        returns = [window["test_metrics"]["total_return_pct"] for window in windows]
+        drawdowns = [window["test_metrics"]["max_drawdown_pct"] for window in windows]
+        return {
+            "method": "rolling_walk_forward",
+            "train_rows": train_rows,
+            "test_rows": test_rows,
+            "step_rows": step,
+            "window_count": len(windows),
+            "summary": {
+                "mean_test_return_pct": round(sum(returns) / len(returns), 4),
+                "positive_test_windows": sum(value > 0 for value in returns),
+                "worst_test_drawdown_pct": round(min(drawdowns), 4),
+            },
+            "windows": windows,
+        }
 
 
 research_evaluator = ResearchEvaluator()
