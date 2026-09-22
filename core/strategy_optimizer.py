@@ -1,4 +1,6 @@
 import itertools
+
+import pandas as pd
 from typing import Any, Dict, List
 
 from core.backtest_engine import backtest_engine
