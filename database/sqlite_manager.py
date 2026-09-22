@@ -40,9 +40,20 @@ def init_db():
         id INTEGER PRIMARY KEY DEFAULT 1,
         api_keys TEXT, -- JSON blob of encrypted API keys
         theme TEXT DEFAULT 'dark',
-        paper_trading BOOLEAN DEFAULT 1
+        paper_trading BOOLEAN DEFAULT 1,
+        risk_live_trading_enabled BOOLEAN DEFAULT 0,
+        risk_max_order_notional REAL DEFAULT 1000.0
     )
     ''')
+
+    existing_settings_columns = {row[1] for row in cursor.execute("PRAGMA table_info(settings)").fetchall()}
+    settings_column_migrations = {
+        "risk_live_trading_enabled": "ALTER TABLE settings ADD COLUMN risk_live_trading_enabled BOOLEAN DEFAULT 0",
+        "risk_max_order_notional": "ALTER TABLE settings ADD COLUMN risk_max_order_notional REAL DEFAULT 1000.0",
+    }
+    for column, statement in settings_column_migrations.items():
+        if column not in existing_settings_columns:
+            cursor.execute(statement)
 
     # Saved Strategies
     cursor.execute('''
@@ -129,43 +140,75 @@ def init_db():
     conn.close()
 
 def get_settings():
+    """Return internal settings, including secrets. Never log this object."""
     try:
-        print(f"DEBUG: get_settings() from: {DB_PATH}")
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM settings WHERE id=1")
+        cursor.execute("""
+            SELECT id, api_keys, theme, paper_trading,
+                   risk_live_trading_enabled, risk_max_order_notional
+            FROM settings WHERE id=1
+        """)
         row = cursor.fetchone()
         conn.close()
-        print(f"DEBUG: get_settings() row: {row}")
         if row:
             return {
-                "id": row[0], 
-                "api_keys": json.loads(row[1] if row[1] else '{}'), 
-                "theme": row[2], 
-                "paper_trading": bool(row[3])
+                "id": row[0],
+                "api_keys": json.loads(row[1] or "{}"),
+                "theme": row[2],
+                "paper_trading": bool(row[3]),
+                "risk_live_trading_enabled": bool(row[4]),
+                "risk_max_order_notional": float(row[5] or 1000.0),
             }
-    except Exception as e:
-        print(f"DEBUG: ERROR in get_settings(): {e}")
+    except sqlite3.Error:
+        return None
     return None
 
-def update_settings(api_keys: dict = None, theme: str = None, paper_trading: bool = None):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
+
+def get_public_settings():
+    settings = get_settings()
+    if not settings:
+        return None
+    public = dict(settings)
+    public["api_keys"] = {
+        key: ("********" if value else "")
+        for key, value in settings.get("api_keys", {}).items()
+    }
+    return public
+
+
+def update_settings(
+    api_keys: dict = None,
+    theme: str = None,
+    paper_trading: bool = None,
+    risk_live_trading_enabled: bool = None,
+    risk_max_order_notional: float = None,
+):
     current = get_settings()
     if not current:
         return False
-        
-    new_api_keys = json.dumps(api_keys if api_keys is not None else current["api_keys"])
-    new_theme = theme if theme is not None else current["theme"]
-    new_paper_trading = int(paper_trading) if paper_trading is not None else int(current["paper_trading"])
-    
-    cursor.execute('''
-    UPDATE settings 
-    SET api_keys = ?, theme = ?, paper_trading = ? 
-    WHERE id = 1
-    ''', (new_api_keys, new_theme, new_paper_trading))
-    
+    max_notional = (
+        float(risk_max_order_notional)
+        if risk_max_order_notional is not None
+        else current["risk_max_order_notional"]
+    )
+    if max_notional <= 0:
+        raise ValueError("risk_max_order_notional must be positive")
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE settings
+        SET api_keys = ?, theme = ?, paper_trading = ?,
+            risk_live_trading_enabled = ?, risk_max_order_notional = ?
+        WHERE id = 1
+    """, (
+        json.dumps(api_keys if api_keys is not None else current["api_keys"]),
+        theme if theme is not None else current["theme"],
+        int(paper_trading) if paper_trading is not None else int(current["paper_trading"]),
+        int(risk_live_trading_enabled) if risk_live_trading_enabled is not None else int(current["risk_live_trading_enabled"]),
+        max_notional,
+    ))
     conn.commit()
     conn.close()
     return True
