@@ -82,3 +82,45 @@ def research_evaluate_strategy(request: ResearchEvaluationRequest):
         return result
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+class WalkForwardRequest(ValidationRequest):
+    initial_balance: float = 10000.0
+    fee_pct: float = 0.1
+    slippage_pct: float = 0.05
+    train_rows: int = 100
+    test_rows: int = 25
+    step_rows: int | None = None
+
+
+@router.post("/api/strategy/walk-forward")
+def walk_forward_strategy(request: WalkForwardRequest):
+    try:
+        if request.asset_type == "stock":
+            df = market_data.get_stock_data(request.symbol, request.interval, request.period)
+        else:
+            df = market_data.get_crypto_data(request.symbol, request.interval)
+        if df.empty:
+            raise ValueError("No market data available for walk-forward evaluation.")
+        df.columns = [column.lower() for column in df.columns]
+        result = research_evaluator.walk_forward(
+            request.strategy_code,
+            df,
+            train_rows=request.train_rows,
+            test_rows=request.test_rows,
+            step_rows=request.step_rows,
+            initial_balance=request.initial_balance,
+            fee_pct=request.fee_pct,
+            slippage_pct=request.slippage_pct,
+        )
+        result["scenario"] = {
+            "symbol": request.symbol,
+            "asset_type": request.asset_type,
+            "interval": request.interval,
+            "period": request.period,
+            "fee_pct": request.fee_pct,
+            "slippage_pct": request.slippage_pct,
+        }
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
