@@ -37,6 +37,8 @@ class RiskEngine:
         price: float,
         execution_mode: str,
         settings: Dict[str, Any] | None = None,
+        current_position_qty: float | None = None,
+        account_equity: float | None = None,
     ) -> RiskDecision:
         settings = settings or {}
         reasons: List[str] = []
@@ -61,6 +63,25 @@ class RiskEngine:
                 f"Estimated order notional {notional:.2f} exceeds configured "
                 f"limit {max_order_notional:.2f}."
             )
+
+        if side == "SELL" and current_position_qty is not None and qty > max(current_position_qty, 0.0):
+            reasons.append(
+                f"Sell quantity {qty:.8f} exceeds current position "
+                f"{max(current_position_qty, 0.0):.8f}."
+            )
+
+        max_position_pct = float(settings.get("risk_max_position_pct", 25.0))
+        if side == "BUY" and account_equity is not None and account_equity > 0:
+            if not 0 < max_position_pct <= 100:
+                reasons.append("risk_max_position_pct must be between 0 and 100.")
+            else:
+                max_position_notional = account_equity * (max_position_pct / 100.0)
+                if notional > max_position_notional:
+                    reasons.append(
+                        f"Order notional {notional:.2f} exceeds the configured "
+                        f"{max_position_pct:.2f}% per-position equity limit "
+                        f"({max_position_notional:.2f})."
+                    )
 
         if execution_mode == "live":
             live_enabled = bool(settings.get("risk_live_trading_enabled", False))
