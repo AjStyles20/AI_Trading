@@ -101,6 +101,5 @@ class PaperBroker(BrokerClient):
             message=f"Paper-filled {side} {qty} {order.symbol} @ {order.price}",
             filled_qty=qty,
             filled_price=order.price,
-            order_id=f"paper-{uuid4().hex[:16]}",
-            metadata={**(order.metadata or {}), "notional": notional},
+            metadata={**(order.metadata or {}), "notional": notional, "paper_order_id": f"paper-{uuid4().hex[:16]}"},
         )
