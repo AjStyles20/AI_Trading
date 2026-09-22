@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from backend.broker_integration.base import BrokerOrder
 from backend.broker_integration.registry import broker_registry
 from core.trading_engine import trading_engine
-from core.data_service import market_data
+from core.data_service import MarketDataError, market_data
 from core.risk_engine import risk_engine
 from database.sqlite_manager import record_trade, get_settings, get_trades, get_trade_by_id, update_trade_order_state
 
@@ -213,17 +213,20 @@ trading_manager = LiveTradingManager()
 
 
 def resolve_market_price(symbol: str, asset_type: str) -> float:
-    market_price = 1.0
-    try:
-        if asset_type == "stock":
-            df = market_data.get_stock_data(symbol, "1d")
-        else:
-            df = market_data.get_crypto_data(symbol, "1h", limit=5)
-        if not df.empty:
-            price_column = "close" if "close" in df.columns else "Close"
-            market_price = float(df.iloc[-1][price_column])
-    except Exception:
-        pass
+    """Resolve a validated market price; never fabricate a fallback price."""
+    if asset_type == "stock":
+        df = market_data.get_stock_data(symbol, "1d")
+    elif asset_type == "crypto":
+        df = market_data.get_crypto_data(symbol, "1h", limit=5)
+    else:
+        raise MarketDataError(f"Unsupported asset type for market price: {asset_type}")
+
+    if df.empty or "close" not in df.columns:
+        raise MarketDataError(f"No valid market price available for {symbol}.")
+
+    market_price = float(df.iloc[-1]["close"])
+    if market_price <= 0:
+        raise MarketDataError(f"Invalid market price for {symbol}: {market_price}")
     return market_price
 
 @router.post("/api/trading/toggle")
@@ -333,6 +336,8 @@ def get_open_orders(symbol: str, asset_type: str = "crypto", broker_id: str = "p
             "execution_mode": execution_mode,
             "symbol": symbol,
         }
+    except MarketDataError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -349,6 +354,8 @@ def get_positions(symbol: str, asset_type: str = "crypto", broker_id: str = "pap
             "execution_mode": execution_mode,
             "symbol": symbol,
         }
+    except MarketDataError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -359,6 +366,8 @@ def get_broker_account(broker_id: str, execution_mode: str = "paper"):
     try:
         broker = broker_registry.get(broker_id)
         return broker.get_account_summary(settings, execution_mode)
+    except MarketDataError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -393,6 +402,8 @@ def run_trading_preflight(request: TradingPreflightRequest):
             "validation": validation,
             "market_price": market_price,
         }
+    except MarketDataError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -436,6 +447,8 @@ def run_trading_test_order(request: TradingTestOrderRequest):
             **result,
             "market_price": market_price,
         }
+    except MarketDataError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -466,5 +479,7 @@ def cancel_trade_order(request: TradeCancelRequest):
             "trade_id": trade["id"],
             **result,
         }
+    except MarketDataError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
