@@ -25,11 +25,16 @@ class StrategyOptimizer:
 
         candidate_builder = strategies.get(strategy_type, self._ema_rsi_candidates)
         candidates = candidate_builder(custom_ranges or {})
+        if len(df) < 30:
+            raise ValueError("At least 30 chronological rows are required for optimization.")
+        split_at = int(len(df) * 0.8)
+        development_df = df.iloc[:split_at].copy()
+        holdout_df = df.iloc[split_at:].copy()
         results: List[Dict[str, Any]] = []
 
         for params in candidates:
             strategy_code = self._build_strategy_code(strategy_type, params)
-            result_df = safe_strategy_runtime.execute(strategy_code, df)
+            result_df = safe_strategy_runtime.execute(strategy_code, development_df)
             metrics = backtest_engine.run_backtest(
                 result_df,
                 initial_balance=initial_balance,
@@ -58,9 +63,34 @@ class StrategyOptimizer:
             })
 
         ranked = sorted(results, key=lambda item: item["score"], reverse=True)
+        best = ranked[0] if ranked else None
+        holdout = None
+        if best is not None:
+            holdout_df_with_signals = safe_strategy_runtime.execute(best["code"], holdout_df)
+            holdout_metrics = backtest_engine.run_backtest(
+                holdout_df_with_signals,
+                initial_balance=initial_balance,
+                fee_pct=fee_pct,
+                slippage_pct=slippage_pct,
+            )
+            holdout = {
+                "params": best["params"],
+                "metrics": {
+                    "total_return_pct": round(holdout_metrics["total_return_pct"], 3),
+                    "max_drawdown_pct": round(holdout_metrics["max_drawdown_pct"], 3),
+                    "trade_count": holdout_metrics["trade_count"],
+                    "final_equity": round(holdout_metrics["final_equity"], 2),
+                    "buy_hold_return_pct": round(holdout_metrics["buy_hold_return_pct"], 3),
+                    "win_rate_pct": round(holdout_metrics["win_rate_pct"], 3),
+                },
+            }
         return {
             "strategy_type": strategy_type,
-            "best": ranked[0] if ranked else None,
+            "method": "chronological_development_holdout",
+            "selection_rows": len(development_df),
+            "holdout_rows": len(holdout_df),
+            "best": best,
+            "holdout": holdout,
             "results": ranked[:10],
         }
 
