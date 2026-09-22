@@ -35,3 +35,31 @@ def test_unsafe_operations_are_rejected(frame, code):
 def test_requires_single_strategy_function(frame):
     with pytest.raises(UnsafeStrategyError):
         SafeStrategyRuntime().execute("x = 1", frame)
+
+
+def test_rejects_nested_class_definition():
+    code = """def strategy(df):
+    class Escape:
+        pass
+    return df
+"""
+    with pytest.raises(UnsafeStrategyError):
+        safe_strategy_runtime.execute(code, sample_df())
+
+
+def test_rejects_lambda():
+    code = """def strategy(df):
+    fn = lambda x: x
+    return df
+"""
+    with pytest.raises(UnsafeStrategyError):
+        safe_strategy_runtime.execute(code, sample_df())
+
+
+def test_rejects_global_statement():
+    code = """def strategy(df):
+    global secret
+    return df
+"""
+    with pytest.raises(UnsafeStrategyError):
+        safe_strategy_runtime.execute(code, sample_df())
