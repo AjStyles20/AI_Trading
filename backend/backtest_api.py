@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-import pandas as pd
 import sys
 import os
 
@@ -8,6 +7,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.backtest_engine import backtest_engine
 from core.data_service import market_data
 from core.strategy_validator import strategy_validator
+from core.safe_strategy_runtime import safe_strategy_runtime
 
 router = APIRouter()
 
@@ -44,20 +44,7 @@ def run_backtest(request: BacktestRequest):
         if "close" not in df.columns:
             raise ValueError("Missing required 'close' column after normalization.")
 
-        local_scope = {"df": df.copy(), "pd": pd}
-        exec(request.strategy_code, local_scope)
-
-        if 'strategy' in local_scope:
-            df_result = local_scope['strategy'](df.copy())
-        else:
-            df_result = local_scope.get('df')
-
-        if isinstance(df_result, pd.Series):
-            signal_series = df_result
-            if len(signal_series) != len(df):
-                raise ValueError("strategy(df) returned a signal series with a different length than the input data.")
-            df_result = df.copy()
-            df_result["signal"] = signal_series
+        df_result = safe_strategy_runtime.execute(request.strategy_code, df)
 
         validation = strategy_validator.validate(request.strategy_code, df)
         if not validation["valid"]:
