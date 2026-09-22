@@ -236,8 +236,7 @@ export const buildStrategyCodeFromGraph = (nodes: BuilderNode[], edges: BuilderE
   const risk = getRiskPayload(nodes);
 
   return `# Strategy exported from Astral AI Visual Builder
-import pandas as pd
-
+# pd is supplied by Astral's restricted strategy runtime.
 def strategy(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 ${indicatorLines.length > 0 ? indicatorLines.join('\n') : "    df['ema_21'] = df['close'].ewm(span=21, adjust=False).mean()\n    delta = df['close'].diff()\n    gain = delta.clip(lower=0).rolling(14).mean()\n    loss = (-delta.clip(upper=0)).rolling(14).mean()\n    rs = gain / loss.replace(0, pd.NA)\n    df['rsi_14'] = 100 - (100 / (1 + rs))"}
