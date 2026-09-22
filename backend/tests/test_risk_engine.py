@@ -60,3 +60,23 @@ def test_invalid_quantity_and_price_are_rejected():
     )
     assert decision.approved is False
     assert len(decision.reasons) >= 2
+
+
+def test_rejects_sell_larger_than_current_position():
+    decision = risk_engine.evaluate_order(
+        side="SELL", qty=2, price=100, execution_mode="paper",
+        settings={"risk_max_order_notional": 1000},
+        current_position_qty=1,
+    )
+    assert not decision.approved
+    assert "exceeds current position" in decision.reasons[0]
+
+
+def test_rejects_buy_above_position_equity_limit():
+    decision = risk_engine.evaluate_order(
+        side="BUY", qty=3, price=100, execution_mode="paper",
+        settings={"risk_max_order_notional": 1000, "risk_max_position_pct": 25},
+        account_equity=1000,
+    )
+    assert not decision.approved
+    assert "per-position equity limit" in decision.reasons[0]
