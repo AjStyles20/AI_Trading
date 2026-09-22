@@ -12,6 +12,7 @@ class BacktestEngine:
         initial_balance: float = 10000.0,
         fee_pct: float = 0.1,
         slippage_pct: float = 0.05,
+        execution_delay_bars: int = 1,
     ) -> Dict[str, Any]:
         """
         Run a backtest on a DataFrame that must contain a 'signal' column.
@@ -29,9 +30,13 @@ class BacktestEngine:
         slippage_rate = max(slippage_pct, 0) / 100
         last_buy_value = None
 
+        execution_delay_bars = max(int(execution_delay_bars), 0)
+
         for index in range(len(df)):
-            price = float(df['close'].iloc[index])
-            signal = df['signal'].iloc[index]
+            signal_index = index - execution_delay_bars
+            signal = df['signal'].iloc[signal_index] if signal_index >= 0 else 0
+            price_column = 'open' if execution_delay_bars > 0 and 'open' in df.columns else 'close'
+            price = float(df[price_column].iloc[index])
             position_size_pct = 100.0
             if 'position_size_pct' in df.columns:
                 try:
@@ -59,9 +64,10 @@ class BacktestEngine:
                 executed_price = price * (1 - slippage_rate)
                 gross_proceeds = position * executed_price
                 exit_fee = gross_proceeds * fee_rate
-                balance = gross_proceeds - exit_fee
+                net_proceeds = gross_proceeds - exit_fee
+                balance += net_proceeds
                 if last_buy_value is not None:
-                    round_trip_pnls.append(balance - last_buy_value)
+                    round_trip_pnls.append(net_proceeds - last_buy_value)
                 position = 0
                 trade_history.append({
                     "type": "SELL",
@@ -99,6 +105,7 @@ class BacktestEngine:
             "win_rate_pct": win_rate,
             "fee_pct": fee_pct,
             "slippage_pct": slippage_pct,
+            "execution_delay_bars": execution_delay_bars,
         }
 
 
