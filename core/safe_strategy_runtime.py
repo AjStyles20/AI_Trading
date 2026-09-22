@@ -18,7 +18,7 @@ class StrategyPolicy:
         "open", "eval", "exec", "compile", "__import__", "input", "globals",
         "locals", "vars", "getattr", "setattr", "delattr", "breakpoint",
         "help", "os", "sys", "subprocess", "socket", "requests", "pathlib",
-        "shutil", "pickle", "marshal",
+        "shutil", "pickle", "marshal", "memoryview", "super",
     })
     banned_attributes: frozenset[str] = frozenset({
         "read_csv", "read_excel", "read_json", "read_html", "read_pickle",
@@ -46,9 +46,10 @@ class SafeStrategyRuntime:
         except SyntaxError as exc:
             raise UnsafeStrategyError(f"Strategy syntax error: {exc}") from exc
 
+        forbidden_nodes = (ast.Import, ast.ImportFrom, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda, ast.Global, ast.Nonlocal)
         for node in ast.walk(tree):
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                raise UnsafeStrategyError("Imports are not allowed in generated strategies.")
+            if isinstance(node, forbidden_nodes):
+                raise UnsafeStrategyError(f"Forbidden syntax in generated strategy: {type(node).__name__}")
             if isinstance(node, ast.Name) and node.id in self.policy.banned_names:
                 raise UnsafeStrategyError(f"Forbidden name in strategy: {node.id}")
             if isinstance(node, ast.Attribute):
