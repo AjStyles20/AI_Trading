@@ -73,7 +73,7 @@ def test_rejects_sell_larger_than_current_position():
 
 
 def test_rejects_buy_above_position_equity_limit():
-    decision = risk_engine.evaluate_order(
+    decision = RiskEngine().evaluate_order(
         side="BUY", qty=3, price=100, execution_mode="paper",
         settings={"risk_max_order_notional": 1000, "risk_max_position_pct": 25},
         account_equity=1000,
