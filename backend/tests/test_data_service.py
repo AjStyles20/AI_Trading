@@ -5,7 +5,7 @@ import os
 from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from core.data_service import market_data
+from core.data_service import MarketDataError, market_data
 
 def test_get_stock_data_graceful_failure():
     # We patch yfinance Ticker internally so that history() throws an exception
