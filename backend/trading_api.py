@@ -9,6 +9,7 @@ from backend.broker_integration.base import BrokerOrder
 from backend.broker_integration.registry import broker_registry
 from core.trading_engine import trading_engine
 from core.data_service import market_data
+from core.risk_engine import risk_engine
 from database.sqlite_manager import record_trade, get_settings, get_trades, get_trade_by_id, update_trade_order_state
 
 router = APIRouter()
@@ -128,6 +129,25 @@ class LiveTradingManager:
                         asset_type=asset_type,
                         metadata={"interval": interval},
                     )
+                    risk = risk_engine.evaluate_order(
+                        side=order.side,
+                        qty=order.qty,
+                        price=order.price,
+                        execution_mode=execution_mode,
+                        settings=settings,
+                    )
+                    if not risk.approved:
+                        self.log(f"RISK BLOCKED ORDER: {'; '.join(risk.reasons)}")
+                        await asyncio.sleep(60)
+                        continue
+
+                    broker_validation = broker.validate_order(order, execution_mode, settings)
+                    if not broker_validation.get("ok", False):
+                        self.log(f"BROKER VALIDATION BLOCKED ORDER: {broker_validation}")
+                        await asyncio.sleep(60)
+                        continue
+
+                    order.qty = float(broker_validation.get("normalized_qty", order.qty))
                     execution = broker.execute_order(order, execution_mode, settings)
 
                     record_trade(
@@ -205,6 +225,11 @@ async def toggle_trading(status: TradingStatus):
 
         settings = get_settings() or {}
         if status.execution_mode == "live":
+            if not bool(settings.get("risk_live_trading_enabled", False)):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Live trading is locked by the risk engine. Enable it explicitly only after validation.",
+                )
             try:
                 account = broker.get_account_summary(settings, status.execution_mode)
                 if not account.get("can_trade", False):
@@ -331,21 +356,26 @@ def run_trading_preflight(request: TradingPreflightRequest):
         broker = broker_registry.get(request.broker_id)
         market_price = resolve_market_price(request.symbol, request.asset_type)
         account = broker.get_account_summary(settings, request.execution_mode)
-        validation = broker.validate_order(
-            BrokerOrder(
-                symbol=request.symbol,
-                side="BUY",
-                qty=1.0,
-                price=market_price,
-                asset_type=request.asset_type,
-                metadata={},
-            ),
-            request.execution_mode,
-            settings,
+        order = BrokerOrder(
+            symbol=request.symbol,
+            side="BUY",
+            qty=1.0,
+            price=market_price,
+            asset_type=request.asset_type,
+            metadata={},
         )
+        risk = risk_engine.evaluate_order(
+            side=order.side,
+            qty=order.qty,
+            price=order.price,
+            execution_mode=request.execution_mode,
+            settings=settings,
+        )
+        validation = broker.validate_order(order, request.execution_mode, settings)
         return {
             "broker": broker.get_status(settings),
             "account": account,
+            "risk": risk.as_dict(),
             "validation": validation,
             "market_price": market_price,
         }
