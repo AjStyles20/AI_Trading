@@ -3,7 +3,7 @@ from backend.broker_integration.paper_broker import PaperBroker
 
 
 def order(side, qty, price=100.0, symbol="TEST"):
-    return BrokerOrder(symbol=symbol, side=side, qty=qty, price=price)
+    return BrokerOrder(symbol=symbol, side=side, qty=qty, price=price, asset_type="stock", metadata={})
 
 
 def test_paper_buy_updates_cash_and_position():
