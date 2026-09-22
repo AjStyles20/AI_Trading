@@ -32,3 +32,18 @@ def test_validate_frame_rejects_non_positive_price():
     }, index=pd.to_datetime(["2026-01-01"]))
     with pytest.raises(MarketDataError):
         svc._validate_frame(df, "TEST")
+
+
+def test_freshness_accepts_recent_candle():
+    svc = MarketDataService()
+    now = pd.Timestamp("2026-01-01T12:00:00Z")
+    df = pd.DataFrame({"close": [100]}, index=[pd.Timestamp("2026-01-01T11:00:00Z")])
+    svc.assert_fresh(df, "1h", now=now)
+
+
+def test_freshness_rejects_stale_candle():
+    svc = MarketDataService()
+    now = pd.Timestamp("2026-01-01T12:00:00Z")
+    df = pd.DataFrame({"close": [100]}, index=[pd.Timestamp("2026-01-01T08:00:00Z")])
+    with pytest.raises(MarketDataError):
+        svc.assert_fresh(df, "1h", now=now)
