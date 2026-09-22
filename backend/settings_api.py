@@ -4,7 +4,7 @@ from typing import Dict, Optional
 import sys, os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from database.sqlite_manager import get_settings, update_settings
+from database.sqlite_manager import get_public_settings, update_settings
 
 router = APIRouter()
 
@@ -12,10 +12,12 @@ class SettingsUpdate(BaseModel):
     api_keys: Optional[Dict[str, str]] = None
     theme: Optional[str] = None
     paper_trading: Optional[bool] = None
+    risk_live_trading_enabled: Optional[bool] = None
+    risk_max_order_notional: Optional[float] = None
 
 @router.get("/api/settings")
 def get_current_settings():
-    settings = get_settings()
+    settings = get_public_settings()
     if not settings:
         raise HTTPException(status_code=404, detail="Settings not found")
     return settings
@@ -26,7 +28,9 @@ def save_settings(update: SettingsUpdate):
         success = update_settings(
             api_keys=update.api_keys,
             theme=update.theme,
-            paper_trading=update.paper_trading
+            paper_trading=update.paper_trading,
+            risk_live_trading_enabled=update.risk_live_trading_enabled,
+            risk_max_order_notional=update.risk_max_order_notional
         )
         if success:
             # Trigger AI Assistant reload if API keys changed
