@@ -205,9 +205,9 @@ class LiveTradingManager:
 trading_manager = LiveTradingManager()
 
 
-def get_risk_context(broker, symbol: str, settings: Dict[str, Any], execution_mode: str, broker_id: str) -> tuple[float | None, float | None]:
+def get_risk_context(broker, symbol: str, settings: Dict[str, Any], execution_mode: str, broker_id: str, account: Dict[str, Any] | None = None) -> tuple[float | None, float | None]:
     """Normalize account equity and current symbol position for central risk checks."""
-    account = broker.get_account_summary(settings, execution_mode)
+    account = account if account is not None else broker.get_account_summary(settings, execution_mode)
     equity_raw = account.get("equity")
     account_equity = float(equity_raw) if equity_raw is not None else None
 
@@ -396,7 +396,7 @@ def run_trading_preflight(request: TradingPreflightRequest):
         market_price = resolve_market_price(request.symbol, request.asset_type)
         account = broker.get_account_summary(settings, request.execution_mode)
         account_equity, current_position_qty = get_risk_context(
-            broker, request.symbol, settings, request.execution_mode, request.broker_id
+            broker, request.symbol, settings, request.execution_mode, request.broker_id, account
         )
         order = BrokerOrder(
             symbol=request.symbol,
