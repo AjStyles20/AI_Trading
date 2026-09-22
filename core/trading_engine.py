@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from core.safe_strategy_runtime import safe_strategy_runtime
 from typing import Dict, Any, Optional
 
 class TradingEngine:
@@ -12,24 +13,7 @@ class TradingEngine:
         Expects a function named 'strategy(df)' that returns the modified DataFrame.
         """
         try:
-            # Prepare local scope for execution
-            local_scope = {"df": df.copy(), "pd": pd, "np": np}
-            
-            # Execute the strategy code
-            exec(strategy_code, {}, local_scope)
-            
-            # Identify the resulting DataFrame
-            if 'strategy' in local_scope:
-                df_result = local_scope['strategy'](df.copy())
-                # Guard: if strategy returns None (e.g. placeholder with `pass`), fall back to original df
-                if df_result is None:
-                    print("WARNING: strategy() returned None. Using original df as fallback.")
-                    df_result = df
-            else:
-                # Fallback: maybe the code directly modified 'df'
-                df_result = local_scope.get('df', df)
-                
-            return df_result
+            return safe_strategy_runtime.execute(strategy_code, df)
         except Exception as e:
             print(f"ERROR in strategy evaluation: {e}")
             return df
