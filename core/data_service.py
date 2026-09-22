@@ -44,6 +44,32 @@ class MarketDataService:
             return "600d" # Safe limit for yfinance 1h/4h data
         return "1y" # default for 1d and others
 
+    def assert_fresh(self, df: pd.DataFrame, interval: str, now: pd.Timestamp | None = None) -> None:
+        if df is None or df.empty:
+            raise MarketDataError("Cannot assess freshness of empty market data.")
+        interval_minutes = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440}
+        minutes = interval_minutes.get(interval)
+        if minutes is None:
+            raise MarketDataError(f"Unsupported interval for freshness validation: {interval}")
+        latest = pd.Timestamp(df.index[-1])
+        if latest.tzinfo is None:
+            latest = latest.tz_localize("UTC")
+        else:
+            latest = latest.tz_convert("UTC")
+        current = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
+        if current.tzinfo is None:
+            current = current.tz_localize("UTC")
+        else:
+            current = current.tz_convert("UTC")
+        max_age = pd.Timedelta(minutes=minutes * 3)
+        age = current - latest
+        if age < pd.Timedelta(0):
+            raise MarketDataError("Latest market timestamp is in the future.")
+        if age > max_age:
+            raise MarketDataError(
+                f"Market data is stale: latest candle is {age} old; maximum allowed is {max_age}."
+            )
+
     def get_stock_data(self, symbol: str, interval: str = "1d", period: str = None) -> pd.DataFrame:
         """Fetch historical stock data using yfinance."""
         if not period:
