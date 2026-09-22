@@ -1,9 +1,8 @@
 import itertools
 from typing import Any, Dict, List
 
-import pandas as pd
-
 from core.backtest_engine import backtest_engine
+from core.safe_strategy_runtime import safe_strategy_runtime
 
 
 class StrategyOptimizer:
@@ -28,9 +27,7 @@ class StrategyOptimizer:
 
         for params in candidates:
             strategy_code = self._build_strategy_code(strategy_type, params)
-            local_scope = {"pd": pd}
-            exec(strategy_code, {}, local_scope)
-            result_df = local_scope["strategy"](df.copy())
+            result_df = safe_strategy_runtime.execute(strategy_code, df)
             metrics = backtest_engine.run_backtest(
                 result_df,
                 initial_balance=initial_balance,
@@ -199,9 +196,7 @@ class StrategyOptimizer:
             cooldown_remaining = {params['cooldown_bars']}
 """
         if strategy_type == "sma_cross":
-            return f"""import pandas as pd
-
-def strategy(df: pd.DataFrame) -> pd.DataFrame:
+            return f"""def strategy(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df['sma_fast'] = df['close'].rolling({params['sma_fast']}).mean()
     df['sma_slow'] = df['close'].rolling({params['sma_slow']}).mean()
@@ -213,9 +208,7 @@ def strategy(df: pd.DataFrame) -> pd.DataFrame:
 """
 
         if strategy_type == "macd_rsi":
-            return f"""import pandas as pd
-
-def strategy(df: pd.DataFrame) -> pd.DataFrame:
+            return f"""def strategy(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df['ema_fast'] = df['close'].ewm(span=12, adjust=False).mean()
     df['ema_slow'] = df['close'].ewm(span=26, adjust=False).mean()
@@ -233,9 +226,7 @@ def strategy(df: pd.DataFrame) -> pd.DataFrame:
     return df
 """
 
-        return f"""import pandas as pd
-
-def strategy(df: pd.DataFrame) -> pd.DataFrame:
+        return f"""def strategy(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df['ema_fast'] = df['close'].ewm(span={params['ema_fast']}, adjust=False).mean()
     df['ema_slow'] = df['close'].ewm(span={params['ema_slow']}, adjust=False).mean()
