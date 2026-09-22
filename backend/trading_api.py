@@ -130,16 +130,9 @@ class LiveTradingManager:
                         asset_type=asset_type,
                         metadata={"interval": interval},
                     )
-                    account = broker.get_account_summary(settings, execution_mode)
-                    account_equity = account.get("equity")
-                    current_position_qty = None
-                    positions = account.get("positions", [])
-                    for position in positions:
-                        if position.get("symbol") == symbol:
-                            current_position_qty = float(position.get("qty", 0.0))
-                            break
-                    if current_position_qty is None and broker_id == "paper":
-                        current_position_qty = 0.0
+                    account_equity, current_position_qty = get_risk_context(
+                        broker, symbol, settings, execution_mode, broker_id
+                    )
 
                     risk = risk_engine.evaluate_order(
                         side=order.side,
@@ -210,6 +203,29 @@ class LiveTradingManager:
         self.log("Paper trading loop stopped.")
 
 trading_manager = LiveTradingManager()
+
+
+def get_risk_context(broker, symbol: str, settings: Dict[str, Any], execution_mode: str, broker_id: str) -> tuple[float | None, float | None]:
+    """Normalize account equity and current symbol position for central risk checks."""
+    account = broker.get_account_summary(settings, execution_mode)
+    equity_raw = account.get("equity")
+    account_equity = float(equity_raw) if equity_raw is not None else None
+
+    current_position_qty = None
+    for position in account.get("positions", []) or []:
+        if position.get("symbol") == symbol:
+            current_position_qty = float(position.get("qty", 0.0))
+            break
+
+    if current_position_qty is None and broker_id == "paper":
+        current_position_qty = 0.0
+
+    if execution_mode == "live" and account_equity is None:
+        raise ValueError("Live risk validation requires broker account equity.")
+    if execution_mode == "live" and current_position_qty is None:
+        raise ValueError(f"Live risk validation requires position state for {symbol}.")
+
+    return account_equity, current_position_qty
 
 
 def resolve_market_price(symbol: str, asset_type: str) -> float:
@@ -379,6 +395,9 @@ def run_trading_preflight(request: TradingPreflightRequest):
         broker = broker_registry.get(request.broker_id)
         market_price = resolve_market_price(request.symbol, request.asset_type)
         account = broker.get_account_summary(settings, request.execution_mode)
+        account_equity, current_position_qty = get_risk_context(
+            broker, request.symbol, settings, request.execution_mode, request.broker_id
+        )
         order = BrokerOrder(
             symbol=request.symbol,
             side="BUY",
@@ -393,6 +412,8 @@ def run_trading_preflight(request: TradingPreflightRequest):
             price=order.price,
             execution_mode=request.execution_mode,
             settings=settings,
+            current_position_qty=current_position_qty,
+            account_equity=account_equity,
         )
         validation = broker.validate_order(order, request.execution_mode, settings)
         return {
