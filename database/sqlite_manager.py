@@ -42,7 +42,8 @@ def init_db():
         theme TEXT DEFAULT 'dark',
         paper_trading BOOLEAN DEFAULT 1,
         risk_live_trading_enabled BOOLEAN DEFAULT 0,
-        risk_max_order_notional REAL DEFAULT 1000.0
+        risk_max_order_notional REAL DEFAULT 1000.0,
+        risk_max_position_pct REAL DEFAULT 25.0
     )
     ''')
 
@@ -50,6 +51,7 @@ def init_db():
     settings_column_migrations = {
         "risk_live_trading_enabled": "ALTER TABLE settings ADD COLUMN risk_live_trading_enabled BOOLEAN DEFAULT 0",
         "risk_max_order_notional": "ALTER TABLE settings ADD COLUMN risk_max_order_notional REAL DEFAULT 1000.0",
+        "risk_max_position_pct": "ALTER TABLE settings ADD COLUMN risk_max_position_pct REAL DEFAULT 25.0",
     }
     for column, statement in settings_column_migrations.items():
         if column not in existing_settings_columns:
@@ -146,7 +148,7 @@ def get_settings():
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, api_keys, theme, paper_trading,
-                   risk_live_trading_enabled, risk_max_order_notional
+                   risk_live_trading_enabled, risk_max_order_notional, risk_max_position_pct
             FROM settings WHERE id=1
         """)
         row = cursor.fetchone()
@@ -159,6 +161,7 @@ def get_settings():
                 "paper_trading": bool(row[3]),
                 "risk_live_trading_enabled": bool(row[4]),
                 "risk_max_order_notional": float(row[5] or 1000.0),
+                "risk_max_position_pct": float(row[6] or 25.0),
             }
     except sqlite3.Error:
         return None
@@ -183,6 +186,7 @@ def update_settings(
     paper_trading: bool = None,
     risk_live_trading_enabled: bool = None,
     risk_max_order_notional: float = None,
+    risk_max_position_pct: float = None,
 ):
     current = get_settings()
     if not current:
@@ -194,13 +198,20 @@ def update_settings(
     )
     if max_notional <= 0:
         raise ValueError("risk_max_order_notional must be positive")
+    max_position_pct = (
+        float(risk_max_position_pct)
+        if risk_max_position_pct is not None
+        else current["risk_max_position_pct"]
+    )
+    if not 0 < max_position_pct <= 100:
+        raise ValueError("risk_max_position_pct must be between 0 and 100")
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         UPDATE settings
         SET api_keys = ?, theme = ?, paper_trading = ?,
-            risk_live_trading_enabled = ?, risk_max_order_notional = ?
+            risk_live_trading_enabled = ?, risk_max_order_notional = ?, risk_max_position_pct = ?
         WHERE id = 1
     """, (
         json.dumps(api_keys if api_keys is not None else current["api_keys"]),
@@ -208,6 +219,7 @@ def update_settings(
         int(paper_trading) if paper_trading is not None else int(current["paper_trading"]),
         int(risk_live_trading_enabled) if risk_live_trading_enabled is not None else int(current["risk_live_trading_enabled"]),
         max_notional,
+        max_position_pct,
     ))
     conn.commit()
     conn.close()
