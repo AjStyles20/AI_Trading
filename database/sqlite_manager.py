@@ -61,6 +61,20 @@ def init_db():
         if column not in existing_settings_columns:
             cursor.execute(statement)
 
+    # Persistent account equity baselines for loss/drawdown risk controls.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS risk_equity_state (
+        broker_id TEXT NOT NULL,
+        execution_mode TEXT NOT NULL,
+        trading_day TEXT NOT NULL,
+        day_start_equity REAL NOT NULL,
+        peak_equity REAL NOT NULL,
+        last_equity REAL NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (broker_id, execution_mode)
+    )
+    ''')
+
     # Saved Strategies
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS strategies (
@@ -242,6 +256,93 @@ def update_settings(
     conn.commit()
     conn.close()
     return True
+
+def update_risk_equity_state(
+    broker_id: str,
+    execution_mode: str,
+    equity: float,
+    trading_day: str | None = None,
+):
+    """Persist daily-start and peak equity so risk limits survive restarts."""
+    equity = float(equity)
+    if equity <= 0:
+        raise ValueError("equity must be positive")
+    trading_day = trading_day or datetime.now().date().isoformat()
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT trading_day, day_start_equity, peak_equity
+        FROM risk_equity_state
+        WHERE broker_id = ? AND execution_mode = ?
+        """,
+        (broker_id, execution_mode),
+    )
+    row = cursor.fetchone()
+
+    if row is None:
+        day_start_equity = equity
+        peak_equity = equity
+        cursor.execute(
+            """
+            INSERT INTO risk_equity_state
+                (broker_id, execution_mode, trading_day, day_start_equity, peak_equity, last_equity)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (broker_id, execution_mode, trading_day, equity, equity, equity),
+        )
+    else:
+        stored_day, stored_day_start, stored_peak = row
+        day_start_equity = equity if stored_day != trading_day else float(stored_day_start)
+        peak_equity = max(float(stored_peak), equity)
+        cursor.execute(
+            """
+            UPDATE risk_equity_state
+            SET trading_day = ?, day_start_equity = ?, peak_equity = ?,
+                last_equity = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE broker_id = ? AND execution_mode = ?
+            """,
+            (trading_day, day_start_equity, peak_equity, equity, broker_id, execution_mode),
+        )
+
+    conn.commit()
+    conn.close()
+    return {
+        "broker_id": broker_id,
+        "execution_mode": execution_mode,
+        "trading_day": trading_day,
+        "day_start_equity": day_start_equity,
+        "peak_equity": peak_equity,
+        "last_equity": equity,
+    }
+
+
+def get_risk_equity_state(broker_id: str, execution_mode: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT trading_day, day_start_equity, peak_equity, last_equity, updated_at
+        FROM risk_equity_state
+        WHERE broker_id = ? AND execution_mode = ?
+        """,
+        (broker_id, execution_mode),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "broker_id": broker_id,
+        "execution_mode": execution_mode,
+        "trading_day": row[0],
+        "day_start_equity": float(row[1]),
+        "peak_equity": float(row[2]),
+        "last_equity": float(row[3]),
+        "updated_at": row[4],
+    }
+
 
 def record_trade(
     symbol: str,
