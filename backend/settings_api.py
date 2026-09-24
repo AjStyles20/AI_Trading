@@ -15,6 +15,8 @@ class SettingsUpdate(BaseModel):
     risk_live_trading_enabled: Optional[bool] = None
     risk_max_order_notional: Optional[float] = None
     risk_max_position_pct: Optional[float] = None
+    risk_max_daily_loss_pct: Optional[float] = None
+    risk_max_drawdown_pct: Optional[float] = None
 
 @router.get("/api/settings")
 def get_current_settings():
@@ -32,7 +34,9 @@ def save_settings(update: SettingsUpdate):
             paper_trading=update.paper_trading,
             risk_live_trading_enabled=update.risk_live_trading_enabled,
             risk_max_order_notional=update.risk_max_order_notional,
-            risk_max_position_pct=update.risk_max_position_pct
+            risk_max_position_pct=update.risk_max_position_pct,
+            risk_max_daily_loss_pct=update.risk_max_daily_loss_pct,
+            risk_max_drawdown_pct=update.risk_max_drawdown_pct
         )
         if success:
             # Trigger AI Assistant reload if API keys changed
