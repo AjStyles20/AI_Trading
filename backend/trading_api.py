@@ -10,7 +10,7 @@ from backend.broker_integration.registry import broker_registry
 from core.trading_engine import trading_engine
 from core.data_service import MarketDataError, market_data
 from core.risk_engine import risk_engine
-from database.sqlite_manager import record_trade, get_settings, get_trades, get_trade_by_id, update_trade_order_state
+from database.sqlite_manager import record_trade, get_settings, get_trades, get_trade_by_id, update_trade_order_state, update_risk_equity_state
 
 router = APIRouter()
 
@@ -122,7 +122,7 @@ class LiveTradingManager:
                     self.log(f"SIGNAL DETECTED: {signal} at ${last_price}")
 
                     settings = get_settings() or {}
-                    account_equity, current_position_qty = get_risk_context(
+                    account_equity, current_position_qty, day_start_equity, peak_equity = get_risk_context(
                         broker, symbol, settings, execution_mode, broker_id
                     )
                     order_qty = resolve_strategy_quantity(
@@ -145,6 +145,8 @@ class LiveTradingManager:
                         settings=settings,
                         current_position_qty=current_position_qty,
                         account_equity=float(account_equity) if account_equity is not None else None,
+                        day_start_equity=day_start_equity,
+                        peak_equity=peak_equity,
                     )
                     if not risk.approved:
                         self.log(f"RISK BLOCKED ORDER: {'; '.join(risk.reasons)}")
@@ -208,7 +210,7 @@ class LiveTradingManager:
 trading_manager = LiveTradingManager()
 
 
-def get_risk_context(broker, symbol: str, settings: Dict[str, Any], execution_mode: str, broker_id: str, account: Dict[str, Any] | None = None) -> tuple[float | None, float | None]:
+def get_risk_context(broker, symbol: str, settings: Dict[str, Any], execution_mode: str, broker_id: str, account: Dict[str, Any] | None = None) -> tuple[float | None, float | None, float | None, float | None]:
     """Normalize account equity and current symbol position for central risk checks."""
     account = account if account is not None else broker.get_account_summary(settings, execution_mode)
     equity_raw = account.get("equity")
@@ -228,7 +230,14 @@ def get_risk_context(broker, symbol: str, settings: Dict[str, Any], execution_mo
     if execution_mode == "live" and current_position_qty is None:
         raise ValueError(f"Live risk validation requires position state for {symbol}.")
 
-    return account_equity, current_position_qty
+    day_start_equity = None
+    peak_equity = None
+    if account_equity is not None and account_equity > 0:
+        equity_state = update_risk_equity_state(broker_id, execution_mode, account_equity)
+        day_start_equity = equity_state["day_start_equity"]
+        peak_equity = equity_state["peak_equity"]
+
+    return account_equity, current_position_qty, day_start_equity, peak_equity
 
 
 def resolve_strategy_quantity(result_df, signal: str, price: float, account_equity: float | None, current_position_qty: float | None) -> float:
@@ -423,7 +432,7 @@ def run_trading_preflight(request: TradingPreflightRequest):
         broker = broker_registry.get(request.broker_id)
         market_price = resolve_market_price(request.symbol, request.asset_type)
         account = broker.get_account_summary(settings, request.execution_mode)
-        account_equity, current_position_qty = get_risk_context(
+        account_equity, current_position_qty, day_start_equity, peak_equity = get_risk_context(
             broker, request.symbol, settings, request.execution_mode, request.broker_id, account
         )
         order = BrokerOrder(
@@ -442,6 +451,8 @@ def run_trading_preflight(request: TradingPreflightRequest):
             settings=settings,
             current_position_qty=current_position_qty,
             account_equity=account_equity,
+            day_start_equity=day_start_equity,
+            peak_equity=peak_equity,
         )
         validation = broker.validate_order(order, request.execution_mode, settings)
         return {
