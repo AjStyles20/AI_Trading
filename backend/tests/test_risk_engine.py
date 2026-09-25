@@ -80,3 +80,42 @@ def test_rejects_buy_above_position_equity_limit():
     )
     assert not decision.approved
     assert "per-position equity limit" in decision.reasons[0]
+
+
+def test_daily_loss_limit_blocks_new_orders():
+    decision = RiskEngine().evaluate_order(
+        side="BUY", qty=1, price=100, execution_mode="paper",
+        settings={"risk_max_order_notional": 1000, "risk_max_daily_loss_pct": 3},
+        account_equity=960,
+        day_start_equity=1000,
+        peak_equity=1000,
+    )
+    assert not decision.approved
+    assert "Daily loss" in " ".join(decision.reasons)
+
+
+def test_drawdown_limit_blocks_new_orders():
+    decision = RiskEngine().evaluate_order(
+        side="BUY", qty=1, price=100, execution_mode="paper",
+        settings={"risk_max_order_notional": 1000, "risk_max_drawdown_pct": 10},
+        account_equity=890,
+        day_start_equity=900,
+        peak_equity=1000,
+    )
+    assert not decision.approved
+    assert "Account drawdown" in " ".join(decision.reasons)
+
+
+def test_loss_limits_allow_order_below_thresholds():
+    decision = RiskEngine().evaluate_order(
+        side="BUY", qty=1, price=100, execution_mode="paper",
+        settings={
+            "risk_max_order_notional": 1000,
+            "risk_max_daily_loss_pct": 3,
+            "risk_max_drawdown_pct": 10,
+        },
+        account_equity=980,
+        day_start_equity=1000,
+        peak_equity=1000,
+    )
+    assert decision.approved
