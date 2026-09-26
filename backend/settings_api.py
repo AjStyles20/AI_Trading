@@ -18,6 +18,8 @@ class SettingsUpdate(BaseModel):
     risk_max_position_pct: Optional[float] = None
     risk_max_daily_loss_pct: Optional[float] = None
     risk_max_drawdown_pct: Optional[float] = None
+    binance_environment: Optional[str] = None
+    bitget_environment: Optional[str] = None
 
 @router.get("/api/settings")
 def get_current_settings():
@@ -44,7 +46,9 @@ def save_settings(update: SettingsUpdate):
             risk_max_order_notional=update.risk_max_order_notional,
             risk_max_position_pct=update.risk_max_position_pct,
             risk_max_daily_loss_pct=update.risk_max_daily_loss_pct,
-            risk_max_drawdown_pct=update.risk_max_drawdown_pct
+            risk_max_drawdown_pct=update.risk_max_drawdown_pct,
+            binance_environment=update.binance_environment,
+            bitget_environment=update.bitget_environment
         )
         if success:
             # Trigger AI Assistant reload if API keys changed
