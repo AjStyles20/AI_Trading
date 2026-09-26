@@ -225,48 +225,23 @@ class LiveTradingManager:
                         },
                     )
 
-                    risk = risk_engine.evaluate_order(
-                        side=order.side,
-                        qty=order.qty,
-                        price=order.price,
-                        execution_mode=execution_mode,
-                        settings=settings,
-                        current_position_qty=current_position_qty,
-                        account_equity=float(account_equity) if account_equity is not None else None,
-                        day_start_equity=day_start_equity,
-                        peak_equity=peak_equity,
-                    )
-                    if not risk.approved:
-                        self.log(f"RISK BLOCKED ORDER: {'; '.join(risk.reasons)}")
+                    try:
+                        execution = submit_guarded_order(
+                            broker=broker,
+                            order=order,
+                            settings=settings,
+                            execution_mode=execution_mode,
+                            broker_id=broker_id,
+                            account_equity=account_equity,
+                            current_position_qty=current_position_qty,
+                            day_start_equity=day_start_equity,
+                            peak_equity=peak_equity,
+                        )
+                    except ValueError as exc:
+                        self.log(str(exc))
                         await asyncio.sleep(get_poll_delay_seconds(interval))
                         continue
 
-                    broker_validation = broker.validate_order(order, execution_mode, settings)
-                    if not broker_validation.get("ok", False):
-                        self.log(f"BROKER VALIDATION BLOCKED ORDER: {broker_validation}")
-                        await asyncio.sleep(get_poll_delay_seconds(interval))
-                        continue
-
-                    order.qty = float(broker_validation.get("normalized_qty", order.qty))
-                    execution = broker.execute_order(order, execution_mode, settings)
-
-                    record_trade(
-                        symbol,
-                        signal,
-                        order.qty,
-                        order.price,
-                        is_paper=execution.execution_mode == "paper",
-                        broker_id=execution.broker_id,
-                        execution_mode=execution.execution_mode,
-                        order_status=execution.status,
-                        order_type="market",
-                        broker_order_id=execution.metadata.get("broker_order_id"),
-                        is_test=False,
-                        metadata=execution.metadata,
-                        requested_qty=order.qty,
-                        filled_qty=execution.filled_qty,
-                        filled_price=execution.filled_price,
-                    )
                     if should_start_cooldown(signal, execution, order.qty):
                         self.cooldown_remaining = int(order.metadata.get("cooldown_bars", 0))
                     self.log(execution.message)
