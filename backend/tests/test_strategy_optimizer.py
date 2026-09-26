@@ -105,3 +105,74 @@ def test_walk_forward_warmup_uses_only_pre_test_context():
     for window in result["windows"]:
         for trade in window["test_metrics"]["trade_history"]:
             assert pd.Timestamp(trade["timestamp"]) >= pd.Timestamp(window["test_start"])
+
+
+def test_optimizer_reports_evidence_adjusted_score():
+    result = strategy_optimizer.optimize(
+        frame(60),
+        strategy_type="sma_cross",
+        custom_ranges={
+            "sma_fast": [2],
+            "sma_slow": [4],
+            "stop_loss_pct": [2],
+            "take_profit_pct": [4],
+            "cooldown_bars": [0],
+            "position_size_pct": [50],
+        },
+        fee_pct=0,
+        slippage_pct=0,
+    )
+    candidate = result["best"]
+    assert "raw_score" in candidate
+    assert "evidence_factor" in candidate
+    assert "closed_round_trips" in candidate
+    assert 0 <= candidate["evidence_factor"] <= 1
+    assert candidate["score"] == round(candidate["raw_score"] * candidate["evidence_factor"], 3)
+
+
+def test_candidate_score_does_not_use_buy_hold_return(monkeypatch):
+    class FakeBacktest:
+        def __init__(self):
+            self.buy_hold = 999999.0
+
+        def run_backtest(self, *args, **kwargs):
+            return {
+                "total_return_pct": 10.0,
+                "win_rate_pct": 50.0,
+                "buy_hold_return_pct": self.buy_hold,
+                "max_drawdown_pct": -5.0,
+                "trade_count": 10,
+                "closed_round_trips": 5,
+                "profit_factor": 1.5,
+                "final_equity": 11000.0,
+            }
+
+    fake = FakeBacktest()
+    monkeypatch.setattr("core.strategy_optimizer.backtest_engine", fake)
+    result = strategy_optimizer.optimize(
+        frame(60),
+        strategy_type="sma_cross",
+        custom_ranges={
+            "sma_fast": [2],
+            "sma_slow": [4],
+            "stop_loss_pct": [2],
+            "take_profit_pct": [4],
+            "cooldown_bars": [0],
+            "position_size_pct": [50],
+        },
+    )
+    score_before = result["best"]["score"]
+    fake.buy_hold = -999999.0
+    result_after = strategy_optimizer.optimize(
+        frame(60),
+        strategy_type="sma_cross",
+        custom_ranges={
+            "sma_fast": [2],
+            "sma_slow": [4],
+            "stop_loss_pct": [2],
+            "take_profit_pct": [4],
+            "cooldown_bars": [0],
+            "position_size_pct": [50],
+        },
+    )
+    assert result_after["best"]["score"] == score_before
