@@ -59,3 +59,27 @@ def test_alpaca_execution_preserves_fill_truth(
     assert result.filled_qty == expected_qty
     assert result.filled_price == expected_price
     assert result.metadata["broker_order_id"] == "order-123"
+
+
+def test_alpaca_cancel_requires_reconciliation(monkeypatch):
+    broker = AlpacaBroker()
+    calls = []
+
+    def fake_request(method, path, settings, execution_mode, **kwargs):
+        calls.append((method, path, execution_mode))
+        return None
+
+    monkeypatch.setattr(broker, "_request", fake_request)
+    trade = {
+        "broker_order_id": "order-123",
+        "execution_mode": "live",
+        "filled_qty": 0.4,
+    }
+
+    result = broker.cancel_order(trade, {})
+
+    assert calls == [("DELETE", "/v2/orders/order-123", "live")]
+    assert result["order_status"] == "cancel_requested"
+    assert result["broker_order_id"] == "order-123"
+    assert result["metadata"]["executed_qty"] == 0.4
+    assert "reconciliation" in result["message"].lower()
