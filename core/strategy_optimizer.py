@@ -187,6 +187,9 @@ class StrategyOptimizer:
                 "test_end": str(test_df.index[-1]),
                 "selected_params": best["params"],
                 "selection_score": best["score"],
+                "selection_raw_score": best.get("raw_score"),
+                "selection_evidence_factor": best.get("evidence_factor"),
+                "selection_risk": selection.get("optimization_risk", {}),
                 "test_metrics": test_metrics,
             })
             start += step
@@ -194,6 +197,14 @@ class StrategyOptimizer:
 
         returns = [window["test_metrics"]["total_return_pct"] for window in windows]
         drawdowns = [window["test_metrics"]["max_drawdown_pct"] for window in windows]
+        weak_selection_windows = sum(
+            1 for window in windows
+            if window.get("selection_risk", {}).get("warning_count", 0) > 0
+        )
+        total_selection_warnings = sum(
+            int(window.get("selection_risk", {}).get("warning_count", 0))
+            for window in windows
+        )
         return {
             "method": "rolling_walk_forward_parameter_selection",
             "selection_policy": "parameters are selected using each past training window only, frozen, then evaluated once on the following unseen test window",
@@ -208,6 +219,8 @@ class StrategyOptimizer:
                 "mean_test_return_pct": round(sum(returns) / len(returns), 4),
                 "positive_test_windows": sum(value > 0 for value in returns),
                 "worst_test_drawdown_pct": round(min(drawdowns), 4),
+                "weak_selection_windows": weak_selection_windows,
+                "total_selection_warnings": total_selection_warnings,
             },
             "windows": windows,
         }
