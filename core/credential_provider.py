@@ -86,3 +86,9 @@ def resolve_api_keys(settings: Mapping | None = None) -> dict[str, str]:
             resolved[key] = secure_value
 
     return resolved
+
+
+def credential_presence(settings: Mapping | None = None) -> dict[str, bool]:
+    """Report configured credential slots without returning secret material."""
+    resolved = resolve_api_keys(settings)
+    return {key: bool(resolved.get(key)) for key in ENV_KEY_MAP}
