@@ -586,9 +586,11 @@ def cancel_trade_order(request: TradeCancelRequest):
         result = broker.cancel_order(trade, settings)
         update_trade_order_state(
             trade["id"],
-            result.get("order_status", "canceled"),
+            result.get("order_status", "cancel_requested"),
             result.get("broker_order_id"),
             result.get("metadata", {}),
+            filled_qty=result.get("filled_qty"),
+            filled_price=result.get("filled_price"),
         )
         trading_manager.log(result.get("message", f"Canceled order for trade {trade['id']}."))
         return {
