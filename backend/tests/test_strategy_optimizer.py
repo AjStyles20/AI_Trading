@@ -251,3 +251,52 @@ def test_walk_forward_exposes_selection_risk_per_window():
         assert "candidate_count" in window["selection_risk"]
         assert "selection_evidence_factor" in window
         assert "selection_raw_score" in window
+
+
+def test_optimizer_exposes_canonical_declarative_strategy_spec():
+    result = strategy_optimizer.optimize(
+        frame(60),
+        strategy_type="sma_cross",
+        custom_ranges={
+            "sma_fast": [2],
+            "sma_slow": [4],
+            "stop_loss_pct": [2],
+            "take_profit_pct": [4],
+            "cooldown_bars": [1],
+            "position_size_pct": [50],
+        },
+        fee_pct=0,
+        slippage_pct=0,
+    )
+    best = result["best"]
+    assert best["strategy_spec"]["schema_version"] == 1
+    assert best["strategy_spec"]["strategy_type"] == "sma_cross"
+    assert best["strategy_spec"]["params"] == best["params"]
+    assert best["code_status"] == "legacy_compatibility_only"
+    assert "strategy_spec is canonical" in result["artifact_policy"]
+
+
+def test_walk_forward_records_selected_strategy_spec():
+    result = strategy_optimizer.walk_forward_optimize(
+        frame(60),
+        strategy_type="sma_cross",
+        train_rows=30,
+        test_rows=10,
+        step_rows=10,
+        custom_ranges={
+            "sma_fast": [2],
+            "sma_slow": [4],
+            "stop_loss_pct": [2],
+            "take_profit_pct": [4],
+            "cooldown_bars": [1],
+            "position_size_pct": [50],
+        },
+        fee_pct=0,
+        slippage_pct=0,
+    )
+    assert result["window_count"] == 3
+    for window in result["windows"]:
+        spec = window["selected_strategy_spec"]
+        assert spec["schema_version"] == 1
+        assert spec["strategy_type"] == "sma_cross"
+        assert spec["params"] == window["selected_params"]
