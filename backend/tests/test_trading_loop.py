@@ -527,7 +527,8 @@ def test_resolve_position_protection_params_rejects_invalid_values(column, value
     import pandas as pd
     from backend.trading_api import resolve_position_protection_params
 
-    frame = pd.DataFrame({"stop_loss_pct": [2.0], "take_profit_pct": [3.0]})
-    frame.loc[0, column] = value
+    values = {"stop_loss_pct": 2.0, "take_profit_pct": 3.0}
+    values[column] = value
+    frame = pd.DataFrame({key: pd.Series([item], dtype="object") for key, item in values.items()})
     with pytest.raises(ValueError, match=column):
         resolve_position_protection_params(frame)
