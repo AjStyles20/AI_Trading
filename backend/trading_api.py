@@ -92,6 +92,7 @@ class LiveTradingManager:
         self.logs = []
         self.last_evaluated_candle = None
         self.cooldown_remaining = 0
+        self.recovery_verified = False
 
     def log(self, message: str):
         import datetime
@@ -179,6 +180,14 @@ class LiveTradingManager:
                     broker_id=broker_id,
                     execution_mode=execution_mode,
                 )
+
+                if not self.recovery_verified:
+                    self.log(
+                        "AUTONOMY PAUSED: startup recovery has not been verified; "
+                        "broker state was reconciled but strategy execution is blocked."
+                    )
+                    await asyncio.sleep(get_poll_delay_seconds(interval))
+                    continue
 
                 # An operator may arm the persistent kill switch while this loop is
                 # already running. Keep polling and reconciling broker state, but do
@@ -358,7 +367,7 @@ class LiveTradingManager:
             # the same candle more than once.
             await asyncio.sleep(get_poll_delay_seconds(interval))
 
-    def start(self, symbol, asset_type, interval, strategy_record, broker_id, execution_mode, strategy_id=None):
+    def start(self, symbol, asset_type, interval, strategy_record, broker_id, execution_mode, strategy_id=None, recovery_verified=False):
         if self.is_running:
             return
         if isinstance(strategy_record, str):
@@ -373,6 +382,7 @@ class LiveTradingManager:
         self.is_running = True
         self.last_evaluated_candle = None
         self.cooldown_remaining = 0
+        self.recovery_verified = bool(recovery_verified)
         self.config = {
             "symbol": symbol, 
             "asset_type": asset_type,
@@ -392,6 +402,7 @@ class LiveTradingManager:
             self.active_task.cancel()
             self.active_task = None
         self.cooldown_remaining = 0
+        self.recovery_verified = False
         self.log("Trading loop stopped.")
 
 trading_manager = LiveTradingManager()
