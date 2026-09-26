@@ -343,6 +343,28 @@ def update_settings(
     return True
 
 
+
+def remove_legacy_api_keys(keys: list[str]) -> bool:
+    """Remove only explicitly named legacy credential entries from SQLite."""
+    if not keys:
+        return True
+    current = get_settings()
+    if not current:
+        return False
+    legacy = dict(current.get("api_keys", {}) or {})
+    for key in keys:
+        legacy.pop(key, None)
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE settings SET api_keys = ? WHERE id = 1",
+        (json.dumps(legacy),),
+    )
+    conn.commit()
+    conn.close()
+    return True
+
 def get_paper_account_state():
     """Return the persisted paper account payload, or None when not initialized."""
     conn = sqlite3.connect(DB_PATH)
