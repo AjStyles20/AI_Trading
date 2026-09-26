@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Any, Dict, Optional
 import os
 import sys
@@ -25,7 +25,7 @@ router = APIRouter()
 class StrategySaveRequest(BaseModel):
     name: str
     code: str = ""
-    strategy_spec: Dict[str, Any] = {}
+    strategy_spec: Dict[str, Any] = Field(default_factory=dict)
     strategy_format: Optional[str] = None
     symbol: str = ""
     asset_type: str = "crypto"
