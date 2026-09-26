@@ -169,8 +169,16 @@ class LiveTradingManager:
                     self.cooldown_remaining -= 1
                 
                 if signal:
-                    if has_unresolved_order(
+                    settings = get_settings() or {}
+                    scoped_trades = reconcile_unresolved_orders(
                         get_trades(limit=100),
+                        settings,
+                        symbol,
+                        broker_id,
+                        execution_mode,
+                    )
+                    if has_unresolved_order(
+                        scoped_trades,
                         symbol,
                         broker_id,
                         execution_mode,
@@ -183,7 +191,6 @@ class LiveTradingManager:
                     last_price = float(df.iloc[-1][price_column])
                     self.log(f"SIGNAL DETECTED: {signal} at ${last_price}")
 
-                    settings = get_settings() or {}
                     account_equity, current_position_qty, day_start_equity, peak_equity = get_risk_context(
                         broker, symbol, settings, execution_mode, broker_id
                     )
@@ -330,6 +337,65 @@ def get_risk_context(broker, symbol: str, settings: Dict[str, Any], execution_mo
 
 
 
+
+FINAL_ORDER_STATUSES = {"filled", "canceled", "cancelled", "rejected", "expired", "tested"}
+
+
+def reconcile_trade_order(trade: Dict[str, Any], settings: Dict[str, Any]) -> Dict[str, Any]:
+    """Refresh one unresolved live order from its owning broker and persist fill state."""
+    if trade.get("is_test") or trade.get("execution_mode") != "live":
+        return trade
+    if str(trade.get("order_status", "")).lower() in FINAL_ORDER_STATUSES:
+        return trade
+
+    broker = broker_registry.get(trade.get("broker_id", "paper"))
+    status = broker.get_order_status(trade, settings)
+    updated = dict(trade)
+    updated["order_status"] = status.get("order_status", trade.get("order_status"))
+    updated["broker_order_id"] = status.get("broker_order_id", trade.get("broker_order_id"))
+    updated["metadata"] = status.get("metadata", trade.get("metadata", {}))
+    if "filled_qty" in status:
+        updated["filled_qty"] = float(status["filled_qty"] or 0)
+    if "filled_price" in status:
+        updated["filled_price"] = float(status["filled_price"] or 0)
+
+    update_trade_order_state(
+        updated["id"],
+        updated["order_status"],
+        updated.get("broker_order_id"),
+        updated.get("metadata", {}),
+        filled_qty=updated.get("filled_qty"),
+        filled_price=updated.get("filled_price"),
+    )
+    return updated
+
+
+def reconcile_unresolved_orders(
+    trades: list[Dict[str, Any]],
+    settings: Dict[str, Any],
+    symbol: str,
+    broker_id: str,
+    execution_mode: str,
+) -> list[Dict[str, Any]]:
+    """Refresh unresolved orders for the active autonomous trading scope."""
+    reconciled = []
+    for trade in trades:
+        same_scope = (
+            trade.get("symbol") == symbol
+            and trade.get("broker_id", "paper") == broker_id
+            and trade.get("execution_mode", "paper") == execution_mode
+        )
+        if same_scope:
+            try:
+                trade = reconcile_trade_order(trade, settings)
+            except Exception as exc:
+                trade = dict(trade)
+                metadata = dict(trade.get("metadata") or {})
+                metadata["status_refresh_error"] = str(exc)
+                trade["metadata"] = metadata
+        reconciled.append(trade)
+    return reconciled
+
 def has_unresolved_order(
     trades: list[Dict[str, Any]],
     symbol: str,
@@ -337,7 +403,7 @@ def has_unresolved_order(
     execution_mode: str,
 ) -> bool:
     """Prevent overlapping autonomous orders until prior broker state is final."""
-    final_statuses = {"filled", "canceled", "cancelled", "rejected", "expired", "tested"}
+    final_statuses = FINAL_ORDER_STATUSES
     for trade in trades:
         if trade.get("is_test"):
             continue
@@ -489,44 +555,17 @@ def get_history():
 @router.get("/api/trading/history/refresh")
 def refresh_history_statuses():
     settings = get_settings() or {}
-    trades = get_trades(limit=20)
     refreshed: list[dict] = []
-    final_statuses = {"filled", "canceled", "cancelled", "rejected", "expired", "tested"}
-
-    for trade in trades:
-        if trade.get("is_test") or trade.get("execution_mode") != "live":
-            refreshed.append(trade)
-            continue
-
-        if str(trade.get("order_status", "")).lower() in final_statuses:
-            refreshed.append(trade)
-            continue
-
-        broker_id = trade.get("broker_id", "paper")
+    for trade in get_trades(limit=20):
         try:
-            broker = broker_registry.get(broker_id)
-            status = broker.get_order_status(trade, settings)
-            trade["order_status"] = status.get("order_status", trade.get("order_status"))
-            trade["broker_order_id"] = status.get("broker_order_id", trade.get("broker_order_id"))
-            trade["metadata"] = status.get("metadata", trade.get("metadata", {}))
-            if "filled_qty" in status:
-                trade["filled_qty"] = float(status["filled_qty"] or 0)
-            if "filled_price" in status:
-                trade["filled_price"] = float(status["filled_price"] or 0)
-            update_trade_order_state(
-                trade["id"],
-                trade["order_status"],
-                trade.get("broker_order_id"),
-                trade.get("metadata", {}),
-                filled_qty=trade.get("filled_qty"),
-                filled_price=trade.get("filled_price"),
-            )
+            trade = reconcile_trade_order(trade, settings)
         except Exception as exc:
-            trade.setdefault("metadata", {})
-            trade["metadata"]["status_refresh_error"] = str(exc)
-            trade["metadata"]["broker_reason"] = str(exc)
+            trade = dict(trade)
+            metadata = dict(trade.get("metadata") or {})
+            metadata["status_refresh_error"] = str(exc)
+            metadata["broker_reason"] = str(exc)
+            trade["metadata"] = metadata
         refreshed.append(trade)
-
     return refreshed
 
 
