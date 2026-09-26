@@ -131,6 +131,16 @@ class LiveTradingManager:
                 df.columns = [c.lower() for c in df.columns]
                 market_data.assert_fresh(df, interval, asset_type=asset_type)
 
+                # Evaluate each completed/latest candle at most once. Polling may run
+                # several times within a timeframe, but it must never create repeated
+                # decisions or orders from the same market observation.
+                candle_timestamp = df.index[-1]
+                if self.last_evaluated_candle == candle_timestamp:
+                    self.log(f"Skipping already evaluated candle: {candle_timestamp}")
+                    await asyncio.sleep(get_poll_delay_seconds(interval))
+                    continue
+                self.last_evaluated_candle = candle_timestamp
+
                 # 2. Evaluate strategy
                 self.log("Evaluating strategy signals...")
                 result_df = trading_engine.evaluate_strategy(strategy_code, df)
