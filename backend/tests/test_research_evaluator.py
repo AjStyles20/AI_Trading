@@ -47,6 +47,9 @@ def test_walk_forward_uses_ordered_non_overlapping_train_test_boundaries():
     df = frame(80)
     result = research_evaluator.walk_forward(STRATEGY, df, train_rows=40, test_rows=10, step_rows=10)
     assert result["window_count"] == 4
+    assert result["method"] == "rolling_out_of_sample_fixed_strategy"
+    assert result["legacy_method_alias"] == "walk_forward"
+    assert "fixed before evaluation" in result["selection_policy"]
     assert "positive_test_windows" in result["summary"]
     for window in result["windows"]:
         assert pd.Timestamp(window["train_end"]) < pd.Timestamp(window["test_start"])
@@ -55,3 +58,12 @@ def test_walk_forward_uses_ordered_non_overlapping_train_test_boundaries():
 def test_walk_forward_rejects_insufficient_history():
     with pytest.raises(ValueError):
         research_evaluator.walk_forward(STRATEGY, frame(30), train_rows=25, test_rows=10)
+
+
+def test_named_rolling_oos_api_does_not_claim_parameter_reselection():
+    result = research_evaluator.rolling_out_of_sample(
+        STRATEGY, frame(80), train_rows=40, test_rows=10, step_rows=10
+    )
+    assert result["method"] == "rolling_out_of_sample_fixed_strategy"
+    assert "re-selection" in result["selection_policy"]
+    assert "legacy_method_alias" not in result
