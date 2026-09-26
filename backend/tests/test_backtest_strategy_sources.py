@@ -1,8 +1,10 @@
 import pandas as pd
 from fastapi.testclient import TestClient
 
-import backend.backtest_api as backtest_api
 from backend.main import app
+import sys
+
+backtest_api = sys.modules.get("backtest_api") or sys.modules["backend.backtest_api"]
 
 
 client = TestClient(app)
