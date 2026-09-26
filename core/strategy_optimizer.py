@@ -247,14 +247,18 @@ class StrategyOptimizer:
     def _sanitize_nonnegative_values(self, values: List[int] | None, defaults: List[int]) -> List[int]:
         if values is None or len(values) == 0:
             return defaults
-        cleaned = sorted({int(value) for value in values if int(value) >= 0})
-        return cleaned or defaults
-
-    def _sanitize_nonnegative_values(self, values: List[int] | None, defaults: List[int]) -> List[int]:
-        if values is None or len(values) == 0:
-            return defaults
-        cleaned = sorted({int(value) for value in values if int(value) >= 0})
-        return cleaned or defaults
+        cleaned = set()
+        for raw in values:
+            if isinstance(raw, bool):
+                raise ValueError("Optimizer non-negative integer ranges cannot contain booleans.")
+            try:
+                numeric = float(raw)
+            except (TypeError, ValueError):
+                raise ValueError("Optimizer non-negative integer ranges must contain integers.") from None
+            if not numeric.is_integer() or numeric < 0:
+                raise ValueError("Optimizer non-negative integer ranges must contain non-negative integers.")
+            cleaned.add(int(numeric))
+        return sorted(cleaned)
 
     def _ema_rsi_candidates(self, custom_ranges: Dict[str, List[int]]) -> List[Dict[str, int]]:
         ema_fast = self._sanitize_values(custom_ranges.get("ema_fast"), [8, 12, 21])
@@ -355,6 +359,7 @@ class StrategyOptimizer:
     df['position_size_pct'] = {params['position_size_pct']}
     df['stop_loss_pct'] = {params['stop_loss_pct']}
     df['take_profit_pct'] = {params['take_profit_pct']}
+    df['cooldown_bars'] = {params['cooldown_bars']}
 """
         if strategy_type == "sma_cross":
             return f"""def strategy(df: pd.DataFrame) -> pd.DataFrame:
