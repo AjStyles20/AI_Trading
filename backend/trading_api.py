@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
 import asyncio
 import copy
@@ -24,7 +24,7 @@ class TradingStatus(BaseModel):
     execution_mode: str = "paper"
     strategy_code: str = ""
     strategy_id: Optional[int] = None
-    strategy_spec: Dict[str, Any] = {}
+    strategy_spec: Dict[str, Any] = Field(default_factory=dict)
 
 
 class TradingPreflightRequest(BaseModel):
