@@ -30,3 +30,51 @@ def test_optimizer_reserves_final_holdout():
     assert result["best"] is not None
     assert result["holdout"] is not None
     assert result["holdout"]["params"] == result["best"]["params"]
+
+
+def test_walk_forward_optimizer_selects_before_each_unseen_window():
+    result = strategy_optimizer.walk_forward_optimize(
+        frame(80),
+        strategy_type="sma_cross",
+        train_rows=30,
+        test_rows=10,
+        step_rows=10,
+        custom_ranges={
+            "sma_fast": [2],
+            "sma_slow": [4],
+            "stop_loss_pct": [2],
+            "take_profit_pct": [4],
+            "cooldown_bars": [0],
+            "position_size_pct": [50],
+        },
+        fee_pct=0,
+        slippage_pct=0,
+    )
+    assert result["method"] == "rolling_walk_forward_parameter_selection"
+    assert result["window_count"] == 5
+    assert "training window only" in result["selection_policy"]
+    for window in result["windows"]:
+        assert pd.Timestamp(window["train_end"]) < pd.Timestamp(window["test_start"])
+        assert window["selected_params"]["sma_fast"] == 2
+        assert "test_metrics" in window
+
+
+def test_walk_forward_optimizer_rejects_overlapping_oos_windows():
+    import pytest
+
+    with pytest.raises(ValueError, match="prevent overlapping OOS"):
+        strategy_optimizer.walk_forward_optimize(
+            frame(80),
+            strategy_type="sma_cross",
+            train_rows=30,
+            test_rows=10,
+            step_rows=5,
+            custom_ranges={
+                "sma_fast": [2],
+                "sma_slow": [4],
+                "stop_loss_pct": [2],
+                "take_profit_pct": [4],
+                "cooldown_bars": [0],
+                "position_size_pct": [50],
+            },
+        )
