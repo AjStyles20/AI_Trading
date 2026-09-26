@@ -235,6 +235,7 @@ class LiveTradingManager:
                         signal == "SELL"
                         and str(execution.status).lower() == "filled"
                         and float(execution.filled_qty or 0) > 0
+                        and float(execution.filled_qty or 0) >= float(order.qty)
                     ):
                         cooldown_bars = 0
                         if "cooldown_bars" in result_df.columns:
