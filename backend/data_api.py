@@ -4,7 +4,7 @@ from typing import Optional
 import sys, os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from core.data_service import market_data
+from core.data_service import MarketDataError, market_data
 
 router = APIRouter()
 
@@ -20,7 +20,9 @@ def get_price(asset_type: str, symbol: str):
     try:
         price = market_data.get_latest_price(symbol, asset_type)
         return {"symbol": symbol, "price": price}
-    except Exception as e:
+    except MarketDataError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/api/market/history")
@@ -29,8 +31,10 @@ def get_history(request: DataRequest):
         print(f"DEBUG: history request: {request}")
         if request.asset_type == "stock":
             df = market_data.get_stock_data(request.symbol, request.interval, request.period)
-        else:
+        elif request.asset_type == "crypto":
             df = market_data.get_crypto_data(request.symbol, request.interval, request.limit)
+        else:
+            raise ValueError("asset_type must be stock or crypto")
         
         # Convert index to UTC Unix milliseconds for unambiguous frontend parsing.
         # numpy int64 on a DatetimeIndex gives nanoseconds since epoch; divide by 10^6 for ms.
@@ -40,5 +44,7 @@ def get_history(request: DataRequest):
         df.index = df.index.view(np.int64) // 10**6  # nanoseconds -> milliseconds
         df.index.name = 'timestamp'
         return df.reset_index().to_dict(orient="records")
-    except Exception as e:
+    except MarketDataError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
