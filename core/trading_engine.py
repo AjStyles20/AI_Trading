@@ -1,20 +1,23 @@
 import pandas as pd
 import numpy as np
-from core.safe_strategy_runtime import safe_strategy_runtime
+from core.strategy_execution import execute_strategy_record
 from typing import Dict, Any, Optional
 
 class TradingEngine:
     def __init__(self):
         self.active_positions = {} # symbol -> position_data
 
-    def evaluate_strategy(self, strategy_code: str, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Executes the provided strategy code on the given DataFrame.
-        Expects a function named 'strategy(df)' that returns the modified DataFrame.
-        """
-        # Strategy failures are execution failures, not HOLD signals. Propagate the
-        # error so callers can fail closed and surface the unhealthy strategy.
-        result = safe_strategy_runtime.execute(strategy_code, df)
+    def evaluate_strategy(self, strategy, df: pd.DataFrame) -> pd.DataFrame:
+        """Execute an explicit strategy record, retaining raw-code compatibility."""
+        if isinstance(strategy, str):
+            strategy = {
+                "strategy_format": "legacy_python",
+                "strategy_spec": {},
+                "code": strategy,
+            }
+        if not isinstance(strategy, dict):
+            raise TypeError("strategy must be a persisted strategy record or legacy Python code")
+        result = execute_strategy_record(strategy, df)
         if not isinstance(result, pd.DataFrame):
             raise TypeError("strategy(df) must return a pandas DataFrame")
         if result.empty:
