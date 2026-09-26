@@ -195,8 +195,8 @@ class LiveTradingManager:
                     record_trade(
                         symbol,
                         signal,
-                        execution.filled_qty,
-                        execution.filled_price,
+                        order.qty,
+                        order.price,
                         is_paper=execution.execution_mode == "paper",
                         broker_id=execution.broker_id,
                         execution_mode=execution.execution_mode,
@@ -205,6 +205,9 @@ class LiveTradingManager:
                         broker_order_id=execution.metadata.get("broker_order_id"),
                         is_test=False,
                         metadata=execution.metadata,
+                        requested_qty=order.qty,
+                        filled_qty=execution.filled_qty,
+                        filled_price=execution.filled_price,
                     )
                     self.log(execution.message)
                 else:
