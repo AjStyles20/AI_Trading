@@ -41,16 +41,21 @@ class StrategyOptimizer:
                 fee_pct=fee_pct,
                 slippage_pct=slippage_pct,
             )
-            score = (
-                metrics["total_return_pct"] * 0.55
-                + metrics["win_rate_pct"] * 0.25
-                + metrics["buy_hold_return_pct"] * 0.05
-                - abs(metrics["max_drawdown_pct"]) * 0.35
+            closed_round_trips = int(metrics.get("closed_round_trips", 0))
+            evidence_factor = min(closed_round_trips / 5.0, 1.0)
+            raw_score = (
+                metrics["total_return_pct"] * 0.60
+                + metrics["win_rate_pct"] * 0.20
+                - abs(metrics["max_drawdown_pct"]) * 0.40
             )
+            score = raw_score * evidence_factor
             results.append({
                 "strategy_type": strategy_type,
                 "params": params,
                 "score": round(score, 3),
+                "raw_score": round(raw_score, 3),
+                "evidence_factor": round(evidence_factor, 3),
+                "closed_round_trips": closed_round_trips,
                 "code": strategy_code,
                 "metrics": {
                     "total_return_pct": round(metrics["total_return_pct"], 3),
@@ -59,6 +64,8 @@ class StrategyOptimizer:
                     "final_equity": round(metrics["final_equity"], 2),
                     "buy_hold_return_pct": round(metrics["buy_hold_return_pct"], 3),
                     "win_rate_pct": round(metrics["win_rate_pct"], 3),
+                    "closed_round_trips": closed_round_trips,
+                    "profit_factor": metrics.get("profit_factor"),
                 },
             })
 
