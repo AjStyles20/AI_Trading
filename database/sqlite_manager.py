@@ -45,7 +45,9 @@ def init_db():
         risk_max_order_notional REAL DEFAULT 1000.0,
         risk_max_position_pct REAL DEFAULT 25.0,
         risk_max_daily_loss_pct REAL DEFAULT 3.0,
-        risk_max_drawdown_pct REAL DEFAULT 10.0
+        risk_max_drawdown_pct REAL DEFAULT 10.0,
+        binance_environment TEXT DEFAULT 'live',
+        bitget_environment TEXT DEFAULT 'live'
     )
     ''')
 
@@ -56,6 +58,8 @@ def init_db():
         "risk_max_position_pct": "ALTER TABLE settings ADD COLUMN risk_max_position_pct REAL DEFAULT 25.0",
         "risk_max_daily_loss_pct": "ALTER TABLE settings ADD COLUMN risk_max_daily_loss_pct REAL DEFAULT 3.0",
         "risk_max_drawdown_pct": "ALTER TABLE settings ADD COLUMN risk_max_drawdown_pct REAL DEFAULT 10.0",
+        "binance_environment": "ALTER TABLE settings ADD COLUMN binance_environment TEXT DEFAULT 'live'",
+        "bitget_environment": "ALTER TABLE settings ADD COLUMN bitget_environment TEXT DEFAULT 'live'",
     }
     for column, statement in settings_column_migrations.items():
         if column not in existing_settings_columns:
