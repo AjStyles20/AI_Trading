@@ -356,7 +356,9 @@ def reconcile_trade_order(trade: Dict[str, Any], settings: Dict[str, Any]) -> Di
     if trade.get("is_test") or trade.get("execution_mode") != "live":
         return trade
     if str(trade.get("order_status", "")).lower() in FINAL_ORDER_STATUSES:
-        return trade
+        terminal = dict(trade)
+        terminal["_completed_exit_transition"] = False
+        return terminal
 
     broker = broker_registry.get(trade.get("broker_id", "paper"))
     status = broker.get_order_status(trade, settings)
@@ -453,7 +455,7 @@ def resolve_cooldown_bars(result_df) -> int:
     if "cooldown_bars" not in result_df.columns:
         return 0
     raw = result_df.iloc[-1]["cooldown_bars"]
-    if isinstance(raw, bool):
+    if isinstance(raw, bool) or type(raw).__name__ == "bool_":
         raise ValueError("cooldown_bars must contain non-negative integers.")
     try:
         numeric = float(raw)
