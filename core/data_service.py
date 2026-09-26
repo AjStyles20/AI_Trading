@@ -83,6 +83,41 @@ class MarketDataService:
                 f"Market data is stale: latest candle is {age} old; maximum allowed is {max_age}."
             )
 
+    def get_completed_candles(
+        self,
+        df: pd.DataFrame,
+        interval: str,
+        now: pd.Timestamp | None = None,
+    ) -> pd.DataFrame:
+        """Return only candles whose full interval has elapsed.
+
+        Market-data providers may include the currently forming candle. Astral must
+        not treat that row as a completed close for strategy/protection decisions.
+        """
+        if df is None or df.empty:
+            raise MarketDataError("Cannot select completed candles from empty market data.")
+        interval_minutes = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440}
+        minutes = interval_minutes.get(interval)
+        if minutes is None:
+            raise MarketDataError(f"Unsupported interval for completed-candle selection: {interval}")
+        current = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
+        if current.tzinfo is None:
+            current = current.tz_localize("UTC")
+        else:
+            current = current.tz_convert("UTC")
+
+        normalized = df.copy()
+        index = pd.DatetimeIndex(normalized.index)
+        if index.tz is None:
+            index = index.tz_localize("UTC")
+        else:
+            index = index.tz_convert("UTC")
+        close_times = index + pd.Timedelta(minutes=minutes)
+        completed = normalized.loc[close_times <= current]
+        if completed.empty:
+            raise MarketDataError("Market data contains no completed candles yet.")
+        return completed
+
     def get_stock_data(self, symbol: str, interval: str = "1d", period: str = None) -> pd.DataFrame:
         """Fetch historical stock data using yfinance."""
         if not period:
