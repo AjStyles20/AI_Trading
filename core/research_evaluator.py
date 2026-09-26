@@ -76,7 +76,7 @@ class ResearchEvaluator:
             )
             output["segments"][name] = metrics
         return output
-    def walk_forward(
+    def rolling_out_of_sample(
         self,
         strategy_code: str,
         df: pd.DataFrame,
@@ -122,7 +122,8 @@ class ResearchEvaluator:
         returns = [window["test_metrics"]["total_return_pct"] for window in windows]
         drawdowns = [window["test_metrics"]["max_drawdown_pct"] for window in windows]
         return {
-            "method": "rolling_walk_forward",
+            "method": "rolling_out_of_sample_fixed_strategy",
+            "selection_policy": "strategy is fixed before evaluation; train windows are context only and are not used for re-selection",
             "train_rows": train_rows,
             "test_rows": test_rows,
             "step_rows": step,
@@ -134,6 +135,34 @@ class ResearchEvaluator:
             },
             "windows": windows,
         }
+
+    def walk_forward(
+        self,
+        strategy_code: str,
+        df: pd.DataFrame,
+        train_rows: int,
+        test_rows: int,
+        step_rows: int | None = None,
+        initial_balance: float = 10000.0,
+        fee_pct: float = 0.1,
+        slippage_pct: float = 0.05,
+    ) -> Dict[str, Any]:
+        """Backward-compatible alias for fixed-strategy rolling OOS evaluation.
+
+        This is not parameter re-selection walk-forward optimization.
+        """
+        result = self.rolling_out_of_sample(
+            strategy_code=strategy_code,
+            df=df,
+            train_rows=train_rows,
+            test_rows=test_rows,
+            step_rows=step_rows,
+            initial_balance=initial_balance,
+            fee_pct=fee_pct,
+            slippage_pct=slippage_pct,
+        )
+        result["legacy_method_alias"] = "walk_forward"
+        return result
 
 
 research_evaluator = ResearchEvaluator()
