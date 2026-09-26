@@ -78,7 +78,14 @@ class BacktestEngine:
                 })
                 last_buy_value = None
 
-            current_equity = balance + (position * price if position > 0 else 0)
+            if position > 0:
+                mark_price = float(df['close'].iloc[index])
+                liquidation_price = mark_price * (1 - slippage_rate)
+                liquidation_gross = position * liquidation_price
+                liquidation_fee_mark = liquidation_gross * fee_rate
+                current_equity = balance + liquidation_gross - liquidation_fee_mark
+            else:
+                current_equity = balance
             equity_curve.append(float(current_equity))
 
         open_position = position > 0
@@ -96,10 +103,23 @@ class BacktestEngine:
         total_return = ((final_equity - initial_balance) / initial_balance) * 100
         buy_hold_return = ((float(df['close'].iloc[-1]) - float(df['close'].iloc[0])) / float(df['close'].iloc[0])) * 100
 
-        equity_series = pd.Series(equity_curve)
+        equity_curve[-1] = float(final_equity)
+        equity_series = pd.Series(equity_curve, dtype="float64")
         rolling_max = equity_series.cummax()
         drawdown = (equity_series - rolling_max) / rolling_max
-        max_drawdown = drawdown.min() * 100
+        max_drawdown = float(drawdown.min() * 100)
+
+        period_returns = equity_series.pct_change().replace([float("inf"), float("-inf")], pd.NA).dropna()
+        return_volatility_pct = float(period_returns.std(ddof=0) * 100) if len(period_returns) else 0.0
+        downside = period_returns[period_returns < 0]
+        downside_volatility_pct = float(downside.std(ddof=0) * 100) if len(downside) else 0.0
+        profit_factor = None
+        gross_profit = float(sum(pnl for pnl in round_trip_pnls if pnl > 0))
+        gross_loss = float(abs(sum(pnl for pnl in round_trip_pnls if pnl < 0)))
+        if gross_loss > 0:
+            profit_factor = gross_profit / gross_loss
+        elif gross_profit > 0:
+            profit_factor = None
 
         winners = len([pnl for pnl in round_trip_pnls if pnl > 0])
         win_rate = (winners / len(round_trip_pnls) * 100) if round_trip_pnls else 0.0
@@ -112,6 +132,9 @@ class BacktestEngine:
             "final_equity": final_equity,
             "total_return_pct": total_return,
             "max_drawdown_pct": max_drawdown,
+            "return_volatility_pct_per_bar": return_volatility_pct,
+            "downside_volatility_pct_per_bar": downside_volatility_pct,
+            "profit_factor": profit_factor,
             "trade_count": len(trade_history),
             "trade_history": trade_history,
             "equity_curve": equity_curve,
