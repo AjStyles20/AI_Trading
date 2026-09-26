@@ -5,6 +5,7 @@ from threading import Lock
 from uuid import uuid4
 
 from .base import BrokerClient, BrokerExecutionResult, BrokerOrder
+from database.sqlite_manager import clear_risk_equity_state, get_paper_account_state, save_paper_account_state
 
 
 class PaperBroker(BrokerClient):
@@ -18,12 +19,33 @@ class PaperBroker(BrokerClient):
         self.positions: dict[str, float] = defaultdict(float)
         self.last_prices: dict[str, float] = {}
         self._lock = Lock()
+        self._restore()
+
+    def _snapshot(self) -> dict:
+        return {
+            "starting_cash": self.starting_cash,
+            "cash": self.cash,
+            "positions": dict(self.positions),
+            "last_prices": dict(self.last_prices),
+        }
+
+    def _restore(self) -> None:
+        state = get_paper_account_state()
+        if not state:
+            save_paper_account_state(self._snapshot())
+            return
+        self.starting_cash = float(state.get("starting_cash", self.starting_cash))
+        self.cash = float(state.get("cash", self.starting_cash))
+        self.positions = defaultdict(float, {str(k): float(v) for k, v in (state.get("positions") or {}).items()})
+        self.last_prices = {str(k): float(v) for k, v in (state.get("last_prices") or {}).items()}
 
     def reset(self) -> None:
         with self._lock:
             self.cash = self.starting_cash
             self.positions.clear()
             self.last_prices.clear()
+            save_paper_account_state(self._snapshot())
+            clear_risk_equity_state(self.broker_id, "paper")
 
     def get_account_summary(self, settings: dict, execution_mode: str) -> dict:
         with self._lock:
@@ -93,6 +115,7 @@ class PaperBroker(BrokerClient):
                 if self.positions[order.symbol] <= 1e-12:
                     self.positions.pop(order.symbol, None)
             self.last_prices[order.symbol] = float(order.price)
+            save_paper_account_state(self._snapshot())
 
         return BrokerExecutionResult(
             broker_id=self.broker_id,
