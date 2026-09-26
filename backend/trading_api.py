@@ -12,6 +12,7 @@ from core.trading_engine import trading_engine
 from core.data_service import MarketDataError, market_data
 from core.risk_engine import risk_engine
 from core.position_ledger import reconstruct_confirmed_position
+from core.position_protection import evaluate_position_protection
 from database.sqlite_manager import record_trade, get_settings, get_trades, get_trade_by_id, get_strategy, update_trade_order_state, update_risk_equity_state
 
 router = APIRouter()
@@ -168,6 +169,26 @@ class LiveTradingManager:
                         f"RECONCILED SELL FILL: cooldown set to {self.cooldown_remaining} bar(s)."
                     )
 
+                confirmed_position = reconstruct_confirmed_position(
+                    scoped_trades,
+                    symbol=symbol,
+                    broker_id=broker_id,
+                    execution_mode=execution_mode,
+                )
+                if confirmed_position.qty > 0:
+                    price_column = 'close'
+                    protection = evaluate_position_protection(
+                        confirmed_position,
+                        market_price=float(df.iloc[-1][price_column]),
+                        stop_loss_pct=confirmed_position.stop_loss_pct,
+                        take_profit_pct=confirmed_position.take_profit_pct,
+                    )
+                    if protection.should_exit:
+                        self.log(
+                            f"PROTECTION TRIGGERED (observation only): {protection.reason} "
+                            f"at {protection.market_price:.8f}; trigger={protection.trigger_price:.8f}."
+                        )
+
                 # Evaluate each completed/latest candle at most once. Polling may run
                 # several times within a timeframe, but it must never create repeated
                 # decisions or orders from the same market observation.
@@ -194,12 +215,6 @@ class LiveTradingManager:
                     self.cooldown_remaining -= 1
                 
                 if signal:
-                    confirmed_position = reconstruct_confirmed_position(
-                        scoped_trades,
-                        symbol=symbol,
-                        broker_id=broker_id,
-                        execution_mode=execution_mode,
-                    )
                     if signal == "BUY" and confirmed_position.qty > 0:
                         self.log(
                             f"BUY BLOCKED: confirmed long position already open "
