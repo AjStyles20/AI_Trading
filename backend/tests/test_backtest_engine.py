@@ -84,3 +84,31 @@ def test_terminal_liquidation_cost_is_not_added_to_trade_count():
     assert result["trade_count"] == 1
     assert result["closed_round_trips"] == 0
     assert result["final_liquidation_value"] > 0
+
+
+def test_equity_curve_ends_at_final_liquidation_equity():
+    df = pd.DataFrame({
+        "open": [100.0, 100.0, 110.0],
+        "close": [100.0, 105.0, 110.0],
+        "signal": [1, 0, 0],
+    })
+    result = BacktestEngine().run_backtest(
+        df, initial_balance=10000, fee_pct=0.5, slippage_pct=0.5, execution_delay_bars=0
+    )
+    assert result["equity_curve"][-1] == result["final_equity"]
+    assert result["max_drawdown_pct"] <= 0
+
+
+def test_profit_factor_uses_closed_round_trip_pnl():
+    df = pd.DataFrame({
+        "open": [100.0, 110.0, 100.0, 95.0],
+        "close": [100.0, 110.0, 100.0, 95.0],
+        "signal": [1, -1, 1, -1],
+    })
+    result = BacktestEngine().run_backtest(
+        df, initial_balance=10000, fee_pct=0, slippage_pct=0, execution_delay_bars=0
+    )
+    assert result["closed_round_trips"] == 2
+    assert result["profit_factor"] is not None
+    assert result["profit_factor"] > 0
+    assert result["return_volatility_pct_per_bar"] >= 0
