@@ -87,8 +87,11 @@ def test_holdout_warmup_uses_past_context_without_adding_evaluation_rows():
     )
     assert warm["rows"] == cold["rows"]
     assert warm["warmup_rows"] == 3
-    assert warm["segments"]["validation"]["trade_history"][0]["timestamp"] == frame(100).index[60]
-    assert warm["segments"]["test"]["trade_history"][0]["timestamp"] == frame(100).index[80]
+    # Signals generated on the first OOS row execute one bar later by design.
+    assert warm["segments"]["validation"]["trade_history"][0]["timestamp"] == frame(100).index[61]
+    assert warm["segments"]["test"]["trade_history"][0]["timestamp"] == frame(100).index[81]
+    assert warm["segments"]["validation"]["trade_history"][0]["timestamp"] > frame(100).index[60]
+    assert warm["segments"]["test"]["trade_history"][0]["timestamp"] > frame(100).index[80]
 
 
 def test_rolling_oos_warmup_never_trades_before_test_start():
