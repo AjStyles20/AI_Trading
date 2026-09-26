@@ -223,3 +223,31 @@ def test_optimizer_warns_when_candidates_exceed_development_rows():
     risk = result["optimization_risk"]
     assert risk["candidate_count"] > risk["development_rows"]
     assert any("multiple-testing overfit" in warning for warning in risk["warnings"])
+
+
+def test_walk_forward_exposes_selection_risk_per_window():
+    result = strategy_optimizer.walk_forward_optimize(
+        frame(80),
+        strategy_type="sma_cross",
+        train_rows=30,
+        test_rows=10,
+        step_rows=10,
+        custom_ranges={
+            "sma_fast": [2, 3],
+            "sma_slow": [4, 5],
+            "stop_loss_pct": [2],
+            "take_profit_pct": [4],
+            "cooldown_bars": [0],
+            "position_size_pct": [50],
+        },
+        fee_pct=0,
+        slippage_pct=0,
+    )
+    assert result["window_count"] == 5
+    assert result["summary"]["weak_selection_windows"] >= 1
+    assert result["summary"]["total_selection_warnings"] >= result["summary"]["weak_selection_windows"]
+    for window in result["windows"]:
+        assert "selection_risk" in window
+        assert "candidate_count" in window["selection_risk"]
+        assert "selection_evidence_factor" in window
+        assert "selection_raw_score" in window
