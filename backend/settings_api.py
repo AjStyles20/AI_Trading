@@ -14,6 +14,7 @@ class SettingsUpdate(BaseModel):
     theme: Optional[str] = None
     paper_trading: Optional[bool] = None
     risk_live_trading_enabled: Optional[bool] = None
+    autonomy_kill_switch: Optional[bool] = None
     risk_max_order_notional: Optional[float] = None
     risk_max_position_pct: Optional[float] = None
     risk_max_daily_loss_pct: Optional[float] = None
@@ -67,6 +68,7 @@ def save_settings(update: SettingsUpdate):
             theme=update.theme,
             paper_trading=update.paper_trading,
             risk_live_trading_enabled=update.risk_live_trading_enabled,
+            autonomy_kill_switch=update.autonomy_kill_switch,
             risk_max_order_notional=update.risk_max_order_notional,
             risk_max_position_pct=update.risk_max_position_pct,
             risk_max_daily_loss_pct=update.risk_max_daily_loss_pct,
