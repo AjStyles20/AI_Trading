@@ -65,6 +65,31 @@ def init_db():
         if column not in existing_settings_columns:
             cursor.execute(statement)
 
+    # One-time compatibility migration: broker environment flags were historically
+    # mixed into api_keys. Move only those non-secret flags into dedicated columns.
+    row = cursor.execute(
+        "SELECT api_keys, binance_environment, bitget_environment FROM settings WHERE id = 1"
+    ).fetchone()
+    if row:
+        try:
+            legacy_keys = json.loads(row[0] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            legacy_keys = {}
+        if isinstance(legacy_keys, dict):
+            changed = False
+            binance_flag = legacy_keys.pop("binance_testnet", None)
+            bitget_flag = legacy_keys.pop("bitget_demo", None)
+            if binance_flag is not None:
+                binance_env = "testnet" if str(binance_flag).strip().lower() in {"1", "true", "yes", "on"} else "live"
+                cursor.execute("UPDATE settings SET binance_environment = ? WHERE id = 1", (binance_env,))
+                changed = True
+            if bitget_flag is not None:
+                bitget_env = "demo" if str(bitget_flag).strip().lower() in {"1", "true", "yes", "on"} else "live"
+                cursor.execute("UPDATE settings SET bitget_environment = ? WHERE id = 1", (bitget_env,))
+                changed = True
+            if changed:
+                cursor.execute("UPDATE settings SET api_keys = ? WHERE id = 1", (json.dumps(legacy_keys),))
+
     # Persistent account equity baselines for loss/drawdown risk controls.
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS risk_equity_state (
