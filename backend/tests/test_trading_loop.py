@@ -619,6 +619,7 @@ async def test_runtime_submits_guarded_stop_loss_exit_before_strategy_evaluation
     monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: DummyBroker())
     monkeypatch.setattr(trading_api.market_data, "get_crypto_data", lambda *args, **kwargs: frame.copy())
     monkeypatch.setattr(trading_api.market_data, "assert_fresh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(trading_api.market_data, "get_latest_price", lambda *args, **kwargs: 96.8)
     monkeypatch.setattr(trading_api, "get_settings", lambda: {})
     monkeypatch.setattr(trading_api, "get_trades", lambda limit=100: [])
     monkeypatch.setattr(trading_api, "reconcile_unresolved_orders", lambda *args, **kwargs: [])
@@ -658,9 +659,11 @@ async def test_runtime_submits_guarded_stop_loss_exit_before_strategy_evaluation
     order = submitted[0]
     assert order.side == "SELL"
     assert order.qty == pytest.approx(1.25)
-    assert order.price == pytest.approx(97.5)
+    assert order.price == pytest.approx(96.8)
     assert order.metadata["protection_reason"] == "stop_loss"
     assert order.metadata["protection_trigger_price"] == pytest.approx(98.0)
+    assert order.metadata["protection_observation_price"] == pytest.approx(97.5)
+    assert order.metadata["execution_reference_price"] == pytest.approx(96.8)
     assert any("PROTECTION TRIGGERED: stop_loss" in entry for entry in manager.logs)
 
 
