@@ -94,6 +94,85 @@ class StrategyOptimizer:
             "results": ranked[:10],
         }
 
+
+    def walk_forward_optimize(
+        self,
+        df: pd.DataFrame,
+        strategy_type: str,
+        train_rows: int,
+        test_rows: int,
+        step_rows: int | None = None,
+        custom_ranges: Dict[str, List[int]] | None = None,
+        initial_balance: float = 10000.0,
+        fee_pct: float = 0.1,
+        slippage_pct: float = 0.05,
+    ) -> Dict[str, Any]:
+        """Select parameters on each past training window, then evaluate once on unseen data."""
+        if train_rows < 30 or test_rows < 5:
+            raise ValueError("Walk-forward optimization requires train_rows >= 30 and test_rows >= 5.")
+        step = step_rows or test_rows
+        if step < test_rows:
+            raise ValueError("step_rows must be >= test_rows to prevent overlapping OOS test windows.")
+        if len(df) < train_rows + test_rows:
+            raise ValueError("Dataset is too short for one complete walk-forward optimization window.")
+
+        windows: List[Dict[str, Any]] = []
+        start = 0
+        window_id = 1
+        while start + train_rows + test_rows <= len(df):
+            train_df = df.iloc[start:start + train_rows].copy()
+            test_df = df.iloc[start + train_rows:start + train_rows + test_rows].copy()
+
+            selection = self.optimize(
+                train_df,
+                strategy_type=strategy_type,
+                custom_ranges=custom_ranges,
+                initial_balance=initial_balance,
+                fee_pct=fee_pct,
+                slippage_pct=slippage_pct,
+            )
+            best = selection.get("best")
+            if best is None:
+                raise ValueError(f"No candidate strategy was selected in walk-forward window {window_id}.")
+
+            test_signals = safe_strategy_runtime.execute(best["code"], test_df)
+            test_metrics = backtest_engine.run_backtest(
+                test_signals,
+                initial_balance=initial_balance,
+                fee_pct=fee_pct,
+                slippage_pct=slippage_pct,
+            )
+            windows.append({
+                "window": window_id,
+                "train_start": str(train_df.index[0]),
+                "train_end": str(train_df.index[-1]),
+                "test_start": str(test_df.index[0]),
+                "test_end": str(test_df.index[-1]),
+                "selected_params": best["params"],
+                "selection_score": best["score"],
+                "test_metrics": test_metrics,
+            })
+            start += step
+            window_id += 1
+
+        returns = [window["test_metrics"]["total_return_pct"] for window in windows]
+        drawdowns = [window["test_metrics"]["max_drawdown_pct"] for window in windows]
+        return {
+            "method": "rolling_walk_forward_parameter_selection",
+            "selection_policy": "parameters are selected using each past training window only, frozen, then evaluated once on the following unseen test window",
+            "strategy_type": strategy_type,
+            "train_rows": train_rows,
+            "test_rows": test_rows,
+            "step_rows": step,
+            "window_count": len(windows),
+            "summary": {
+                "mean_test_return_pct": round(sum(returns) / len(returns), 4),
+                "positive_test_windows": sum(value > 0 for value in returns),
+                "worst_test_drawdown_pct": round(min(drawdowns), 4),
+            },
+            "windows": windows,
+        }
+
     def _sanitize_values(self, values: List[int] | None, defaults: List[int]) -> List[int]:
         if not values:
             return defaults
