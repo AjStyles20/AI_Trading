@@ -141,9 +141,12 @@ class LiveTradingManager:
                     await asyncio.sleep(get_poll_delay_seconds(interval))
                     continue
 
-                # Normalize columns to lowercase for strategy consistency
+                # Normalize columns to lowercase for strategy consistency. Freshness
+                # is assessed on the provider frame, then trading decisions consume only
+                # fully elapsed candles so a forming bar cannot trigger strategy/protection.
                 df.columns = [c.lower() for c in df.columns]
                 market_data.assert_fresh(df, interval, asset_type=asset_type)
+                df = market_data.get_completed_candles(df, interval)
 
                 # Broker order lifecycle is independent of strategy signals and candle
                 # evaluation. Reconcile every poll so asynchronous fills are observed
