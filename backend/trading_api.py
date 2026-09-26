@@ -365,9 +365,17 @@ def reconcile_trade_order(trade: Dict[str, Any], settings: Dict[str, Any]) -> Di
     updated = dict(trade)
     updated["order_status"] = status.get("order_status", trade.get("order_status"))
     updated["broker_order_id"] = status.get("broker_order_id", trade.get("broker_order_id"))
-    updated["metadata"] = status.get("metadata", trade.get("metadata", {}))
+    metadata = dict(trade.get("metadata") or {})
+    metadata.update(status.get("metadata") or {})
+    updated["metadata"] = metadata
     if "filled_qty" in status:
-        updated["filled_qty"] = float(status["filled_qty"] or 0)
+        prior_filled_qty = float(trade.get("filled_qty") or 0)
+        broker_filled_qty = float(status["filled_qty"] or 0)
+        if broker_filled_qty + 1e-12 < prior_filled_qty:
+            raise ValueError(
+                f"Broker cumulative filled quantity regressed from {prior_filled_qty} to {broker_filled_qty}."
+            )
+        updated["filled_qty"] = broker_filled_qty
     if "filled_price" in status:
         updated["filled_price"] = float(status["filled_price"] or 0)
 
@@ -385,6 +393,7 @@ def reconcile_trade_order(trade: Dict[str, Any], settings: Dict[str, Any]) -> Di
         not was_final
         and str(updated.get("side", "")).upper() == "SELL"
         and str(updated.get("order_status", "")).lower() == "filled"
+        and requested_qty > 0
         and float(updated.get("filled_qty") or 0) > 0
         and float(updated.get("filled_qty") or 0) >= requested_qty
     )
