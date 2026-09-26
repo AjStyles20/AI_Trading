@@ -109,7 +109,7 @@ class LiveTradingManager:
 
                 # Normalize columns to lowercase for strategy consistency
                 df.columns = [c.lower() for c in df.columns]
-                market_data.assert_fresh(df, interval)
+                market_data.assert_fresh(df, interval, asset_type=asset_type)
 
                 # 2. Evaluate strategy
                 self.log("Evaluating strategy signals...")
