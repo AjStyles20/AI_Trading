@@ -662,3 +662,72 @@ async def test_runtime_submits_guarded_stop_loss_exit_before_strategy_evaluation
     assert order.metadata["protection_reason"] == "stop_loss"
     assert order.metadata["protection_trigger_price"] == pytest.approx(98.0)
     assert any("PROTECTION TRIGGERED: stop_loss" in entry for entry in manager.logs)
+
+
+
+@pytest.mark.asyncio
+async def test_runtime_protection_does_not_race_unresolved_order(monkeypatch):
+    import pandas as pd
+    import backend.trading_api as trading_api
+    from core.position_ledger import ConfirmedPosition
+
+    manager = trading_api.LiveTradingManager()
+    manager.is_running = True
+    manager.config = {
+        "symbol": "BTC/USDT", "asset_type": "crypto", "interval": "1h",
+        "broker_id": "paper", "execution_mode": "paper",
+        "strategy_code": "def strategy(df): return df",
+    }
+    frame = pd.DataFrame(
+        {"open": [98.0], "high": [98.5], "low": [97.0], "close": [97.5], "volume": [10.0]},
+        index=pd.DatetimeIndex([pd.Timestamp("2026-09-26T14:00:00Z")]),
+    )
+    unresolved = [{
+        "id": 7, "symbol": "BTC/USDT", "side": "BUY", "broker_id": "paper",
+        "execution_mode": "paper", "order_status": "partially_filled",
+        "requested_qty": 2.0, "filled_qty": 1.0, "filled_price": 100.0,
+        "is_test": False, "metadata": {"stop_loss_pct": 2.0, "take_profit_pct": 4.0},
+    }]
+
+    class DummyBroker:
+        display_name = "Paper"
+        supported_asset_types = {"crypto"}
+
+    monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: DummyBroker())
+    monkeypatch.setattr(trading_api.market_data, "get_crypto_data", lambda *args, **kwargs: frame.copy())
+    monkeypatch.setattr(trading_api.market_data, "assert_fresh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(trading_api, "get_settings", lambda: {})
+    monkeypatch.setattr(trading_api, "get_trades", lambda limit=100: unresolved)
+    monkeypatch.setattr(trading_api, "reconcile_unresolved_orders", lambda *args, **kwargs: unresolved)
+    monkeypatch.setattr(trading_api, "has_unresolved_order", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        trading_api, "reconstruct_confirmed_position",
+        lambda *args, **kwargs: ConfirmedPosition(
+            symbol="BTC/USDT", broker_id="paper", execution_mode="paper",
+            qty=1.0, average_entry_price=100.0, cost_basis=100.0,
+            stop_loss_pct=2.0, take_profit_pct=4.0,
+        ),
+    )
+    monkeypatch.setattr(
+        trading_api, "get_risk_context",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("risk context must not be reached while an order is unresolved")
+        ),
+    )
+    monkeypatch.setattr(
+        trading_api, "submit_guarded_order",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("protective order must not race an unresolved order")
+        ),
+    )
+    monkeypatch.setattr(trading_api.trading_engine, "evaluate_strategy", lambda *args: frame.assign(signal=0))
+    monkeypatch.setattr(trading_api.trading_engine, "get_signal", lambda df: None)
+
+    async def stop_after_sleep(seconds):
+        manager.is_running = False
+
+    monkeypatch.setattr(trading_api.asyncio, "sleep", stop_after_sleep)
+    await manager.run_loop()
+
+    assert any("PROTECTION TRIGGERED: stop_loss" in entry for entry in manager.logs)
+    assert any("PROTECTION ORDER BLOCKED: unresolved prior broker order" in entry for entry in manager.logs)
