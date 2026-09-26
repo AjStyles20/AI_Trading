@@ -23,8 +23,7 @@ class BitgetBroker(BrokerClient):
         return resolve_api_keys(settings)
 
     def _use_demo(self, settings: dict) -> bool:
-        api_keys = self._get_api_keys(settings)
-        return str(api_keys.get("bitget_demo", "")).strip().lower() in {"1", "true", "yes", "on"}
+        return settings.get("bitget_environment", "live") == "demo"
 
     def _get_environment_label(self, settings: dict) -> str:
         return "demo" if self._use_demo(settings) else "live"
