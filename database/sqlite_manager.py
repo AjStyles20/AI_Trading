@@ -185,7 +185,8 @@ def get_settings():
         cursor.execute("""
             SELECT id, api_keys, theme, paper_trading,
                    risk_live_trading_enabled, risk_max_order_notional, risk_max_position_pct,
-                   risk_max_daily_loss_pct, risk_max_drawdown_pct
+                   risk_max_daily_loss_pct, risk_max_drawdown_pct,
+                   binance_environment, bitget_environment
             FROM settings WHERE id=1
         """)
         row = cursor.fetchone()
@@ -201,6 +202,8 @@ def get_settings():
                 "risk_max_position_pct": float(row[6] or 25.0),
                 "risk_max_daily_loss_pct": float(row[7] or 3.0),
                 "risk_max_drawdown_pct": float(row[8] or 10.0),
+                "binance_environment": row[9] or "live",
+                "bitget_environment": row[10] or "live",
             }
     except sqlite3.Error:
         return None
@@ -255,6 +258,8 @@ def update_settings(
     risk_max_position_pct: float = None,
     risk_max_daily_loss_pct: float = None,
     risk_max_drawdown_pct: float = None,
+    binance_environment: str = None,
+    bitget_environment: str = None,
 ):
     current = get_settings()
     if not current:
@@ -280,13 +285,21 @@ def update_settings(
     if not 0 < max_drawdown_pct <= 100:
         raise ValueError("risk_max_drawdown_pct must be between 0 and 100")
 
+    next_binance_environment = binance_environment if binance_environment is not None else current["binance_environment"]
+    next_bitget_environment = bitget_environment if bitget_environment is not None else current["bitget_environment"]
+    if next_binance_environment not in {"live", "testnet"}:
+        raise ValueError("binance_environment must be 'live' or 'testnet'")
+    if next_bitget_environment not in {"live", "demo"}:
+        raise ValueError("bitget_environment must be 'live' or 'demo'")
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         UPDATE settings
         SET api_keys = ?, theme = ?, paper_trading = ?,
             risk_live_trading_enabled = ?, risk_max_order_notional = ?, risk_max_position_pct = ?,
-            risk_max_daily_loss_pct = ?, risk_max_drawdown_pct = ?
+            risk_max_daily_loss_pct = ?, risk_max_drawdown_pct = ?,
+            binance_environment = ?, bitget_environment = ?
         WHERE id = 1
     """, (
         json.dumps(_preserve_legacy_api_keys(api_keys, current["api_keys"])),
@@ -297,6 +310,8 @@ def update_settings(
         max_position_pct,
         max_daily_loss_pct,
         max_drawdown_pct,
+        next_binance_environment,
+        next_bitget_environment,
     ))
     conn.commit()
     conn.close()
