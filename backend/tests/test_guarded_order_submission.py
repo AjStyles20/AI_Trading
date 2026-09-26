@@ -14,6 +14,7 @@ def order():
 
 
 def call(broker, item):
+    trading_api.get_settings = lambda: {"autonomy_kill_switch": False}
     return trading_api.submit_guarded_order(
         broker=broker, order=item, settings={}, execution_mode="paper",
         broker_id="paper", account_equity=1000.0, current_position_qty=0.0,
@@ -81,3 +82,27 @@ def test_guarded_submission_rejects_nonpositive_normalized_quantity(monkeypatch)
 
     with pytest.raises(ValueError, match="greater than zero"):
         call(broker, item)
+
+
+def test_guarded_submission_kill_switch_blocks_before_risk_broker_or_persistence(monkeypatch):
+    item = order()
+    broker = SimpleNamespace(
+        validate_order=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not validate")),
+        execute_order=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not execute")),
+    )
+    monkeypatch.setattr(trading_api, "get_settings", lambda: {"autonomy_kill_switch": True})
+    monkeypatch.setattr(
+        trading_api.risk_engine, "evaluate_order",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("must not evaluate risk")),
+    )
+    monkeypatch.setattr(
+        trading_api, "record_trade",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not persist")),
+    )
+
+    with pytest.raises(ValueError, match="KILL SWITCH"):
+        trading_api.submit_guarded_order(
+            broker=broker, order=item, settings={}, execution_mode="paper",
+            broker_id="paper", account_equity=1000.0, current_position_qty=0.0,
+            day_start_equity=1000.0, peak_equity=1000.0,
+        )
