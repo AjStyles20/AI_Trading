@@ -173,3 +173,36 @@ def test_broker_status_fill_quantity_is_cumulative(
     second = broker.get_order_status(trade, {})
     assert second["filled_qty"] == expected_second
     assert second["filled_qty"] != expected_second - expected_first
+
+
+
+def test_binance_execute_does_not_fabricate_fill_when_execution_fields_are_missing(monkeypatch):
+    from backend.broker_integration.base import BrokerOrder
+
+    broker = BinanceBroker()
+    order = BrokerOrder(
+        symbol="BTC/USDT",
+        side="BUY",
+        qty=2.0,
+        price=100.0,
+        asset_type="crypto",
+        metadata={"interval": "1h"},
+    )
+    monkeypatch.setattr(broker, "is_configured", lambda settings: True)
+    monkeypatch.setattr(
+        broker,
+        "validate_order",
+        lambda *args, **kwargs: {"ok": True, "normalized_qty": 2.0, "warnings": []},
+    )
+    monkeypatch.setattr(
+        broker,
+        "_signed_request",
+        lambda *args, **kwargs: {"orderId": 123, "status": "NEW"},
+    )
+
+    result = broker.execute_order(order, "live", {})
+
+    assert result.status == "new"
+    assert result.filled_qty == 0.0
+    assert result.filled_price == 0.0
+    assert result.metadata["broker_order_id"] == 123
