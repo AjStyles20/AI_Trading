@@ -81,10 +81,16 @@ class DeclarativeStrategyEngine:
 
     @staticmethod
     def _nonnegative_int(params: Dict[str, Any], key: str) -> int:
-        value = int(params.get(key, 0))
-        if value < 0:
-            raise ValueError(f"{key} must be non-negative.")
-        return value
+        raw = params.get(key, 0)
+        if isinstance(raw, bool):
+            raise ValueError(f"{key} must be a non-negative integer.")
+        try:
+            numeric = float(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"{key} must be a non-negative integer.") from None
+        if not numeric.is_integer() or numeric < 0:
+            raise ValueError(f"{key} must be a non-negative integer.")
+        return int(numeric)
 
     @staticmethod
     def _bounded_pct(params: Dict[str, Any], key: str, allow_zero: bool = True) -> float:
