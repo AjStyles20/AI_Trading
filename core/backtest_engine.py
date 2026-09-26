@@ -20,6 +20,36 @@ class BacktestEngine:
         """
         if 'signal' not in df.columns or 'close' not in df.columns:
             raise ValueError(f"DataFrame missing required columns. Found: {list(df.columns)}")
+        if df.empty:
+            raise ValueError("Backtest requires at least one market-data row.")
+        if initial_balance <= 0:
+            raise ValueError("initial_balance must be greater than zero.")
+        if fee_pct < 0 or slippage_pct < 0:
+            raise ValueError("fee_pct and slippage_pct must be non-negative.")
+        if execution_delay_bars < 0:
+            raise ValueError("execution_delay_bars must be non-negative.")
+
+        price_columns = ["close"]
+        if execution_delay_bars > 0 and "open" in df.columns:
+            price_columns.append("open")
+        for column in price_columns:
+            numeric = pd.to_numeric(df[column], errors="coerce")
+            if numeric.isna().any():
+                raise ValueError(f"Price column '{column}' contains missing or non-numeric values.")
+            if (numeric <= 0).any():
+                raise ValueError(f"Price column '{column}' must contain only positive values.")
+
+        signals = pd.to_numeric(df["signal"], errors="coerce")
+        if signals.isna().any():
+            raise ValueError("Signal column contains missing or non-numeric values.")
+        invalid_signals = sorted(set(signals[~signals.isin([-1, 0, 1])].tolist()))
+        if invalid_signals:
+            raise ValueError(f"Signal column contains unsupported values: {invalid_signals}. Expected -1, 0, or 1.")
+
+        if not df.index.is_monotonic_increasing:
+            raise ValueError("Market data index must be ordered from oldest to newest.")
+        if df.index.has_duplicates:
+            raise ValueError("Market data index must not contain duplicate timestamps.")
 
         balance = initial_balance
         position = 0.0
@@ -30,7 +60,7 @@ class BacktestEngine:
         slippage_rate = max(slippage_pct, 0) / 100
         last_buy_value = None
 
-        execution_delay_bars = max(int(execution_delay_bars), 0)
+        execution_delay_bars = int(execution_delay_bars)
 
         for index in range(len(df)):
             signal_index = index - execution_delay_bars
