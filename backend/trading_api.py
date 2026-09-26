@@ -451,6 +451,63 @@ def has_unresolved_order(
             return True
     return False
 
+
+def submit_guarded_order(
+    *,
+    broker,
+    order: BrokerOrder,
+    settings: Dict[str, Any],
+    execution_mode: str,
+    broker_id: str,
+    account_equity: float | None,
+    current_position_qty: float | None,
+    day_start_equity: float | None,
+    peak_equity: float | None,
+):
+    """Validate, submit, and persist one autonomous order through shared safeguards."""
+    risk = risk_engine.evaluate_order(
+        side=order.side,
+        qty=order.qty,
+        price=order.price,
+        execution_mode=execution_mode,
+        settings=settings,
+        current_position_qty=current_position_qty,
+        account_equity=float(account_equity) if account_equity is not None else None,
+        day_start_equity=day_start_equity,
+        peak_equity=peak_equity,
+    )
+    if not risk.approved:
+        raise ValueError(f"RISK BLOCKED ORDER: {'; '.join(risk.reasons)}")
+
+    broker_validation = broker.validate_order(order, execution_mode, settings)
+    if not broker_validation.get("ok", False):
+        raise ValueError(f"BROKER VALIDATION BLOCKED ORDER: {broker_validation}")
+
+    order.qty = float(broker_validation.get("normalized_qty", order.qty))
+    if order.qty <= 0:
+        raise ValueError("Broker-normalized order quantity must be greater than zero.")
+
+    execution = broker.execute_order(order, execution_mode, settings)
+    record_trade(
+        order.symbol,
+        order.side,
+        order.qty,
+        order.price,
+        is_paper=execution.execution_mode == "paper",
+        broker_id=execution.broker_id,
+        execution_mode=execution.execution_mode,
+        order_status=execution.status,
+        order_type="market",
+        broker_order_id=execution.metadata.get("broker_order_id"),
+        is_test=False,
+        metadata=execution.metadata,
+        requested_qty=order.qty,
+        filled_qty=execution.filled_qty,
+        filled_price=execution.filled_price,
+    )
+    return execution
+
+
 def should_start_cooldown(signal: str, execution, requested_qty: float) -> bool:
     """Start cooldown only after the requested exit is completely filled."""
     return (
