@@ -1,3 +1,4 @@
+import pytest
 import pandas as pd
 
 from core.backtest_engine import BacktestEngine
@@ -112,3 +113,66 @@ def test_profit_factor_uses_closed_round_trip_pnl():
     assert result["profit_factor"] is not None
     assert result["profit_factor"] > 0
     assert result["return_volatility_pct_per_bar"] >= 0
+
+
+@pytest.mark.parametrize(
+    "column,values,error_fragment",
+    [
+        ("close", [100.0, float("nan")], "missing or non-numeric"),
+        ("close", [100.0, 0.0], "positive values"),
+        ("signal", [1, 2], "unsupported values"),
+    ],
+)
+def test_backtest_rejects_invalid_market_inputs(column, values, error_fragment):
+    data = {
+        "open": [100.0, 100.0],
+        "close": [100.0, 100.0],
+        "signal": [1, 0],
+    }
+    data[column] = values
+    df = pd.DataFrame(data)
+    with pytest.raises(ValueError, match=error_fragment):
+        BacktestEngine().run_backtest(df, execution_delay_bars=0)
+
+
+def test_backtest_rejects_reverse_chronological_data():
+    df = pd.DataFrame(
+        {
+            "open": [100.0, 101.0],
+            "close": [100.0, 101.0],
+            "signal": [1, 0],
+        },
+        index=pd.to_datetime(["2026-01-02", "2026-01-01"]),
+    )
+    with pytest.raises(ValueError, match="oldest to newest"):
+        BacktestEngine().run_backtest(df)
+
+
+def test_backtest_rejects_duplicate_timestamps():
+    df = pd.DataFrame(
+        {
+            "open": [100.0, 101.0],
+            "close": [100.0, 101.0],
+            "signal": [1, 0],
+        },
+        index=pd.to_datetime(["2026-01-01", "2026-01-01"]),
+    )
+    with pytest.raises(ValueError, match="duplicate timestamps"):
+        BacktestEngine().run_backtest(df)
+
+
+def test_execution_delay_prevents_same_bar_signal_fill():
+    df = pd.DataFrame({
+        "open": [100.0, 200.0],
+        "close": [100.0, 200.0],
+        "signal": [1, 0],
+    })
+    delayed = BacktestEngine().run_backtest(
+        df, initial_balance=10000, fee_pct=0, slippage_pct=0, execution_delay_bars=1
+    )
+    immediate = BacktestEngine().run_backtest(
+        df, initial_balance=10000, fee_pct=0, slippage_pct=0, execution_delay_bars=0
+    )
+    assert delayed["trade_history"][0]["price"] == 200.0
+    assert immediate["trade_history"][0]["price"] == 100.0
+    assert delayed["final_equity"] < immediate["final_equity"]
