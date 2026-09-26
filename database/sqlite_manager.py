@@ -158,10 +158,14 @@ def init_db():
         "broker_order_id": "ALTER TABLE trades ADD COLUMN broker_order_id TEXT",
         "is_test": "ALTER TABLE trades ADD COLUMN is_test BOOLEAN DEFAULT 0",
         "metadata": "ALTER TABLE trades ADD COLUMN metadata TEXT DEFAULT '{}'",
+        "requested_qty": "ALTER TABLE trades ADD COLUMN requested_qty REAL",
+        "filled_qty": "ALTER TABLE trades ADD COLUMN filled_qty REAL DEFAULT 0",
+        "filled_price": "ALTER TABLE trades ADD COLUMN filled_price REAL DEFAULT 0",
     }
     for column, statement in trade_column_migrations.items():
         if column not in existing_trade_columns:
             cursor.execute(statement)
+    cursor.execute("UPDATE trades SET requested_qty = qty WHERE requested_qty IS NULL")
 
     # Ensure a default settings row exists
     cursor.execute("INSERT OR IGNORE INTO settings (id, api_keys, theme, paper_trading) VALUES (1, '{}', 'dark', 1)")
