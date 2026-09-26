@@ -44,7 +44,7 @@ class MarketDataService:
             return "600d" # Safe limit for yfinance 1h/4h data
         return "1y" # default for 1d and others
 
-    def assert_fresh(self, df: pd.DataFrame, interval: str, now: pd.Timestamp | None = None) -> None:
+    def assert_fresh(self, df: pd.DataFrame, interval: str, now: pd.Timestamp | None = None, asset_type: str = "crypto") -> None:
         if df is None or df.empty:
             raise MarketDataError("Cannot assess freshness of empty market data.")
         interval_minutes = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440}
@@ -65,6 +65,19 @@ class MarketDataService:
         age = current - latest
         if age < pd.Timedelta(0):
             raise MarketDataError("Latest market timestamp is in the future.")
+
+        if asset_type == "stock":
+            # A simple continuous-age rule is unsafe for exchange-traded assets:
+            # Friday's final candle is expected to remain the latest throughout a weekend.
+            # Until a broker/exchange calendar is integrated, only enforce the strict
+            # intraday age limit while both timestamps fall on the same UTC weekday.
+            same_calendar_day = latest.date() == current.date()
+            weekday = current.weekday() < 5
+            if not (same_calendar_day and weekday):
+                return
+        elif asset_type != "crypto":
+            raise MarketDataError(f"Unsupported asset type for freshness validation: {asset_type}")
+
         if age > max_age:
             raise MarketDataError(
                 f"Market data is stale: latest candle is {age} old; maximum allowed is {max_age}."
