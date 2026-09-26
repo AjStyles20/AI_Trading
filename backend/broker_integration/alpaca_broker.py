@@ -152,8 +152,10 @@ class AlpacaBroker(BrokerClient):
             execution_mode=execution_mode,
             status=status,
             message=f"Alpaca {execution_mode} order {status}: {order.side.upper()} {qty} {order.symbol}",
-            filled_qty=filled_qty if filled_qty > 0 else qty,
-            filled_price=filled_avg_price,
+            # Broker acceptance is not a fill. Preserve zero/partial fill quantity
+            # so portfolio state and trade history do not fabricate executions.
+            filled_qty=filled_qty,
+            filled_price=filled_avg_price if filled_qty > 0 else 0.0,
             metadata={
                 **response,
                 "order_status": status,
