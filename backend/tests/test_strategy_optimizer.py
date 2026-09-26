@@ -300,3 +300,35 @@ def test_walk_forward_records_selected_strategy_spec():
         assert spec["schema_version"] == 1
         assert spec["strategy_type"] == "sma_cross"
         assert spec["params"] == window["selected_params"]
+
+
+
+@pytest.mark.parametrize("cooldown", [[1.5], [-1], [True], ["bad"]])
+def test_optimizer_rejects_invalid_cooldown_search_values(cooldown):
+    from core.strategy_optimizer import strategy_optimizer
+
+    with pytest.raises(ValueError, match="non-negative integer"):
+        strategy_optimizer._sma_cross_candidates({
+            "sma_fast": [2],
+            "sma_slow": [3],
+            "stop_loss_pct": [2],
+            "take_profit_pct": [4],
+            "cooldown_bars": cooldown,
+            "position_size_pct": [50],
+        })
+
+
+def test_optimizer_legacy_artifact_preserves_canonical_cooldown():
+    from core.strategy_optimizer import strategy_optimizer
+
+    params = {
+        "sma_fast": 2,
+        "sma_slow": 3,
+        "stop_loss_pct": 2,
+        "take_profit_pct": 4,
+        "cooldown_bars": 3,
+        "position_size_pct": 50,
+    }
+    code = strategy_optimizer._build_strategy_code("sma_cross", params)
+
+    assert "df['cooldown_bars'] = 3" in code
