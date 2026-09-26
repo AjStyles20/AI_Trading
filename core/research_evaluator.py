@@ -49,7 +49,10 @@ class ResearchEvaluator:
         slippage_pct: float = 0.05,
         train_ratio: float = 0.6,
         validation_ratio: float = 0.2,
+        warmup_rows: int = 0,
     ) -> Dict[str, Any]:
+        if warmup_rows < 0:
+            raise ValueError("warmup_rows must be non-negative.")
         split = self.split(df, train_ratio, validation_ratio)
         output: Dict[str, Any] = {
             "method": "chronological_holdout",
@@ -61,13 +64,22 @@ class ResearchEvaluator:
                 "test": len(split.test),
             },
             "segments": {},
+            "warmup_rows": warmup_rows,
+            "warmup_policy": "past-only context is used to initialize indicators; metrics and trades are restricted to the evaluated segment",
         }
-        for name, segment in (
-            ("train", split.train),
-            ("validation", split.validation),
-            ("test", split.test),
-        ):
-            strategy_df = safe_strategy_runtime.execute(strategy_code, segment)
+        segment_specs = (
+            ("train", split.train, 0),
+            ("validation", split.validation, split.train_end),
+            ("test", split.test, split.validation_end),
+        )
+        for name, segment, start_position in segment_specs:
+            if warmup_rows and start_position > 0:
+                context_start = max(0, start_position - warmup_rows)
+                context = df.iloc[context_start:start_position + len(segment)].copy()
+                strategy_with_context = safe_strategy_runtime.execute(strategy_code, context)
+                strategy_df = strategy_with_context.iloc[-len(segment):].copy()
+            else:
+                strategy_df = safe_strategy_runtime.execute(strategy_code, segment)
             metrics = backtest_engine.run_backtest(
                 strategy_df,
                 initial_balance=initial_balance,
@@ -86,7 +98,10 @@ class ResearchEvaluator:
         initial_balance: float = 10000.0,
         fee_pct: float = 0.1,
         slippage_pct: float = 0.05,
+        warmup_rows: int = 0,
     ) -> Dict[str, Any]:
+        if warmup_rows < 0:
+            raise ValueError("warmup_rows must be non-negative.")
         if train_rows < 20 or test_rows < 5:
             raise ValueError("Walk-forward requires train_rows >= 20 and test_rows >= 5.")
         step = step_rows or test_rows
@@ -100,8 +115,15 @@ class ResearchEvaluator:
         window_id = 1
         while start + train_rows + test_rows <= len(df):
             train = df.iloc[start:start + train_rows].copy()
-            test = df.iloc[start + train_rows:start + train_rows + test_rows].copy()
-            test_signals = safe_strategy_runtime.execute(strategy_code, test)
+            test_start = start + train_rows
+            test = df.iloc[test_start:test_start + test_rows].copy()
+            if warmup_rows:
+                context_start = max(0, test_start - warmup_rows)
+                context = df.iloc[context_start:test_start + test_rows].copy()
+                test_with_context = safe_strategy_runtime.execute(strategy_code, context)
+                test_signals = test_with_context.iloc[-test_rows:].copy()
+            else:
+                test_signals = safe_strategy_runtime.execute(strategy_code, test)
             metrics = backtest_engine.run_backtest(
                 test_signals,
                 initial_balance=initial_balance,
@@ -127,6 +149,8 @@ class ResearchEvaluator:
             "train_rows": train_rows,
             "test_rows": test_rows,
             "step_rows": step,
+            "warmup_rows": warmup_rows,
+            "warmup_policy": "past-only context initializes indicators; only OOS rows are backtested",
             "window_count": len(windows),
             "summary": {
                 "mean_test_return_pct": round(sum(returns) / len(returns), 4),
