@@ -5,6 +5,7 @@ import sys, os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database.sqlite_manager import get_public_settings, update_settings
+from core.credential_provider import set_secure_credential
 
 router = APIRouter()
 
@@ -28,8 +29,13 @@ def get_current_settings():
 @router.post("/api/settings")
 def save_settings(update: SettingsUpdate):
     try:
+        secure_updates = update.api_keys or {}
+        for key, value in secure_updates.items():
+            if value != "********":
+                set_secure_credential(key, value)
+
         success = update_settings(
-            api_keys=update.api_keys,
+            api_keys={key: ("********" if value else "") for key, value in secure_updates.items()} if update.api_keys is not None else None,
             theme=update.theme,
             paper_trading=update.paper_trading,
             risk_live_trading_enabled=update.risk_live_trading_enabled,
