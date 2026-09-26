@@ -80,6 +80,7 @@ class BacktestEngine:
 
             risk_exit = pending_risk_exit
             pending_risk_exit = False
+            exited_this_bar = False
 
             if signal == 1 and position == 0 and cooldown_remaining == 0:
                 executed_price = price * (1 + slippage_rate)
@@ -126,8 +127,9 @@ class BacktestEngine:
                     if cooldown_bars < 0 or float(raw_cooldown) != cooldown_bars:
                         raise ValueError("cooldown_bars must contain non-negative integers.")
                 cooldown_remaining = cooldown_bars
+                exited_this_bar = True
 
-            if position == 0 and cooldown_remaining > 0:
+            if position == 0 and cooldown_remaining > 0 and not exited_this_bar:
                 cooldown_remaining -= 1
 
             if position > 0 and entry_fill_price is not None:
