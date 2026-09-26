@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Any, Dict, Optional
 import sys
 import os
@@ -24,7 +24,7 @@ class BacktestRequest(BaseModel):
     slippage_pct: float = 0.05
     strategy_code: str = ""
     strategy_id: Optional[int] = None
-    strategy_spec: Dict[str, Any] = {}
+    strategy_spec: Dict[str, Any] = Field(default_factory=dict)
 
 
 @router.post("/api/backtest/run")
