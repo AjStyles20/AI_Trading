@@ -1,14 +1,15 @@
 """Credential access abstraction.
 
-Environment variables take precedence over legacy SQLite settings. This keeps
-credential consumers independent from the storage backend and provides a safe
-migration path toward OS-backed secret storage.
+Resolution order is environment variable -> OS credential store -> legacy
+SQLite settings. New credentials must be written to the OS credential store;
+legacy SQLite credentials remain read-only during migration.
 """
 from __future__ import annotations
 
 import os
 from typing import Mapping
 
+SERVICE_NAME = "AstralAI"
 
 ENV_KEY_MAP = {
     "openai": "OPENAI_API_KEY",
@@ -29,12 +30,56 @@ ENV_KEY_MAP = {
 }
 
 
+def _keyring():
+    try:
+        import keyring
+    except ImportError as exc:
+        raise RuntimeError(
+            "Secure credential storage is unavailable because the keyring package is not installed."
+        ) from exc
+    return keyring
+
+
+def get_secure_credential(key: str) -> str | None:
+    if key not in ENV_KEY_MAP:
+        return None
+    try:
+        return _keyring().get_password(SERVICE_NAME, key)
+    except Exception as exc:
+        raise RuntimeError("OS credential store could not be read.") from exc
+
+
+def set_secure_credential(key: str, value: str) -> None:
+    if key not in ENV_KEY_MAP:
+        raise ValueError(f"Unsupported credential key: {key}")
+    value = str(value or "")
+    try:
+        store = _keyring()
+        if value:
+            store.set_password(SERVICE_NAME, key, value)
+        else:
+            try:
+                store.delete_password(SERVICE_NAME, key)
+            except store.errors.PasswordDeleteError:
+                pass
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError("OS credential store could not be updated.") from exc
+
+
 def resolve_api_keys(settings: Mapping | None = None) -> dict[str, str]:
     """Resolve credentials without exposing their source to callers."""
     legacy = dict((settings or {}).get("api_keys", {}) or {})
     resolved = dict(legacy)
+
     for key, env_name in ENV_KEY_MAP.items():
         env_value = os.environ.get(env_name)
         if env_value:
             resolved[key] = env_value
+            continue
+        secure_value = get_secure_credential(key)
+        if secure_value:
+            resolved[key] = secure_value
+
     return resolved
