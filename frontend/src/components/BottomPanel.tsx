@@ -407,7 +407,6 @@ export default function BottomPanel({
   const fetchSettings = useCallback(async () => {
     try {
       const res = await axios.get(`${BACKEND_URL}/api/settings`);
-      const apiKeys = res.data.api_keys || {};
       setBinanceEnvironment(res.data.binance_environment === 'testnet' ? 'testnet' : 'live');
       setBitgetEnvironment(res.data.bitget_environment === 'demo' ? 'demo' : 'live');
     } catch (err) {
