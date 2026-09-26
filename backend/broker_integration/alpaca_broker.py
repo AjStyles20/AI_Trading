@@ -187,9 +187,12 @@ class AlpacaBroker(BrokerClient):
         status = str(response.get("status", trade.get("order_status", "unknown"))).lower()
         filled_qty = float(response.get("filled_qty", 0) or 0)
         original_qty = float(response.get("qty", trade.get("qty", 0)) or 0)
+        filled_avg_price = float(response.get("filled_avg_price", 0) or 0)
         return {
             "order_status": status,
             "broker_order_id": self._extract_broker_order_id(response) or broker_order_id,
+            "filled_qty": filled_qty,
+            "filled_price": filled_avg_price if filled_qty > 0 else 0.0,
             "metadata": {
                 **response,
                 "orig_qty": original_qty,
