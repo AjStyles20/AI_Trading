@@ -6,6 +6,7 @@ import urllib.parse
 import urllib.request
 
 from .base import BrokerClient, BrokerExecutionResult, BrokerOrder
+from core.credential_provider import resolve_api_keys
 
 
 class AlpacaBroker(BrokerClient):
@@ -15,7 +16,7 @@ class AlpacaBroker(BrokerClient):
     supported_asset_types = ("stock",)
 
     def _get_api_keys(self, settings: dict) -> dict:
-        return settings.get("api_keys", {}) if settings else {}
+        return resolve_api_keys(settings)
 
     def _get_base_url(self, execution_mode: str) -> str:
         if execution_mode == "paper":
