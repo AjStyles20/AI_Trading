@@ -81,7 +81,18 @@ class BacktestEngine:
             current_equity = balance + (position * price if position > 0 else 0)
             equity_curve.append(float(current_equity))
 
-        final_equity = balance + (position * float(df['close'].iloc[-1]) if position > 0 else 0)
+        open_position = position > 0
+        unrealized_position_qty = float(position)
+        final_mark_price = float(df['close'].iloc[-1])
+        liquidation_value = 0.0
+        liquidation_fee = 0.0
+        if open_position:
+            liquidation_price = final_mark_price * (1 - slippage_rate)
+            liquidation_gross = position * liquidation_price
+            liquidation_fee = liquidation_gross * fee_rate
+            liquidation_value = liquidation_gross - liquidation_fee
+
+        final_equity = balance + liquidation_value if open_position else balance
         total_return = ((final_equity - initial_balance) / initial_balance) * 100
         buy_hold_return = ((float(df['close'].iloc[-1]) - float(df['close'].iloc[0])) / float(df['close'].iloc[0])) * 100
 
@@ -92,6 +103,9 @@ class BacktestEngine:
 
         winners = len([pnl for pnl in round_trip_pnls if pnl > 0])
         win_rate = (winners / len(round_trip_pnls) * 100) if round_trip_pnls else 0.0
+        realized_pnl = float(sum(round_trip_pnls))
+        total_fees_paid = float(sum(float(trade.get("fee_paid", 0.0)) for trade in trade_history) + liquidation_fee)
+        closed_round_trips = len(round_trip_pnls)
 
         return {
             "initial_balance": initial_balance,
@@ -103,6 +117,14 @@ class BacktestEngine:
             "equity_curve": equity_curve,
             "buy_hold_return_pct": buy_hold_return,
             "win_rate_pct": win_rate,
+            "realized_pnl": realized_pnl,
+            "closed_round_trips": closed_round_trips,
+            "total_fees_paid": total_fees_paid,
+            "open_position_at_end": open_position,
+            "open_position_qty": unrealized_position_qty if open_position else 0.0,
+            "final_mark_price": final_mark_price,
+            "final_liquidation_value": liquidation_value,
+            "final_liquidation_fee": liquidation_fee,
             "fee_pct": fee_pct,
             "slippage_pct": slippage_pct,
             "execution_delay_bars": execution_delay_bars,
