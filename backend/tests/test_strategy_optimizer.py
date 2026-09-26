@@ -194,9 +194,9 @@ def test_optimizer_reports_search_space_risk():
         slippage_pct=0,
     )
     risk = result["optimization_risk"]
-    # cooldown_bars=[0] is intentionally sanitized to the optimizer's
-    # positive default grid [0, 2, 4], so 2x2x3 = 12 valid candidates.
-    assert risk["candidate_count"] == 12
+    # Explicit zero cooldown is a real candidate, not a request for defaults.
+    # 2 fast x 2 slow x 1 cooldown = 4 valid candidates.
+    assert risk["candidate_count"] == 4
     assert risk["development_rows"] == 48
     assert risk["observations_per_candidate"] == 4.0
     assert any("Fewer than five development observations" in warning for warning in risk["warnings"])
