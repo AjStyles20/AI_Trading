@@ -24,7 +24,9 @@ router = APIRouter()
 
 class StrategySaveRequest(BaseModel):
     name: str
-    code: str
+    code: str = ""
+    strategy_spec: Dict[str, Any] = {}
+    strategy_format: Optional[str] = None
     symbol: str = ""
     asset_type: str = "crypto"
     tags: list[str] = []
@@ -58,9 +60,20 @@ def fetch_strategy(strategy_id: int):
 @router.post("/api/strategies")
 def store_strategy(request: StrategySaveRequest):
     try:
+        if not request.code.strip() and not request.strategy_spec:
+            raise ValueError("A strategy must provide either legacy Python code or a declarative strategy_spec.")
+        if request.strategy_spec:
+            from core.declarative_strategy import StrategySpec
+            StrategySpec(
+                strategy_type=str(request.strategy_spec.get("strategy_type", "")),
+                params=dict(request.strategy_spec.get("params", {})),
+                schema_version=int(request.strategy_spec.get("schema_version", 1)),
+            )
         strategy_id = save_strategy(
             name=request.name,
             code=request.code,
+            strategy_spec=request.strategy_spec,
+            strategy_format=request.strategy_format,
             symbol=request.symbol,
             asset_type=request.asset_type,
             tags=request.tags,
