@@ -455,7 +455,7 @@ def resolve_cooldown_bars(result_df) -> int:
     if "cooldown_bars" not in result_df.columns:
         return 0
     raw = result_df.iloc[-1]["cooldown_bars"]
-    if isinstance(raw, bool) or type(raw).__name__ == "bool_":
+    if isinstance(raw, bool) or str(getattr(raw, "dtype", "")).lower() == "bool":
         raise ValueError("cooldown_bars must contain non-negative integers.")
     try:
         numeric = float(raw)
