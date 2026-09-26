@@ -42,6 +42,7 @@ def init_db():
         theme TEXT DEFAULT 'dark',
         paper_trading BOOLEAN DEFAULT 1,
         risk_live_trading_enabled BOOLEAN DEFAULT 0,
+        autonomy_kill_switch BOOLEAN DEFAULT 1,
         risk_max_order_notional REAL DEFAULT 1000.0,
         risk_max_position_pct REAL DEFAULT 25.0,
         risk_max_daily_loss_pct REAL DEFAULT 3.0,
@@ -54,6 +55,7 @@ def init_db():
     existing_settings_columns = {row[1] for row in cursor.execute("PRAGMA table_info(settings)").fetchall()}
     settings_column_migrations = {
         "risk_live_trading_enabled": "ALTER TABLE settings ADD COLUMN risk_live_trading_enabled BOOLEAN DEFAULT 0",
+        "autonomy_kill_switch": "ALTER TABLE settings ADD COLUMN autonomy_kill_switch BOOLEAN DEFAULT 1",
         "risk_max_order_notional": "ALTER TABLE settings ADD COLUMN risk_max_order_notional REAL DEFAULT 1000.0",
         "risk_max_position_pct": "ALTER TABLE settings ADD COLUMN risk_max_position_pct REAL DEFAULT 25.0",
         "risk_max_daily_loss_pct": "ALTER TABLE settings ADD COLUMN risk_max_daily_loss_pct REAL DEFAULT 3.0",
@@ -213,7 +215,7 @@ def get_settings():
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, api_keys, theme, paper_trading,
-                   risk_live_trading_enabled, risk_max_order_notional, risk_max_position_pct,
+                   risk_live_trading_enabled, autonomy_kill_switch, risk_max_order_notional, risk_max_position_pct,
                    risk_max_daily_loss_pct, risk_max_drawdown_pct,
                    binance_environment, bitget_environment
             FROM settings WHERE id=1
@@ -227,12 +229,13 @@ def get_settings():
                 "theme": row[2],
                 "paper_trading": bool(row[3]),
                 "risk_live_trading_enabled": bool(row[4]),
-                "risk_max_order_notional": float(row[5] or 1000.0),
-                "risk_max_position_pct": float(row[6] or 25.0),
-                "risk_max_daily_loss_pct": float(row[7] or 3.0),
-                "risk_max_drawdown_pct": float(row[8] or 10.0),
-                "binance_environment": row[9] or "live",
-                "bitget_environment": row[10] or "live",
+                "autonomy_kill_switch": bool(row[5]),
+                "risk_max_order_notional": float(row[6] or 1000.0),
+                "risk_max_position_pct": float(row[7] or 25.0),
+                "risk_max_daily_loss_pct": float(row[8] or 3.0),
+                "risk_max_drawdown_pct": float(row[9] or 10.0),
+                "binance_environment": row[10] or "live",
+                "bitget_environment": row[11] or "live",
             }
     except sqlite3.Error:
         return None
@@ -283,6 +286,7 @@ def update_settings(
     theme: str = None,
     paper_trading: bool = None,
     risk_live_trading_enabled: bool = None,
+    autonomy_kill_switch: bool = None,
     risk_max_order_notional: float = None,
     risk_max_position_pct: float = None,
     risk_max_daily_loss_pct: float = None,
@@ -326,7 +330,7 @@ def update_settings(
     cursor.execute("""
         UPDATE settings
         SET api_keys = ?, theme = ?, paper_trading = ?,
-            risk_live_trading_enabled = ?, risk_max_order_notional = ?, risk_max_position_pct = ?,
+            risk_live_trading_enabled = ?, autonomy_kill_switch = ?, risk_max_order_notional = ?, risk_max_position_pct = ?,
             risk_max_daily_loss_pct = ?, risk_max_drawdown_pct = ?,
             binance_environment = ?, bitget_environment = ?
         WHERE id = 1
@@ -335,6 +339,7 @@ def update_settings(
         theme if theme is not None else current["theme"],
         int(paper_trading) if paper_trading is not None else int(current["paper_trading"]),
         int(risk_live_trading_enabled) if risk_live_trading_enabled is not None else int(current["risk_live_trading_enabled"]),
+        int(autonomy_kill_switch) if autonomy_kill_switch is not None else int(current["autonomy_kill_switch"]),
         max_notional,
         max_position_pct,
         max_daily_loss_pct,
