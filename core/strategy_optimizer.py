@@ -244,6 +244,12 @@ class StrategyOptimizer:
         cleaned = sorted({int(value) for value in values if int(value) > 0})
         return cleaned or defaults
 
+    def _sanitize_nonnegative_values(self, values: List[int] | None, defaults: List[int]) -> List[int]:
+        if values is None or len(values) == 0:
+            return defaults
+        cleaned = sorted({int(value) for value in values if int(value) >= 0})
+        return cleaned or defaults
+
     def _ema_rsi_candidates(self, custom_ranges: Dict[str, List[int]]) -> List[Dict[str, int]]:
         ema_fast = self._sanitize_values(custom_ranges.get("ema_fast"), [8, 12, 21])
         ema_slow = self._sanitize_values(custom_ranges.get("ema_slow"), [26, 34, 55])
@@ -252,7 +258,7 @@ class StrategyOptimizer:
         rsi_sell = self._sanitize_values(custom_ranges.get("rsi_sell"), [65, 70, 75])
         stop_loss_pct = self._sanitize_values(custom_ranges.get("stop_loss_pct"), [2, 3, 5])
         take_profit_pct = self._sanitize_values(custom_ranges.get("take_profit_pct"), [4, 6, 8])
-        cooldown_bars = self._sanitize_values(custom_ranges.get("cooldown_bars"), [0, 2, 4])
+        cooldown_bars = self._sanitize_nonnegative_values(custom_ranges.get("cooldown_bars"), [0, 2, 4])
         position_size_pct = self._sanitize_values(custom_ranges.get("position_size_pct"), [25, 50, 100])
         return [
             {
@@ -285,7 +291,7 @@ class StrategyOptimizer:
         sma_slow = self._sanitize_values(custom_ranges.get("sma_slow"), [30, 50, 100])
         stop_loss_pct = self._sanitize_values(custom_ranges.get("stop_loss_pct"), [2, 3, 5])
         take_profit_pct = self._sanitize_values(custom_ranges.get("take_profit_pct"), [4, 6, 8])
-        cooldown_bars = self._sanitize_values(custom_ranges.get("cooldown_bars"), [0, 2, 4])
+        cooldown_bars = self._sanitize_nonnegative_values(custom_ranges.get("cooldown_bars"), [0, 2, 4])
         position_size_pct = self._sanitize_values(custom_ranges.get("position_size_pct"), [25, 50, 100])
         return [
             {
@@ -313,7 +319,7 @@ class StrategyOptimizer:
         rsi_sell = self._sanitize_values(custom_ranges.get("rsi_sell"), [65, 70, 75])
         stop_loss_pct = self._sanitize_values(custom_ranges.get("stop_loss_pct"), [2, 3, 5])
         take_profit_pct = self._sanitize_values(custom_ranges.get("take_profit_pct"), [4, 6, 8])
-        cooldown_bars = self._sanitize_values(custom_ranges.get("cooldown_bars"), [0, 2, 4])
+        cooldown_bars = self._sanitize_nonnegative_values(custom_ranges.get("cooldown_bars"), [0, 2, 4])
         position_size_pct = self._sanitize_values(custom_ranges.get("position_size_pct"), [25, 50, 100])
         return [
             {
