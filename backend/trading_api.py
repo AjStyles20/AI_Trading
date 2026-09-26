@@ -13,7 +13,7 @@ from core.data_service import MarketDataError, market_data
 from core.risk_engine import risk_engine
 from core.position_ledger import reconstruct_confirmed_position
 from core.position_protection import evaluate_position_protection
-from database.sqlite_manager import record_trade, get_settings, get_trades, get_trade_by_id, get_strategy, update_trade_order_state, update_risk_equity_state
+from database.sqlite_manager import record_trade, get_settings, get_trades, get_trades_for_scope, get_trade_by_id, get_strategy, update_trade_order_state, update_risk_equity_state
 
 router = APIRouter()
 
@@ -150,7 +150,7 @@ class LiveTradingManager:
                 # promptly, while strategy decisions remain deduplicated per candle.
                 settings = get_settings() or {}
                 scoped_trades = reconcile_unresolved_orders(
-                    get_trades(limit=100),
+                    get_trades_for_scope(symbol, broker_id, execution_mode),
                     settings,
                     symbol,
                     broker_id,
