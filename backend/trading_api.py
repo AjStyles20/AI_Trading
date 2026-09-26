@@ -185,9 +185,53 @@ class LiveTradingManager:
                     )
                     if protection.should_exit:
                         self.log(
-                            f"PROTECTION TRIGGERED (observation only): {protection.reason} "
+                            f"PROTECTION TRIGGERED: {protection.reason} "
                             f"at {protection.market_price:.8f}; trigger={protection.trigger_price:.8f}."
                         )
+                        if has_unresolved_order(
+                            scoped_trades,
+                            symbol,
+                            broker_id,
+                            execution_mode,
+                        ):
+                            self.log(
+                                "PROTECTION ORDER BLOCKED: unresolved prior broker order "
+                                "must reach a final state first."
+                            )
+                        else:
+                            try:
+                                account_equity, current_position_qty, day_start_equity, peak_equity = get_risk_context(
+                                    broker, symbol, settings, execution_mode, broker_id
+                                )
+                                protection_order = BrokerOrder(
+                                    symbol=symbol,
+                                    side="SELL",
+                                    qty=confirmed_position.qty,
+                                    price=protection.market_price,
+                                    asset_type=asset_type,
+                                    metadata={
+                                        "interval": interval,
+                                        "protection_reason": protection.reason,
+                                        "protection_trigger_price": protection.trigger_price,
+                                        "cooldown_bars": 0,
+                                    },
+                                )
+                                protection_execution = submit_guarded_order(
+                                    broker=broker,
+                                    order=protection_order,
+                                    settings=settings,
+                                    execution_mode=execution_mode,
+                                    broker_id=broker_id,
+                                    account_equity=account_equity,
+                                    current_position_qty=current_position_qty,
+                                    day_start_equity=day_start_equity,
+                                    peak_equity=peak_equity,
+                                )
+                                self.log(protection_execution.message)
+                                await asyncio.sleep(get_poll_delay_seconds(interval))
+                                continue
+                            except ValueError as exc:
+                                self.log(f"PROTECTION ORDER BLOCKED: {exc}")
 
                 # Evaluate each completed/latest candle at most once. Polling may run
                 # several times within a timeframe, but it must never create repeated
