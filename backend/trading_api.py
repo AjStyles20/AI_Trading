@@ -388,11 +388,20 @@ def refresh_history_statuses():
             trade["order_status"] = status.get("order_status", trade.get("order_status"))
             trade["broker_order_id"] = status.get("broker_order_id", trade.get("broker_order_id"))
             trade["metadata"] = status.get("metadata", trade.get("metadata", {}))
+            metadata = trade.get("metadata", {})
+            executed_qty = metadata.get("executed_qty")
+            filled_price = metadata.get("filled_avg_price")
+            if filled_price is None:
+                filled_price = metadata.get("avgPrice")
+            if filled_price is None:
+                filled_price = metadata.get("price")
             update_trade_order_state(
                 trade["id"],
                 trade["order_status"],
                 trade.get("broker_order_id"),
-                trade.get("metadata", {}),
+                metadata,
+                filled_qty=float(executed_qty) if executed_qty is not None else None,
+                filled_price=float(filled_price) if filled_price not in (None, "") else None,
             )
         except Exception as exc:
             trade.setdefault("metadata", {})
