@@ -24,7 +24,7 @@ def test_strategy_must_return_dataframe():
 def strategy(df):
     return 123
 """
-    with pytest.raises(TypeError, match="must return a pandas DataFrame"):
+    with pytest.raises(ValueError, match="must return a pandas DataFrame or signal Series"):
         TradingEngine().evaluate_strategy(code, sample_frame())
 
 
