@@ -205,4 +205,4 @@ def test_binance_execute_does_not_fabricate_fill_when_execution_fields_are_missi
     assert result.status == "new"
     assert result.filled_qty == 0.0
     assert result.filled_price == 0.0
-    assert result.metadata["broker_order_id"] == 123
+    assert result.metadata["broker_order_id"] == "123"
