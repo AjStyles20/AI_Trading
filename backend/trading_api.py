@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
 import asyncio
+import copy
 import sys, os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -241,6 +242,7 @@ class LiveTradingManager:
             }
         if not isinstance(strategy_record, dict):
             raise TypeError("strategy_record must be an explicit strategy record or legacy Python code")
+        strategy_record = copy.deepcopy(strategy_record)
         self.is_running = True
         self.last_evaluated_candle = None
         self.config = {
