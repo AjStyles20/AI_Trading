@@ -60,6 +60,7 @@ class BacktestEngine:
         slippage_rate = max(slippage_pct, 0) / 100
         last_buy_value = None
         entry_fill_price = None
+        pending_risk_exit = False
 
         execution_delay_bars = int(execution_delay_bars)
 
@@ -76,14 +77,8 @@ class BacktestEngine:
                     position_size_pct = 100.0
             allocation_rate = min(max(position_size_pct, 0.0), 100.0) / 100.0
 
-            risk_exit = False
-            if position > 0 and entry_fill_price is not None:
-                stop_pct = float(df['stop_loss_pct'].iloc[index]) if 'stop_loss_pct' in df.columns else 0.0
-                take_pct = float(df['take_profit_pct'].iloc[index]) if 'take_profit_pct' in df.columns else 0.0
-                current_close = float(df['close'].iloc[index])
-                stop_hit = stop_pct > 0 and current_close <= entry_fill_price * (1 - stop_pct / 100)
-                take_hit = take_pct > 0 and current_close >= entry_fill_price * (1 + take_pct / 100)
-                risk_exit = stop_hit or take_hit
+            risk_exit = pending_risk_exit
+            pending_risk_exit = False
 
             if signal == 1 and position == 0:
                 executed_price = price * (1 + slippage_rate)
@@ -120,6 +115,14 @@ class BacktestEngine:
                 })
                 last_buy_value = None
                 entry_fill_price = None
+
+            if position > 0 and entry_fill_price is not None:
+                stop_pct = float(df['stop_loss_pct'].iloc[index]) if 'stop_loss_pct' in df.columns else 0.0
+                take_pct = float(df['take_profit_pct'].iloc[index]) if 'take_profit_pct' in df.columns else 0.0
+                current_close = float(df['close'].iloc[index])
+                stop_hit = stop_pct > 0 and current_close <= entry_fill_price * (1 - stop_pct / 100)
+                take_hit = take_pct > 0 and current_close >= entry_fill_price * (1 + take_pct / 100)
+                pending_risk_exit = stop_hit or take_hit
 
             if position > 0:
                 mark_price = float(df['close'].iloc[index])
