@@ -328,35 +328,8 @@ class StrategyOptimizer:
         risk_block = f"""
     df['signal'] = df['signal'].fillna(0)
     df['position_size_pct'] = {params['position_size_pct']}
-    in_position = False
-    cooldown_remaining = 0
-    entry_price = 0.0
-
-    for idx in range(len(df)):
-        current_price = float(df['close'].iloc[idx])
-        raw_signal = int(df['signal'].iloc[idx])
-
-        if cooldown_remaining > 0:
-            cooldown_remaining -= 1
-            if not in_position:
-                df.iloc[idx, df.columns.get_loc('signal')] = 0
-                continue
-
-        if in_position:
-            stop_level = entry_price * (1 - {params['stop_loss_pct']} / 100)
-            take_level = entry_price * (1 + {params['take_profit_pct']} / 100)
-            if current_price <= stop_level or current_price >= take_level:
-                df.iloc[idx, df.columns.get_loc('signal')] = -1
-                in_position = False
-                cooldown_remaining = {params['cooldown_bars']}
-                continue
-
-        if raw_signal == 1 and not in_position:
-            entry_price = current_price
-            in_position = True
-        elif raw_signal == -1 and in_position:
-            in_position = False
-            cooldown_remaining = {params['cooldown_bars']}
+    df['stop_loss_pct'] = {params['stop_loss_pct']}
+    df['take_profit_pct'] = {params['take_profit_pct']}
 """
         if strategy_type == "sma_cross":
             return f"""def strategy(df: pd.DataFrame) -> pd.DataFrame:
