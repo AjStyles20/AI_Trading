@@ -81,6 +81,7 @@ class BacktestEngine:
             risk_exit = pending_risk_exit
             pending_risk_exit = False
             exited_this_bar = False
+            exited_this_bar = False
 
             if signal == 1 and position == 0 and cooldown_remaining == 0:
                 executed_price = price * (1 + slippage_rate)
