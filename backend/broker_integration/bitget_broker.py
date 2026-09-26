@@ -241,9 +241,12 @@ class BitgetBroker(BrokerClient):
         order_status = str(response.get("status", "unknown")).lower()
         executed_qty = float(response.get("baseVolume", 0) or response.get("filledQty", 0) or 0)
         orig_qty = float(response.get("size", trade.get("qty", 0)) or 0)
+        filled_price = float(response.get("priceAvg", 0) or response.get("price", 0) or 0) if executed_qty > 0 else 0.0
         return {
             "order_status": order_status,
             "broker_order_id": broker_order_id,
+            "filled_qty": executed_qty,
+            "filled_price": filled_price,
             "metadata": {
                 **response,
                 "orig_qty": orig_qty,
