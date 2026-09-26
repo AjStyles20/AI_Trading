@@ -108,6 +108,12 @@ class LiveTradingManager:
                 broker_id = self.config.get("broker_id", "paper")
                 execution_mode = self.config.get("execution_mode", "paper")
                 strategy_record = self.config.get("strategy_record")
+                if not strategy_record and self.config.get("strategy_code"):
+                    strategy_record = {
+                        "strategy_format": "legacy_python",
+                        "strategy_spec": {},
+                        "code": self.config["strategy_code"],
+                    }
                 broker = broker_registry.get(broker_id)
                 
                 if not strategy_record:
@@ -227,6 +233,14 @@ class LiveTradingManager:
     def start(self, symbol, asset_type, interval, strategy_record, broker_id, execution_mode, strategy_id=None):
         if self.is_running:
             return
+        if isinstance(strategy_record, str):
+            strategy_record = {
+                "strategy_format": "legacy_python",
+                "strategy_spec": {},
+                "code": strategy_record,
+            }
+        if not isinstance(strategy_record, dict):
+            raise TypeError("strategy_record must be an explicit strategy record or legacy Python code")
         self.is_running = True
         self.last_evaluated_candle = None
         self.config = {
