@@ -85,3 +85,20 @@ def test_missing_cancellation_is_warning_not_false_capability_claim():
     )
     assert decision.ready is True
     assert any("cancellation" in warning for warning in decision.warnings)
+
+
+def test_session_readiness_is_not_an_order_sizing_decision():
+    # Session readiness concerns operational observability/reconciliation.
+    # A later real order may still be rejected for notional, sizing or other risk.
+    decision = evaluate_autonomous_readiness(
+        broker_status=_status(),
+        account={"can_trade": True},
+        execution_mode="live",
+        asset_type="crypto",
+        unresolved_order=False,
+        ledger_position_qty=0.0,
+        broker_position_qty=0.0,
+        risk_approved=True,
+        broker_validation_ok=True,
+    )
+    assert decision.ready is True
