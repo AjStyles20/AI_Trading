@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from core.strategy_optimizer import strategy_optimizer
 
