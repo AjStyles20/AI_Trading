@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import asyncio
 import sys, os
 
@@ -10,7 +10,7 @@ from backend.broker_integration.registry import broker_registry
 from core.trading_engine import trading_engine
 from core.data_service import MarketDataError, market_data
 from core.risk_engine import risk_engine
-from database.sqlite_manager import record_trade, get_settings, get_trades, get_trade_by_id, update_trade_order_state, update_risk_equity_state
+from database.sqlite_manager import record_trade, get_settings, get_trades, get_trade_by_id, get_strategy, update_trade_order_state, update_risk_equity_state
 
 router = APIRouter()
 
@@ -22,6 +22,8 @@ class TradingStatus(BaseModel):
     broker_id: str = "paper"
     execution_mode: str = "paper"
     strategy_code: str = ""
+    strategy_id: Optional[int] = None
+    strategy_spec: Dict[str, Any] = {}
 
 
 class TradingPreflightRequest(BaseModel):
@@ -79,7 +81,9 @@ class LiveTradingManager:
             "interval": "1h",
             "broker_id": "paper",
             "execution_mode": "paper",
-            "strategy_code": ""
+            "strategy_code": "",
+            "strategy_id": None,
+            "strategy_record": None
         }
         self.logs = []
         self.last_evaluated_candle = None
@@ -103,11 +107,11 @@ class LiveTradingManager:
                 interval = self.config["interval"]
                 broker_id = self.config.get("broker_id", "paper")
                 execution_mode = self.config.get("execution_mode", "paper")
-                strategy_code = self.config["strategy_code"]
+                strategy_record = self.config.get("strategy_record")
                 broker = broker_registry.get(broker_id)
                 
-                if not strategy_code:
-                    self.log("No strategy code provided. Waiting...")
+                if not strategy_record:
+                    self.log("No resolved strategy provided. Waiting...")
                     await asyncio.sleep(10)
                     continue
 
@@ -143,7 +147,7 @@ class LiveTradingManager:
 
                 # 2. Evaluate strategy
                 self.log("Evaluating strategy signals...")
-                result_df = trading_engine.evaluate_strategy(strategy_code, df)
+                result_df = trading_engine.evaluate_strategy(strategy_record, df)
                 signal = trading_engine.get_signal(result_df)
                 
                 if signal:
@@ -220,7 +224,7 @@ class LiveTradingManager:
             # the same candle more than once.
             await asyncio.sleep(get_poll_delay_seconds(interval))
 
-    def start(self, symbol, asset_type, interval, strategy_code, broker_id, execution_mode):
+    def start(self, symbol, asset_type, interval, strategy_record, broker_id, execution_mode, strategy_id=None):
         if self.is_running:
             return
         self.is_running = True
@@ -231,7 +235,10 @@ class LiveTradingManager:
             "interval": interval, 
             "broker_id": broker_id,
             "execution_mode": execution_mode,
-            "strategy_code": strategy_code
+            "strategy_code": strategy_record.get("code", ""),
+            "strategy_id": strategy_id,
+            "strategy_format": strategy_record.get("strategy_format", "legacy_python"),
+            "strategy_record": strategy_record
         }
         self.active_task = asyncio.create_task(self.run_loop())
 
@@ -342,13 +349,45 @@ async def toggle_trading(status: TradingStatus):
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
 
+        sources = int(status.strategy_id is not None) + int(bool(status.strategy_spec)) + int(bool(status.strategy_code.strip()))
+        if sources != 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide exactly one strategy source: strategy_id, strategy_spec, or strategy_code.",
+            )
+
+        if status.strategy_id is not None:
+            stored = get_strategy(status.strategy_id)
+            if not stored:
+                raise HTTPException(status_code=400, detail="Saved strategy not found.")
+            strategy_record = {
+                "strategy_format": stored.get("strategy_format", "legacy_python"),
+                "strategy_spec": dict(stored.get("strategy_spec") or {}),
+                "code": stored.get("code") or "",
+            }
+        elif status.strategy_spec:
+            strategy_record = {
+                "strategy_format": "declarative_v1",
+                "strategy_spec": dict(status.strategy_spec),
+                "code": "",
+            }
+        else:
+            strategy_record = {
+                "strategy_format": "legacy_python",
+                "strategy_spec": {},
+                "code": status.strategy_code,
+            }
+
+        # Resolve a frozen in-memory strategy snapshot for this session. Database
+        # edits after start require an explicit restart before they can affect trading.
         trading_manager.start(
             status.symbol,
             status.asset_type,
             status.interval,
-            status.strategy_code,
+            strategy_record,
             status.broker_id,
             status.execution_mode,
+            strategy_id=status.strategy_id,
         )
         return {"status": "started", "config": trading_manager.config}
     else:
