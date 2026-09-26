@@ -58,7 +58,13 @@ class StrategyOptimizer:
                 "raw_score": round(raw_score, 3),
                 "evidence_factor": round(evidence_factor, 3),
                 "closed_round_trips": closed_round_trips,
+                "strategy_spec": {
+                    "schema_version": strategy_spec.schema_version,
+                    "strategy_type": strategy_spec.strategy_type,
+                    "params": dict(strategy_spec.params),
+                },
                 "code": strategy_code,
+                "code_status": "legacy_compatibility_only",
                 "metrics": {
                     "total_return_pct": round(metrics["total_return_pct"], 3),
                     "max_drawdown_pct": round(metrics["max_drawdown_pct"], 3),
@@ -121,6 +127,7 @@ class StrategyOptimizer:
             "best": best,
             "holdout": holdout,
             "optimization_risk": optimization_risk,
+            "artifact_policy": "strategy_spec is canonical; generated Python code is legacy compatibility output and is not used for optimizer evaluation",
             "results": ranked[:10],
         }
 
@@ -191,6 +198,7 @@ class StrategyOptimizer:
                 "test_start": str(test_df.index[0]),
                 "test_end": str(test_df.index[-1]),
                 "selected_params": best["params"],
+                "selected_strategy_spec": best.get("strategy_spec"),
                 "selection_score": best["score"],
                 "selection_raw_score": best.get("raw_score"),
                 "selection_evidence_factor": best.get("evidence_factor"),
