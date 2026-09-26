@@ -13,6 +13,7 @@ from core.data_service import MarketDataError, market_data
 from core.risk_engine import risk_engine
 from core.position_ledger import reconstruct_confirmed_position
 from core.position_protection import evaluate_position_protection
+from core.autonomy_readiness import evaluate_autonomous_readiness
 from database.sqlite_manager import record_trade, get_settings, get_trades, get_trades_for_scope, get_trade_by_id, get_strategy, update_trade_order_state, update_risk_equity_state
 
 router = APIRouter()
@@ -661,6 +662,71 @@ def resolve_market_price(symbol: str, asset_type: str) -> float:
         raise MarketDataError(f"Invalid market price for {symbol}: {market_price}")
     return market_price
 
+def build_autonomous_readiness(symbol: str, asset_type: str, broker_id: str, execution_mode: str, settings: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the single readiness verdict consumed by preflight and session startup."""
+    broker = broker_registry.get(broker_id)
+    market_price = resolve_market_price(symbol, asset_type)
+    account = broker.get_account_summary(settings, execution_mode)
+    account_equity, current_position_qty, day_start_equity, peak_equity = get_risk_context(
+        broker, symbol, settings, execution_mode, broker_id, account
+    )
+    scoped_trades = reconcile_unresolved_orders(
+        get_trades_for_scope(symbol, broker_id, execution_mode),
+        settings,
+        symbol,
+        broker_id,
+        execution_mode,
+    )
+    confirmed_position = reconstruct_confirmed_position(
+        scoped_trades,
+        symbol=symbol,
+        broker_id=broker_id,
+        execution_mode=execution_mode,
+    )
+    reference_order = BrokerOrder(
+        symbol=symbol,
+        side="BUY",
+        qty=1.0,
+        price=market_price,
+        asset_type=asset_type,
+        metadata={"source": "autonomy_preflight"},
+    )
+    risk = risk_engine.evaluate_order(
+        side=reference_order.side,
+        qty=reference_order.qty,
+        price=reference_order.price,
+        execution_mode=execution_mode,
+        settings=settings,
+        current_position_qty=current_position_qty,
+        account_equity=account_equity,
+        day_start_equity=day_start_equity,
+        peak_equity=peak_equity,
+    )
+    validation = broker.validate_order(reference_order, execution_mode, settings)
+    broker_status = broker.get_status(settings)
+    decision = evaluate_autonomous_readiness(
+        broker_status=broker_status,
+        account=account,
+        execution_mode=execution_mode,
+        asset_type=asset_type,
+        unresolved_order=has_unresolved_order(scoped_trades, symbol, broker_id, execution_mode),
+        ledger_position_qty=confirmed_position.qty,
+        broker_position_qty=current_position_qty,
+        risk_approved=risk.approved,
+        broker_validation_ok=bool(validation.get("ok", False)),
+    )
+    return {
+        "readiness": decision.as_dict(),
+        "broker": broker_status,
+        "account": account,
+        "risk": risk.as_dict(),
+        "validation": validation,
+        "market_price": market_price,
+        "ledger_position_qty": confirmed_position.qty,
+        "broker_position_qty": current_position_qty,
+    }
+
+
 @router.post("/api/trading/toggle")
 async def toggle_trading(status: TradingStatus):
     if status.is_active:
@@ -673,6 +739,25 @@ async def toggle_trading(status: TradingStatus):
             raise HTTPException(status_code=400, detail=f"{broker.display_name} does not support live trading.")
 
         settings = get_settings() or {}
+        try:
+            readiness = build_autonomous_readiness(
+                status.symbol,
+                status.asset_type,
+                status.broker_id,
+                status.execution_mode,
+                settings,
+            )
+        except (MarketDataError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"Autonomous readiness check failed: {exc}")
+        if not readiness["readiness"]["ready"]:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "Autonomous trading session is not ready.",
+                    **readiness["readiness"],
+                },
+            )
+
         if status.execution_mode == "live":
             if not bool(settings.get("risk_live_trading_enabled", False)):
                 raise HTTPException(
@@ -819,44 +904,17 @@ def get_broker_account(broker_id: str, execution_mode: str = "paper"):
 def run_trading_preflight(request: TradingPreflightRequest):
     settings = get_settings() or {}
     try:
-        broker = broker_registry.get(request.broker_id)
-        market_price = resolve_market_price(request.symbol, request.asset_type)
-        account = broker.get_account_summary(settings, request.execution_mode)
-        account_equity, current_position_qty, day_start_equity, peak_equity = get_risk_context(
-            broker, request.symbol, settings, request.execution_mode, request.broker_id, account
+        return build_autonomous_readiness(
+            request.symbol,
+            request.asset_type,
+            request.broker_id,
+            request.execution_mode,
+            settings,
         )
-        order = BrokerOrder(
-            symbol=request.symbol,
-            side="BUY",
-            qty=1.0,
-            price=market_price,
-            asset_type=request.asset_type,
-            metadata={},
-        )
-        risk = risk_engine.evaluate_order(
-            side=order.side,
-            qty=order.qty,
-            price=order.price,
-            execution_mode=request.execution_mode,
-            settings=settings,
-            current_position_qty=current_position_qty,
-            account_equity=account_equity,
-            day_start_equity=day_start_equity,
-            peak_equity=peak_equity,
-        )
-        validation = broker.validate_order(order, request.execution_mode, settings)
-        return {
-            "broker": broker.get_status(settings),
-            "account": account,
-            "risk": risk.as_dict(),
-            "validation": validation,
-            "market_price": market_price,
-        }
     except MarketDataError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-
 
 @router.post("/api/trading/test-order")
 def run_trading_test_order(request: TradingTestOrderRequest):
