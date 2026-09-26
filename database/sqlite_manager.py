@@ -812,10 +812,12 @@ def get_strategy(strategy_id: int):
         "builder_graph": json.loads(row[6] or '{}'),
         "validation_summary": json.loads(row[7] or '{}'),
         "optimization_summary": json.loads(row[8] or '{}'),
-        "is_baseline": bool(row[9]),
-        "is_archived": bool(row[10]),
-        "created_at": row[11],
-        "last_modified": row[12],
+        "strategy_spec": json.loads(row[9] or '{}'),
+        "strategy_format": row[10] or "legacy_python",
+        "is_baseline": bool(row[11]),
+        "is_archived": bool(row[12]),
+        "created_at": row[13],
+        "last_modified": row[14],
     }
 
 def set_strategy_baseline(strategy_id: int):
