@@ -531,6 +531,10 @@ def submit_guarded_order(
     peak_equity: float | None,
 ):
     """Validate, submit, and persist one autonomous order through shared safeguards."""
+    current_settings = get_settings() or {}
+    if bool(current_settings.get("autonomy_kill_switch", True)):
+        raise ValueError("AUTONOMY KILL SWITCH IS ARMED: new autonomous orders are blocked.")
+
     risk = risk_engine.evaluate_order(
         side=order.side,
         qty=order.qty,
@@ -742,6 +746,11 @@ async def toggle_trading(status: TradingStatus):
             raise HTTPException(status_code=400, detail=f"{broker.display_name} does not support live trading.")
 
         settings = get_settings() or {}
+        if bool(settings.get("autonomy_kill_switch", True)):
+            raise HTTPException(
+                status_code=400,
+                detail="Autonomy kill switch is armed. Disarm it explicitly before starting an autonomous session.",
+            )
         try:
             readiness = build_autonomous_readiness(
                 status.symbol,
