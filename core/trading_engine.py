@@ -12,11 +12,14 @@ class TradingEngine:
         Executes the provided strategy code on the given DataFrame.
         Expects a function named 'strategy(df)' that returns the modified DataFrame.
         """
-        try:
-            return safe_strategy_runtime.execute(strategy_code, df)
-        except Exception as e:
-            print(f"ERROR in strategy evaluation: {e}")
-            return df
+        # Strategy failures are execution failures, not HOLD signals. Propagate the
+        # error so callers can fail closed and surface the unhealthy strategy.
+        result = safe_strategy_runtime.execute(strategy_code, df)
+        if not isinstance(result, pd.DataFrame):
+            raise TypeError("strategy(df) must return a pandas DataFrame")
+        if result.empty:
+            raise ValueError("strategy(df) returned an empty DataFrame")
+        return result
 
     def get_signal(self, df: pd.DataFrame) -> Optional[str]:
         """
