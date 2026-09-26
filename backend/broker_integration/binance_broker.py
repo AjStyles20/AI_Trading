@@ -23,8 +23,7 @@ class BinanceBroker(BrokerClient):
         return resolve_api_keys(settings)
 
     def _use_testnet(self, settings: dict) -> bool:
-        api_keys = self._get_api_keys(settings)
-        return str(api_keys.get("binance_testnet", "")).strip().lower() in {"1", "true", "yes", "on"}
+        return settings.get("binance_environment", "live") == "testnet"
 
     def _get_base_url(self, settings: dict) -> str:
         if self._use_testnet(settings):
