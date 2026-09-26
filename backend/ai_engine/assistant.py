@@ -3,6 +3,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from database.vector_manager import VectorMemoryManager
 from database.sqlite_manager import get_settings, record_chat_message, get_recent_chat_messages
+from core.credential_provider import resolve_api_keys
 import os
 
 
@@ -15,7 +16,7 @@ class AstralAIAssistant:
 
     def _initialize_llm(self):
         settings = get_settings()
-        api_key = settings.get("api_keys", {}).get("openai") if settings else None
+        api_key = resolve_api_keys(settings).get("openai")
         model_name = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
 
         # Fallback to env var if in dev mode
