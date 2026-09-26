@@ -4,8 +4,8 @@ from typing import Dict, Optional
 import sys, os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from database.sqlite_manager import get_public_settings, get_settings, update_settings
-from core.credential_provider import credential_presence, set_secure_credential
+from database.sqlite_manager import get_public_settings, get_settings, update_settings, remove_legacy_api_keys
+from core.credential_provider import credential_presence, set_secure_credential, migrate_legacy_credentials
 
 router = APIRouter()
 
@@ -29,6 +29,30 @@ def get_current_settings():
     internal = get_settings() or {}
     settings["credential_presence"] = credential_presence(internal)
     return settings
+
+@router.post("/api/settings/migrate-credentials")
+def migrate_credentials():
+    """Explicitly migrate verified legacy SQLite secrets into the OS keyring."""
+    try:
+        internal = get_settings() or {}
+        migrated = migrate_legacy_credentials(internal)
+        if migrated and not remove_legacy_api_keys(migrated):
+            raise HTTPException(
+                status_code=500,
+                detail="Credentials were secured but legacy cleanup failed.",
+            )
+        return {
+            "status": "success",
+            "migrated": migrated,
+            "migrated_count": len(migrated),
+        }
+    except HTTPException:
+        raise
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Credential migration failed") from e
+
 
 @router.post("/api/settings")
 def save_settings(update: SettingsUpdate):
