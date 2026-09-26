@@ -845,6 +845,7 @@ async def toggle_trading(status: TradingStatus):
             status.broker_id,
             status.execution_mode,
             strategy_id=status.strategy_id,
+            recovery_verified=True,
         )
         return {"status": "started", "config": trading_manager.config}
     else:
@@ -856,7 +857,8 @@ def get_status():
     return {
         "is_active": trading_manager.is_running,
         "config": trading_manager.config,
-        "logs": trading_manager.logs
+        "logs": trading_manager.logs,
+        "recovery_verified": trading_manager.recovery_verified,
     }
 
 @router.get("/api/trading/history")
