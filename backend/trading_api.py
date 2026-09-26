@@ -88,6 +88,7 @@ class LiveTradingManager:
         }
         self.logs = []
         self.last_evaluated_candle = None
+        self.cooldown_remaining = 0
 
     def log(self, message: str):
         import datetime
@@ -156,6 +157,16 @@ class LiveTradingManager:
                 self.log("Evaluating strategy signals...")
                 result_df = trading_engine.evaluate_strategy(strategy_record, df)
                 signal = trading_engine.get_signal(result_df)
+
+                # Runtime cooldown is counted in newly evaluated candles and starts
+                # only after a confirmed SELL fill. It blocks re-entry BUYs without
+                # suppressing exits or risk checks.
+                if signal == "BUY" and self.cooldown_remaining > 0:
+                    self.log(f"COOLDOWN BLOCKED BUY: {self.cooldown_remaining} bar(s) remaining.")
+                    self.cooldown_remaining -= 1
+                    signal = None
+                elif self.cooldown_remaining > 0:
+                    self.cooldown_remaining -= 1
                 
                 if signal:
                     price_column = 'close' if 'close' in df.columns else 'Close'
@@ -220,6 +231,18 @@ class LiveTradingManager:
                         filled_qty=execution.filled_qty,
                         filled_price=execution.filled_price,
                     )
+                    if (
+                        signal == "SELL"
+                        and str(execution.status).lower() == "filled"
+                        and float(execution.filled_qty or 0) > 0
+                    ):
+                        cooldown_bars = 0
+                        if "cooldown_bars" in result_df.columns:
+                            raw_cooldown = result_df.iloc[-1]["cooldown_bars"]
+                            cooldown_bars = int(raw_cooldown)
+                            if cooldown_bars < 0 or float(raw_cooldown) != cooldown_bars:
+                                raise ValueError("cooldown_bars must contain non-negative integers.")
+                        self.cooldown_remaining = cooldown_bars
                     self.log(execution.message)
                 else:
                     self.log("No signal detected.")
@@ -245,6 +268,7 @@ class LiveTradingManager:
         strategy_record = copy.deepcopy(strategy_record)
         self.is_running = True
         self.last_evaluated_candle = None
+        self.cooldown_remaining = 0
         self.config = {
             "symbol": symbol, 
             "asset_type": asset_type,
@@ -263,7 +287,8 @@ class LiveTradingManager:
         if self.active_task:
             self.active_task.cancel()
             self.active_task = None
-        self.log("Paper trading loop stopped.")
+        self.cooldown_remaining = 0
+        self.log("Trading loop stopped.")
 
 trading_manager = LiveTradingManager()
 
