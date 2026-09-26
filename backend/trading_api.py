@@ -50,6 +50,25 @@ class OpenOrdersQuery(BaseModel):
     broker_id: str = "paper"
     execution_mode: str = "paper"
 
+def get_poll_delay_seconds(interval: str) -> int:
+    """Return a bounded polling cadence for a strategy timeframe."""
+    interval_seconds = {
+        "1m": 60,
+        "5m": 300,
+        "15m": 900,
+        "30m": 1800,
+        "1h": 3600,
+        "4h": 14400,
+        "1d": 86400,
+    }
+    seconds = interval_seconds.get(interval)
+    if seconds is None:
+        raise ValueError(f"Unsupported trading interval: {interval}")
+    # Poll no faster than 15 seconds and no slower than 5 minutes. Candle
+    # de-duplication below is the authoritative guard against repeat decisions.
+    return max(15, min(300, seconds // 4))
+
+
 class LiveTradingManager:
     def __init__(self):
         self.is_running = False
@@ -63,6 +82,7 @@ class LiveTradingManager:
             "strategy_code": ""
         }
         self.logs = []
+        self.last_evaluated_candle = None
 
     def log(self, message: str):
         import datetime
@@ -93,7 +113,7 @@ class LiveTradingManager:
 
                 if asset_type not in broker.supported_asset_types:
                     self.log(f"{broker.display_name} does not support asset type: {asset_type}")
-                    await asyncio.sleep(60)
+                    await asyncio.sleep(get_poll_delay_seconds(interval))
                     continue
 
                 self.log(f"Fetching latest data for {symbol} ({asset_type})...")
@@ -104,7 +124,7 @@ class LiveTradingManager:
                 
                 if df.empty:
                     self.log(f"Failed to fetch market data for {symbol}.")
-                    await asyncio.sleep(60)
+                    await asyncio.sleep(get_poll_delay_seconds(interval))
                     continue
 
                 # Normalize columns to lowercase for strategy consistency
@@ -150,13 +170,13 @@ class LiveTradingManager:
                     )
                     if not risk.approved:
                         self.log(f"RISK BLOCKED ORDER: {'; '.join(risk.reasons)}")
-                        await asyncio.sleep(60)
+                        await asyncio.sleep(get_poll_delay_seconds(interval))
                         continue
 
                     broker_validation = broker.validate_order(order, execution_mode, settings)
                     if not broker_validation.get("ok", False):
                         self.log(f"BROKER VALIDATION BLOCKED ORDER: {broker_validation}")
-                        await asyncio.sleep(60)
+                        await asyncio.sleep(get_poll_delay_seconds(interval))
                         continue
 
                     order.qty = float(broker_validation.get("normalized_qty", order.qty))
@@ -183,13 +203,15 @@ class LiveTradingManager:
             except Exception as e:
                 self.log(f"ERROR in loop: {str(e)}")
             
-            # Wait for next interval (e.g. 60 seconds)
-            await asyncio.sleep(60)
+            # Poll frequently enough to observe the next candle without re-evaluating
+            # the same candle more than once.
+            await asyncio.sleep(get_poll_delay_seconds(interval))
 
     def start(self, symbol, asset_type, interval, strategy_code, broker_id, execution_mode):
         if self.is_running:
             return
         self.is_running = True
+        self.last_evaluated_candle = None
         self.config = {
             "symbol": symbol, 
             "asset_type": asset_type,
