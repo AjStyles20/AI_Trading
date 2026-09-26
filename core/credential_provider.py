@@ -45,8 +45,11 @@ def get_secure_credential(key: str) -> str | None:
         return None
     try:
         return _keyring().get_password(SERVICE_NAME, key)
-    except Exception as exc:
-        raise RuntimeError("OS credential store could not be read.") from exc
+    except Exception:
+        # Reads remain compatible with environment variables and legacy
+        # SQLite credentials on headless systems without a keyring backend.
+        # Writes still fail closed in set_secure_credential().
+        return None
 
 
 def set_secure_credential(key: str, value: str) -> None:
