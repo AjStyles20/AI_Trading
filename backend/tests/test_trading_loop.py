@@ -246,7 +246,9 @@ def test_reconcile_trade_order_skips_terminal_order(monkeypatch):
         trading_api.broker_registry, "get",
         lambda broker_id: (_ for _ in ()).throw(AssertionError("terminal order must not query broker")),
     )
-    assert trading_api.reconcile_trade_order(trade, {}) is trade
+    updated = trading_api.reconcile_trade_order(trade, {})
+    assert updated is not trade
+    assert updated["_completed_exit_transition"] is False
 
 
 def test_reconcile_unresolved_orders_keeps_refresh_failure_unresolved(monkeypatch):
@@ -317,7 +319,7 @@ def test_reconciled_full_sell_marks_one_time_exit_transition(monkeypatch):
     already_final = dict(updated)
     again = trading_api.reconcile_trade_order(already_final, {})
     assert "_completed_exit_transition" in again
-    assert again["_completed_exit_transition"] is True
+    assert again["_completed_exit_transition"] is False
 
 
 def test_partial_sell_reconciliation_does_not_mark_completed_exit(monkeypatch):
