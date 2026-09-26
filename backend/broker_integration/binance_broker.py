@@ -318,9 +318,13 @@ class BinanceBroker(BrokerClient):
         order_status = str(response.get("status", trade.get("order_status", "unknown"))).lower()
         orig_qty = float(response.get("origQty", trade.get("qty", 0)) or 0)
         executed_qty = float(response.get("executedQty", 0) or 0)
+        cumulative_quote = float(response.get("cummulativeQuoteQty", 0) or 0)
+        filled_price = (cumulative_quote / executed_qty) if executed_qty > 0 and cumulative_quote > 0 else 0.0
         return {
             "order_status": order_status,
             "broker_order_id": self._extract_broker_order_id(response) or broker_order_id,
+            "filled_qty": executed_qty,
+            "filled_price": filled_price,
             "metadata": {
                 **response,
                 "orig_qty": orig_qty,
