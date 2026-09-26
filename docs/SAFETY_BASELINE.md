@@ -38,3 +38,31 @@ Market-data functions currently fail to empty DataFrames in several cases. That 
 - **Gate F — controlled live pilot:** only after explicit review, hard limits and a kill switch.
 
 Until Gates A-E are satisfied, live trading should remain disabled.
+
+
+## Credential and broker-environment hardening
+
+Credential storage and broker environment selection are separate concerns.
+
+- New credentials are written to the operating-system credential store through `core/credential_provider.py`.
+- Environment variables remain the highest-precedence runtime credential source.
+- Legacy SQLite credentials remain readable only for backward compatibility; new plaintext writes are rejected.
+- `POST /api/settings/migrate-credentials` performs an explicit legacy migration. Each legacy secret is written to the OS store and read back for exact verification before its SQLite copy is eligible for deletion.
+- A secure-store write or verification failure fails closed and leaves the legacy SQLite copy intact.
+- Credential-presence reporting exposes booleans only, never secret values.
+- Binance `live/testnet` and Bitget `live/demo` selections are ordinary settings, not credentials. Existing `binance_testnet` and `bitget_demo` legacy flags are migrated into dedicated settings columns and removed from the legacy credential object.
+- The frontend changes broker environments by posting only the relevant environment field; it no longer round-trips the credential dictionary.
+
+### Credential resolution order
+
+1. Environment variable.
+2. OS credential store.
+3. Legacy SQLite value during migration compatibility.
+
+### Migration invariant
+
+A legacy secret must never be deleted merely because another credential source exists. Deletion is permitted only after the OS credential-store write has succeeded and the stored value has been read back and verified.
+
+### Validation status
+
+The credential/environment hardening slice is covered by database persistence, migration, cleanup, secure-store failure, presence-reporting, API, frontend test, TypeScript-build, and production-build checks. CI run #274 passed both backend and frontend jobs.
