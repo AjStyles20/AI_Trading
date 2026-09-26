@@ -70,3 +70,35 @@ def test_bitget_status_normalizes_fill_price(monkeypatch, price_avg, price, expe
     assert result["filled_qty"] == 0.5
     assert result["filled_price"] == expected_price
     assert result["metadata"]["fill_progress_pct"] == 25.0
+
+
+
+def test_broker_capability_contract_is_normalized():
+    from backend.broker_integration.base import BrokerClient, BrokerOrder, BrokerExecutionResult
+
+    class MinimalBroker(BrokerClient):
+        broker_id = "minimal"
+        display_name = "Minimal"
+        supports_live = True
+        supported_asset_types = ("forex", "stock")
+
+        def execute_order(self, order, execution_mode, settings):
+            return BrokerExecutionResult(
+                broker_id=self.broker_id,
+                execution_mode=execution_mode,
+                status="filled",
+                message="ok",
+                filled_qty=order.qty,
+                filled_price=order.price,
+                metadata={},
+            )
+
+    broker = MinimalBroker()
+    capabilities = broker.get_capabilities()
+    status = broker.get_status({})
+
+    assert capabilities["asset_types"] == ["forex", "stock"]
+    assert capabilities["live_trading"] is True
+    assert capabilities["order_status"] is True
+    assert capabilities["cancellation"] is False
+    assert status["capabilities"] == capabilities
