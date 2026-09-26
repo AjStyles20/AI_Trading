@@ -1,9 +1,12 @@
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend import settings_api
 
 
-client = TestClient(settings_api.router)
+app = FastAPI()
+app.include_router(settings_api.router)
+client = TestClient(app)
 
 
 def test_credential_migration_cleans_only_verified_keys(monkeypatch):
