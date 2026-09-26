@@ -61,6 +61,7 @@ class BacktestEngine:
         last_buy_value = None
         entry_fill_price = None
         pending_risk_exit = False
+        cooldown_remaining = 0
 
         execution_delay_bars = int(execution_delay_bars)
 
@@ -80,7 +81,7 @@ class BacktestEngine:
             risk_exit = pending_risk_exit
             pending_risk_exit = False
 
-            if signal == 1 and position == 0:
+            if signal == 1 and position == 0 and cooldown_remaining == 0:
                 executed_price = price * (1 + slippage_rate)
                 capital_to_allocate = balance * allocation_rate
                 entry_fee = capital_to_allocate * fee_rate
@@ -115,6 +116,19 @@ class BacktestEngine:
                 })
                 last_buy_value = None
                 entry_fill_price = None
+                cooldown_bars = 0
+                if 'cooldown_bars' in df.columns:
+                    raw_cooldown = df['cooldown_bars'].iloc[index]
+                    try:
+                        cooldown_bars = int(raw_cooldown)
+                    except (TypeError, ValueError):
+                        raise ValueError("cooldown_bars must contain non-negative integers.")
+                    if cooldown_bars < 0 or float(raw_cooldown) != cooldown_bars:
+                        raise ValueError("cooldown_bars must contain non-negative integers.")
+                cooldown_remaining = cooldown_bars
+
+            if position == 0 and cooldown_remaining > 0:
+                cooldown_remaining -= 1
 
             if position > 0 and entry_fill_price is not None:
                 stop_pct = float(df['stop_loss_pct'].iloc[index]) if 'stop_loss_pct' in df.columns else 0.0
