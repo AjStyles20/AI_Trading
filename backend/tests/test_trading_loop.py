@@ -343,3 +343,80 @@ def test_partial_sell_reconciliation_does_not_mark_completed_exit(monkeypatch):
 
     updated = trading_api.reconcile_trade_order(trade, {})
     assert updated["_completed_exit_transition"] is False
+
+
+
+def test_reconciliation_preserves_submission_metadata(monkeypatch):
+    import backend.trading_api as trading_api
+
+    trade = {
+        "id": 21, "symbol": "BTC/USDT", "side": "SELL", "qty": 1.0,
+        "requested_qty": 1.0, "broker_id": "binance", "execution_mode": "live",
+        "order_status": "partially_filled", "broker_order_id": "sell-21",
+        "metadata": {"cooldown_bars": 3, "interval": "1h"}, "filled_qty": 0.4,
+        "filled_price": 100.0, "is_test": False,
+    }
+    class Broker:
+        def get_order_status(self, trade, settings):
+            return {
+                "order_status": "filled", "broker_order_id": "sell-21",
+                "metadata": {"broker_reason": "FILLED"}, "filled_qty": 1.0,
+                "filled_price": 101.0,
+            }
+
+    monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: Broker())
+    monkeypatch.setattr(trading_api, "update_trade_order_state", lambda *args, **kwargs: None)
+
+    updated = trading_api.reconcile_trade_order(trade, {})
+    assert updated["metadata"]["cooldown_bars"] == 3
+    assert updated["metadata"]["interval"] == "1h"
+    assert updated["metadata"]["broker_reason"] == "FILLED"
+
+
+def test_reconciliation_rejects_regressive_cumulative_fill(monkeypatch):
+    import backend.trading_api as trading_api
+
+    trade = {
+        "id": 22, "symbol": "BTC/USDT", "side": "BUY", "qty": 2.0,
+        "requested_qty": 2.0, "broker_id": "binance", "execution_mode": "live",
+        "order_status": "partially_filled", "broker_order_id": "buy-22",
+        "metadata": {}, "filled_qty": 1.25, "filled_price": 100.0, "is_test": False,
+    }
+    class Broker:
+        def get_order_status(self, trade, settings):
+            return {
+                "order_status": "partially_filled", "broker_order_id": "buy-22",
+                "metadata": {}, "filled_qty": 0.5, "filled_price": 100.0,
+            }
+
+    monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: Broker())
+    persisted = []
+    monkeypatch.setattr(trading_api, "update_trade_order_state", lambda *args, **kwargs: persisted.append(args))
+
+    with pytest.raises(ValueError, match="cumulative filled quantity regressed"):
+        trading_api.reconcile_trade_order(trade, {})
+    assert persisted == []
+
+
+def test_reconciled_sell_without_requested_quantity_does_not_complete_exit(monkeypatch):
+    import backend.trading_api as trading_api
+
+    trade = {
+        "id": 23, "symbol": "BTC/USDT", "side": "SELL", "qty": 0,
+        "broker_id": "binance", "execution_mode": "live",
+        "order_status": "partially_filled", "broker_order_id": "sell-23",
+        "metadata": {"cooldown_bars": 2}, "filled_qty": 0,
+        "filled_price": 0, "is_test": False,
+    }
+    class Broker:
+        def get_order_status(self, trade, settings):
+            return {
+                "order_status": "filled", "broker_order_id": "sell-23",
+                "metadata": {}, "filled_qty": 0.5, "filled_price": 100.0,
+            }
+
+    monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: Broker())
+    monkeypatch.setattr(trading_api, "update_trade_order_state", lambda *args, **kwargs: None)
+
+    updated = trading_api.reconcile_trade_order(trade, {})
+    assert updated["_completed_exit_transition"] is False
