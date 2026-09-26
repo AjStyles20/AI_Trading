@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 
 from core.backtest_engine import backtest_engine
 from core.safe_strategy_runtime import safe_strategy_runtime
+from core.declarative_strategy import StrategySpec, declarative_strategy_engine
 
 
 class StrategyOptimizer:
@@ -34,7 +35,8 @@ class StrategyOptimizer:
 
         for params in candidates:
             strategy_code = self._build_strategy_code(strategy_type, params)
-            result_df = safe_strategy_runtime.execute(strategy_code, development_df)
+            strategy_spec = StrategySpec(strategy_type=strategy_type, params=params)
+            result_df = declarative_strategy_engine.execute(strategy_spec, development_df)
             metrics = backtest_engine.run_backtest(
                 result_df,
                 initial_balance=initial_balance,
@@ -73,7 +75,8 @@ class StrategyOptimizer:
         best = ranked[0] if ranked else None
         holdout = None
         if best is not None:
-            holdout_df_with_signals = safe_strategy_runtime.execute(best["code"], holdout_df)
+            holdout_spec = StrategySpec(strategy_type=strategy_type, params=best["params"])
+            holdout_df_with_signals = declarative_strategy_engine.execute(holdout_spec, holdout_df)
             holdout_metrics = backtest_engine.run_backtest(
                 holdout_df_with_signals,
                 initial_balance=initial_balance,
@@ -169,10 +172,12 @@ class StrategyOptimizer:
             if warmup_rows:
                 context_start = max(0, test_start_position - warmup_rows)
                 context = df.iloc[context_start:test_start_position + test_rows].copy()
-                test_with_context = safe_strategy_runtime.execute(best["code"], context)
+                selected_spec = StrategySpec(strategy_type=strategy_type, params=best["params"])
+                test_with_context = declarative_strategy_engine.execute(selected_spec, context)
                 test_signals = test_with_context.iloc[-test_rows:].copy()
             else:
-                test_signals = safe_strategy_runtime.execute(best["code"], test_df)
+                selected_spec = StrategySpec(strategy_type=strategy_type, params=best["params"])
+                test_signals = declarative_strategy_engine.execute(selected_spec, test_df)
             test_metrics = backtest_engine.run_backtest(
                 test_signals,
                 initial_balance=initial_balance,
