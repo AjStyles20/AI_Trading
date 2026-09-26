@@ -201,3 +201,69 @@ def test_unresolved_order_guard_is_scoped_and_fail_closed(
         "execution_mode": execution_mode,
     }]
     assert has_unresolved_order(trades, "BTC/USDT", "binance", "live") is expected
+
+
+
+def test_reconcile_trade_order_persists_partial_fill(monkeypatch):
+    import backend.trading_api as trading_api
+
+    trade = {
+        "id": 9, "symbol": "BTC/USDT", "broker_id": "binance",
+        "execution_mode": "live", "order_status": "pending",
+        "broker_order_id": "abc", "metadata": {}, "filled_qty": 0.0,
+        "filled_price": 0.0, "is_test": False,
+    }
+    class Broker:
+        def get_order_status(self, trade, settings):
+            return {
+                "order_status": "partially_filled",
+                "broker_order_id": "abc",
+                "metadata": {"source": "broker"},
+                "filled_qty": 0.4,
+                "filled_price": 101.5,
+            }
+
+    persisted = {}
+    monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: Broker())
+    monkeypatch.setattr(
+        trading_api, "update_trade_order_state",
+        lambda trade_id, status, broker_order_id, metadata, filled_qty=None, filled_price=None:
+            persisted.update(id=trade_id, status=status, filled_qty=filled_qty, filled_price=filled_price),
+    )
+
+    updated = trading_api.reconcile_trade_order(trade, {})
+    assert updated["order_status"] == "partially_filled"
+    assert updated["filled_qty"] == 0.4
+    assert updated["filled_price"] == 101.5
+    assert persisted == {"id": 9, "status": "partially_filled", "filled_qty": 0.4, "filled_price": 101.5}
+
+
+def test_reconcile_trade_order_skips_terminal_order(monkeypatch):
+    import backend.trading_api as trading_api
+
+    trade = {"id": 1, "order_status": "filled", "execution_mode": "live", "is_test": False}
+    monkeypatch.setattr(
+        trading_api.broker_registry, "get",
+        lambda broker_id: (_ for _ in ()).throw(AssertionError("terminal order must not query broker")),
+    )
+    assert trading_api.reconcile_trade_order(trade, {}) is trade
+
+
+def test_reconcile_unresolved_orders_keeps_refresh_failure_unresolved(monkeypatch):
+    import backend.trading_api as trading_api
+
+    trade = {
+        "id": 2, "symbol": "BTC/USDT", "broker_id": "binance",
+        "execution_mode": "live", "order_status": "pending",
+        "metadata": {}, "is_test": False,
+    }
+    monkeypatch.setattr(
+        trading_api, "reconcile_trade_order",
+        lambda trade, settings: (_ for _ in ()).throw(RuntimeError("broker unavailable")),
+    )
+    updated = trading_api.reconcile_unresolved_orders(
+        [trade], {}, "BTC/USDT", "binance", "live"
+    )
+    assert updated[0]["order_status"] == "pending"
+    assert updated[0]["metadata"]["status_refresh_error"] == "broker unavailable"
+    assert trading_api.has_unresolved_order(updated, "BTC/USDT", "binance", "live") is True
