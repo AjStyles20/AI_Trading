@@ -11,6 +11,7 @@ from backend.broker_integration.registry import broker_registry
 from core.trading_engine import trading_engine
 from core.data_service import MarketDataError, market_data
 from core.risk_engine import risk_engine
+from core.position_ledger import reconstruct_confirmed_position
 from database.sqlite_manager import record_trade, get_settings, get_trades, get_trade_by_id, get_strategy, update_trade_order_state, update_risk_equity_state
 
 router = APIRouter()
@@ -193,6 +194,20 @@ class LiveTradingManager:
                     self.cooldown_remaining -= 1
                 
                 if signal:
+                    confirmed_position = reconstruct_confirmed_position(
+                        scoped_trades,
+                        symbol=symbol,
+                        broker_id=broker_id,
+                        execution_mode=execution_mode,
+                    )
+                    if signal == "BUY" and confirmed_position.qty > 0:
+                        self.log(
+                            f"BUY BLOCKED: confirmed long position already open "
+                            f"({confirmed_position.qty:.8f} {symbol})."
+                        )
+                        await asyncio.sleep(get_poll_delay_seconds(interval))
+                        continue
+
                     if has_unresolved_order(
                         scoped_trades,
                         symbol,
