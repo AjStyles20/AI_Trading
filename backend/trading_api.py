@@ -506,20 +506,39 @@ def run_trading_test_order(request: TradingTestOrderRequest):
     try:
         broker = broker_registry.get(request.broker_id)
         market_price = resolve_market_price(request.symbol, request.asset_type)
+        account = broker.get_account_summary(settings, request.execution_mode)
+        account_equity, current_position_qty, day_start_equity, peak_equity = get_risk_context(
+            broker, request.symbol, settings, request.execution_mode, request.broker_id, account
+        )
+        order = BrokerOrder(
+            symbol=request.symbol,
+            side=request.side,
+            qty=request.qty,
+            price=market_price,
+            asset_type=request.asset_type,
+            metadata={"source": "manual_test"},
+        )
+        risk = risk_engine.evaluate_order(
+            side=order.side,
+            qty=order.qty,
+            price=order.price,
+            execution_mode=request.execution_mode,
+            settings=settings,
+            current_position_qty=current_position_qty,
+            account_equity=account_equity,
+            day_start_equity=day_start_equity,
+            peak_equity=peak_equity,
+        )
+        if not risk.approved:
+            raise HTTPException(status_code=400, detail={"message": "Risk engine blocked test order.", "risk": risk.as_dict()})
+        order.qty = risk.normalized_qty
         result = broker.test_order(
-            BrokerOrder(
-                symbol=request.symbol,
-                side=request.side,
-                qty=request.qty,
-                price=market_price,
-                asset_type=request.asset_type,
-                metadata={"source": "manual_test"},
-            ),
+            order,
             request.execution_mode,
             settings,
         )
         validation = result.get("validation", {})
-        normalized_qty = float(validation.get("normalized_qty", request.qty))
+        normalized_qty = float(validation.get("normalized_qty", order.qty))
         record_trade(
             request.symbol,
             request.side,
