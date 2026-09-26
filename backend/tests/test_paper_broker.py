@@ -1,6 +1,14 @@
 from backend.broker_integration.base import BrokerOrder
 from backend.broker_integration.paper_broker import PaperBroker
 from database import sqlite_manager
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def isolated_paper_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "paper-broker.db"
+    monkeypatch.setattr(sqlite_manager, "DB_PATH", str(db_path))
+    sqlite_manager.init_db()
 
 
 def order(side, qty, price=100.0, symbol="TEST"):
@@ -41,11 +49,7 @@ def test_paper_round_trip_updates_equity():
 
 
 
-def test_paper_state_survives_new_broker_instance(tmp_path, monkeypatch):
-    db_path = tmp_path / "paper-state.db"
-    monkeypatch.setattr(sqlite_manager, "DB_PATH", str(db_path))
-    sqlite_manager.init_db()
-
+def test_paper_state_survives_new_broker_instance():
     first = PaperBroker(starting_cash=1000)
     first.execute_order(order("BUY", 2, 100, "ABC"), "paper", {})
     first.execute_order(order("BUY", 1, 50, "XYZ"), "paper", {})
@@ -60,11 +64,7 @@ def test_paper_state_survives_new_broker_instance(tmp_path, monkeypatch):
     assert restored.starting_cash == 1000
 
 
-def test_paper_reset_clears_persisted_risk_baseline(tmp_path, monkeypatch):
-    db_path = tmp_path / "paper-reset.db"
-    monkeypatch.setattr(sqlite_manager, "DB_PATH", str(db_path))
-    sqlite_manager.init_db()
-
+def test_paper_reset_clears_persisted_risk_baseline():
     broker = PaperBroker(starting_cash=1000)
     broker.execute_order(order("BUY", 2, 100, "ABC"), "paper", {})
     sqlite_manager.update_risk_equity_state("paper", "paper", 1000, trading_day="2026-09-26")
