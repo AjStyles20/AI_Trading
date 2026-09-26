@@ -1,7 +1,12 @@
+import os
+import sys
+
 import pytest
 
-from backend.broker_integration.alpaca_broker import AlpacaBroker
-from backend.broker_integration.base import BrokerOrder
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from broker_integration.alpaca_broker import AlpacaBroker
+from broker_integration.base import BrokerOrder
 
 
 @pytest.mark.parametrize(
