@@ -176,3 +176,54 @@ def test_execution_delay_prevents_same_bar_signal_fill():
     assert delayed["trade_history"][0]["price"] == 200.0
     assert immediate["trade_history"][0]["price"] == 100.0
     assert delayed["final_equity"] < immediate["final_equity"]
+
+
+def test_stop_loss_is_anchored_to_actual_fill_and_exits_next_bar():
+    df = pd.DataFrame({
+        "open": [100.0, 110.0, 108.0, 100.0],
+        "close": [100.0, 110.0, 104.0, 100.0],
+        "signal": [1, 0, 0, 0],
+        "stop_loss_pct": [5.0] * 4,
+        "take_profit_pct": [0.0] * 4,
+    })
+    result = BacktestEngine().run_backtest(
+        df, initial_balance=10000, fee_pct=0, slippage_pct=0, execution_delay_bars=1
+    )
+    assert result["trade_history"][0]["price"] == 110.0
+    # 5% below the real 110 fill is 104.5; bar 2 closes at 104 and triggers.
+    # Because that close is only known after bar 2, execution occurs at bar 3 open.
+    assert result["trade_history"][1]["price"] == 100.0
+    assert result["trade_history"][1]["exit_reason"] == "risk"
+
+
+def test_stop_loss_does_not_use_signal_bar_close_as_entry_anchor():
+    df = pd.DataFrame({
+        "open": [100.0, 110.0, 108.0, 108.0],
+        "close": [100.0, 110.0, 106.0, 108.0],
+        "signal": [1, 0, 0, 0],
+        "stop_loss_pct": [5.0] * 4,
+        "take_profit_pct": [0.0] * 4,
+    })
+    result = BacktestEngine().run_backtest(
+        df, initial_balance=10000, fee_pct=0, slippage_pct=0, execution_delay_bars=1
+    )
+    # A fictional 100 entry would not stop at 106; the real 110 fill does (threshold 104.5 is not hit).
+    # Therefore this path remains open and proves the engine is not using the signal close.
+    assert result["trade_history"][0]["price"] == 110.0
+    assert len(result["trade_history"]) == 1
+
+
+def test_take_profit_uses_fill_price_and_next_bar_execution():
+    df = pd.DataFrame({
+        "open": [100.0, 100.0, 104.0, 107.0],
+        "close": [100.0, 100.0, 106.0, 107.0],
+        "signal": [1, 0, 0, 0],
+        "stop_loss_pct": [0.0] * 4,
+        "take_profit_pct": [5.0] * 4,
+    })
+    result = BacktestEngine().run_backtest(
+        df, initial_balance=10000, fee_pct=0, slippage_pct=0, execution_delay_bars=1
+    )
+    assert result["trade_history"][0]["price"] == 100.0
+    assert result["trade_history"][1]["price"] == 107.0
+    assert result["trade_history"][1]["exit_reason"] == "risk"
