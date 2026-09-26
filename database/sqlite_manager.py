@@ -624,6 +624,37 @@ def get_trades(limit: int = 50):
     ]
 
 
+def get_trades_for_scope(symbol: str, broker_id: str, execution_mode: str):
+    """Return complete persisted order history for one trading-account scope."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, symbol, side, qty, price, broker_id, execution_mode, timestamp,
+               is_paper, order_status, order_type, broker_order_id, is_test, metadata,
+               requested_qty, filled_qty, filled_price
+        FROM trades
+        WHERE symbol = ? AND broker_id = ? AND execution_mode = ?
+        ORDER BY timestamp ASC, id ASC
+        """,
+        (symbol, broker_id, execution_mode),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "id": r[0], "symbol": r[1], "side": r[2], "qty": r[3], "price": r[4],
+            "broker_id": r[5], "execution_mode": r[6], "timestamp": r[7],
+            "is_paper": bool(r[8]), "order_status": r[9] or "unknown",
+            "order_type": r[10] or "market", "broker_order_id": r[11],
+            "is_test": bool(r[12]), "metadata": json.loads(r[13] or "{}"),
+            "requested_qty": float(r[14] if r[14] is not None else r[3]),
+            "filled_qty": float(r[15] or 0), "filled_price": float(r[16] or 0),
+        }
+        for r in rows
+    ]
+
+
 def get_trade_by_id(trade_id: int):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
