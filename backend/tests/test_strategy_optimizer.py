@@ -176,3 +176,47 @@ def test_candidate_score_does_not_use_buy_hold_return(monkeypatch):
         },
     )
     assert result_after["best"]["score"] == score_before
+
+
+def test_optimizer_reports_search_space_risk():
+    result = strategy_optimizer.optimize(
+        frame(60),
+        strategy_type="sma_cross",
+        custom_ranges={
+            "sma_fast": [2, 3],
+            "sma_slow": [4, 5],
+            "stop_loss_pct": [2],
+            "take_profit_pct": [4],
+            "cooldown_bars": [0],
+            "position_size_pct": [50],
+        },
+        fee_pct=0,
+        slippage_pct=0,
+    )
+    risk = result["optimization_risk"]
+    assert risk["candidate_count"] == 4
+    assert risk["development_rows"] == 48
+    assert risk["observations_per_candidate"] == 12.0
+    assert risk["winner_closed_round_trips"] == result["best"]["closed_round_trips"]
+    assert isinstance(risk["warnings"], list)
+    assert "not statistical significance tests" in risk["interpretation"]
+
+
+def test_optimizer_warns_when_candidates_exceed_development_rows():
+    result = strategy_optimizer.optimize(
+        frame(30),
+        strategy_type="sma_cross",
+        custom_ranges={
+            "sma_fast": list(range(1, 7)),
+            "sma_slow": list(range(7, 13)),
+            "stop_loss_pct": [2],
+            "take_profit_pct": [4],
+            "cooldown_bars": [0],
+            "position_size_pct": [50],
+        },
+        fee_pct=0,
+        slippage_pct=0,
+    )
+    risk = result["optimization_risk"]
+    assert risk["candidate_count"] > risk["development_rows"]
+    assert any("multiple-testing overfit" in warning for warning in risk["warnings"])
