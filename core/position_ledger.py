@@ -12,6 +12,8 @@ class ConfirmedPosition:
     qty: float
     average_entry_price: float
     cost_basis: float
+    stop_loss_pct: float = 0.0
+    take_profit_pct: float = 0.0
 
 
 def reconstruct_confirmed_position(
@@ -39,7 +41,7 @@ def reconstruct_confirmed_position(
     ]
     scoped.sort(key=lambda trade: (str(trade.get("timestamp") or ""), int(trade.get("id") or 0)))
 
-    lots: list[list[float]] = []
+    lots: list[dict[str, float]] = []
     epsilon = 1e-12
 
     for trade in scoped:
@@ -52,27 +54,45 @@ def reconstruct_confirmed_position(
             raise ValueError("Confirmed fills require a positive filled_price.")
 
         if side == "BUY":
-            lots.append([qty, price])
+            metadata = trade.get("metadata") or {}
+            stop_loss_pct = float(metadata.get("stop_loss_pct", 0) or 0)
+            take_profit_pct = float(metadata.get("take_profit_pct", 0) or 0)
+            for name, value in (("stop_loss_pct", stop_loss_pct), ("take_profit_pct", take_profit_pct)):
+                if value < 0 or value > 100:
+                    raise ValueError(f"Persisted {name} must be between 0 and 100.")
+            lots.append({
+                "qty": qty,
+                "price": price,
+                "stop_loss_pct": stop_loss_pct,
+                "take_profit_pct": take_profit_pct,
+            })
             continue
         if side != "SELL":
             raise ValueError(f"Unsupported confirmed trade side: {side or '<empty>'}.")
 
         remaining = qty
         while remaining > epsilon and lots:
-            lot_qty, lot_price = lots[0]
-            consumed = min(lot_qty, remaining)
-            lot_qty -= consumed
+            lot = lots[0]
+            consumed = min(lot["qty"], remaining)
+            lot["qty"] -= consumed
             remaining -= consumed
-            if lot_qty <= epsilon:
+            if lot["qty"] <= epsilon:
                 lots.pop(0)
-            else:
-                lots[0] = [lot_qty, lot_price]
         if remaining > epsilon:
             raise ValueError("Confirmed SELL fills exceed reconstructed long position.")
 
-    position_qty = sum(qty for qty, _ in lots)
-    cost_basis = sum(qty * price for qty, price in lots)
+    position_qty = sum(lot["qty"] for lot in lots)
+    cost_basis = sum(lot["qty"] * lot["price"] for lot in lots)
     average_entry_price = cost_basis / position_qty if position_qty > epsilon else 0.0
+
+    protection_pairs = {
+        (lot["stop_loss_pct"], lot["take_profit_pct"])
+        for lot in lots
+        if lot["qty"] > epsilon
+    }
+    if len(protection_pairs) > 1:
+        raise ValueError("Remaining confirmed BUY lots have conflicting protection parameters.")
+    stop_loss_pct, take_profit_pct = next(iter(protection_pairs), (0.0, 0.0))
     return ConfirmedPosition(
         symbol=symbol,
         broker_id=broker_id,
@@ -80,4 +100,6 @@ def reconstruct_confirmed_position(
         qty=float(position_qty),
         average_entry_price=float(average_entry_price),
         cost_basis=float(cost_basis),
+        stop_loss_pct=float(stop_loss_pct),
+        take_profit_pct=float(take_profit_pct),
     )
