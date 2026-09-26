@@ -423,30 +423,34 @@ def record_trade(
     broker_order_id: str | None = None,
     is_test: bool = False,
     metadata: dict | None = None,
+    requested_qty: float | None = None,
+    filled_qty: float | None = None,
+    filled_price: float | None = None,
 ):
+    requested_qty = float(qty if requested_qty is None else requested_qty)
+    filled_qty = float(qty if filled_qty is None and order_status == "filled" else (filled_qty or 0.0))
+    filled_price = float(price if filled_price is None and filled_qty > 0 else (filled_price or 0.0))
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('''
-    INSERT INTO trades (symbol, side, qty, price, broker_id, execution_mode, is_paper, order_status, order_type, broker_order_id, is_test, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        symbol,
-        side,
-        qty,
-        price,
-        broker_id,
-        execution_mode,
-        int(is_paper),
-        order_status,
-        order_type,
-        broker_order_id,
-        int(is_test),
-        json.dumps(metadata or {}),
-    ))
+    cursor.execute(
+        """
+        INSERT INTO trades (
+            symbol, side, qty, price, broker_id, execution_mode, is_paper,
+            order_status, order_type, broker_order_id, is_test, metadata,
+            requested_qty, filled_qty, filled_price
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            symbol, side, qty, price, broker_id, execution_mode, int(is_paper),
+            order_status, order_type, broker_order_id, int(is_test),
+            json.dumps(metadata or {}), requested_qty, filled_qty, filled_price,
+        ),
+    )
     conn.commit()
     conn.close()
     return True
-
 def record_chat_message(conversation_id: str, role: str, content: str):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
