@@ -267,3 +267,77 @@ def test_reconcile_unresolved_orders_keeps_refresh_failure_unresolved(monkeypatc
     assert updated[0]["order_status"] == "pending"
     assert updated[0]["metadata"]["status_refresh_error"] == "broker unavailable"
     assert trading_api.has_unresolved_order(updated, "BTC/USDT", "binance", "live") is True
+
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [(0, 0), (2, 2), ("3", 3)],
+)
+def test_resolve_cooldown_bars_accepts_nonnegative_integers(raw, expected):
+    import pandas as pd
+    from backend.trading_api import resolve_cooldown_bars
+
+    assert resolve_cooldown_bars(pd.DataFrame({"cooldown_bars": [raw]})) == expected
+
+
+@pytest.mark.parametrize("raw", [-1, 1.5, True, "bad"])
+def test_resolve_cooldown_bars_rejects_invalid_values(raw):
+    import pandas as pd
+    from backend.trading_api import resolve_cooldown_bars
+
+    with pytest.raises(ValueError, match="non-negative integers"):
+        resolve_cooldown_bars(pd.DataFrame({"cooldown_bars": [raw]}))
+
+
+def test_reconciled_full_sell_marks_one_time_exit_transition(monkeypatch):
+    import backend.trading_api as trading_api
+
+    trade = {
+        "id": 12, "symbol": "BTC/USDT", "side": "SELL", "qty": 1.0,
+        "requested_qty": 1.0, "broker_id": "binance", "execution_mode": "live",
+        "order_status": "partially_filled", "broker_order_id": "sell-12",
+        "metadata": {"cooldown_bars": 2}, "filled_qty": 0.4,
+        "filled_price": 100.0, "is_test": False,
+    }
+    class Broker:
+        def get_order_status(self, trade, settings):
+            return {
+                "order_status": "filled", "broker_order_id": "sell-12",
+                "metadata": {"cooldown_bars": 2}, "filled_qty": 1.0,
+                "filled_price": 101.0,
+            }
+
+    monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: Broker())
+    monkeypatch.setattr(trading_api, "update_trade_order_state", lambda *args, **kwargs: None)
+
+    updated = trading_api.reconcile_trade_order(trade, {})
+    assert updated["_completed_exit_transition"] is True
+
+    already_final = dict(updated)
+    again = trading_api.reconcile_trade_order(already_final, {})
+    assert "_completed_exit_transition" in again
+    assert again["_completed_exit_transition"] is True
+
+
+def test_partial_sell_reconciliation_does_not_mark_completed_exit(monkeypatch):
+    import backend.trading_api as trading_api
+
+    trade = {
+        "id": 13, "symbol": "BTC/USDT", "side": "SELL", "qty": 1.0,
+        "requested_qty": 1.0, "broker_id": "binance", "execution_mode": "live",
+        "order_status": "pending", "metadata": {"cooldown_bars": 2},
+        "filled_qty": 0.0, "is_test": False,
+    }
+    class Broker:
+        def get_order_status(self, trade, settings):
+            return {
+                "order_status": "partially_filled", "filled_qty": 0.5,
+                "filled_price": 100.0, "metadata": {"cooldown_bars": 2},
+            }
+
+    monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: Broker())
+    monkeypatch.setattr(trading_api, "update_trade_order_state", lambda *args, **kwargs: None)
+
+    updated = trading_api.reconcile_trade_order(trade, {})
+    assert updated["_completed_exit_transition"] is False
