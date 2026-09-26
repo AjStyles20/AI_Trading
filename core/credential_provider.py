@@ -92,3 +92,28 @@ def credential_presence(settings: Mapping | None = None) -> dict[str, bool]:
     """Report configured credential slots without returning secret material."""
     resolved = resolve_api_keys(settings)
     return {key: bool(resolved.get(key)) for key in ENV_KEY_MAP}
+
+
+def migrate_legacy_credentials(settings: Mapping | None = None) -> list[str]:
+    """Copy legacy SQLite credentials to the OS store, verifying each write.
+
+    This function never edits SQLite itself. The caller may remove only the
+    returned keys from legacy storage after this function succeeds.
+    Environment variables are intentionally ignored: they are already secure
+    external configuration and should not cause deletion of a legacy value.
+    """
+    legacy = dict((settings or {}).get("api_keys", {}) or {})
+    migrated: list[str] = []
+    for key, value in legacy.items():
+        if key not in ENV_KEY_MAP or not value or value == "********":
+            continue
+        existing = get_secure_credential(key)
+        if existing == value:
+            migrated.append(key)
+            continue
+        set_secure_credential(key, str(value))
+        verified = get_secure_credential(key)
+        if verified != str(value):
+            raise RuntimeError(f"Secure credential verification failed for '{key}'.")
+        migrated.append(key)
+    return migrated
