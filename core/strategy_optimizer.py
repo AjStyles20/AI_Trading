@@ -106,8 +106,11 @@ class StrategyOptimizer:
         initial_balance: float = 10000.0,
         fee_pct: float = 0.1,
         slippage_pct: float = 0.05,
+        warmup_rows: int = 0,
     ) -> Dict[str, Any]:
         """Select parameters on each past training window, then evaluate once on unseen data."""
+        if warmup_rows < 0:
+            raise ValueError("warmup_rows must be non-negative.")
         if train_rows < 30 or test_rows < 5:
             raise ValueError("Walk-forward optimization requires train_rows >= 30 and test_rows >= 5.")
         step = step_rows or test_rows
@@ -135,7 +138,14 @@ class StrategyOptimizer:
             if best is None:
                 raise ValueError(f"No candidate strategy was selected in walk-forward window {window_id}.")
 
-            test_signals = safe_strategy_runtime.execute(best["code"], test_df)
+            test_start_position = start + train_rows
+            if warmup_rows:
+                context_start = max(0, test_start_position - warmup_rows)
+                context = df.iloc[context_start:test_start_position + test_rows].copy()
+                test_with_context = safe_strategy_runtime.execute(best["code"], context)
+                test_signals = test_with_context.iloc[-test_rows:].copy()
+            else:
+                test_signals = safe_strategy_runtime.execute(best["code"], test_df)
             test_metrics = backtest_engine.run_backtest(
                 test_signals,
                 initial_balance=initial_balance,
@@ -164,6 +174,8 @@ class StrategyOptimizer:
             "train_rows": train_rows,
             "test_rows": test_rows,
             "step_rows": step,
+            "warmup_rows": warmup_rows,
+            "warmup_policy": "past-only context initializes the selected strategy for OOS execution; OOS rows never participate in parameter selection",
             "window_count": len(windows),
             "summary": {
                 "mean_test_return_pct": round(sum(returns) / len(returns), 4),
