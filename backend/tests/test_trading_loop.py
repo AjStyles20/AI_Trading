@@ -147,3 +147,26 @@ def test_manager_normalizes_legacy_code_to_explicit_record(monkeypatch):
     assert record["strategy_format"] == "legacy_python"
     assert record["strategy_spec"] == {}
     assert record["code"].startswith("def strategy")
+
+
+
+@pytest.mark.parametrize(
+    ("signal", "status", "filled_qty", "requested_qty", "expected"),
+    [
+        ("SELL", "filled", 1.0, 1.0, True),
+        ("SELL", "filled", 0.5, 1.0, False),
+        ("SELL", "partially_filled", 0.5, 1.0, False),
+        ("SELL", "pending", 0.0, 1.0, False),
+        ("SELL", "rejected", 0.0, 1.0, False),
+        ("SELL", "canceled", 0.0, 1.0, False),
+        ("BUY", "filled", 1.0, 1.0, False),
+    ],
+)
+def test_cooldown_starts_only_after_complete_sell_fill(
+    signal, status, filled_qty, requested_qty, expected
+):
+    from types import SimpleNamespace
+    from backend.trading_api import should_start_cooldown
+
+    execution = SimpleNamespace(status=status, filled_qty=filled_qty)
+    assert should_start_cooldown(signal, execution, requested_qty) is expected
