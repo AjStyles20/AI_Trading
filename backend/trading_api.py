@@ -222,6 +222,7 @@ class LiveTradingManager:
                         metadata={
                             "interval": interval,
                             "cooldown_bars": resolve_cooldown_bars(result_df) if signal == "SELL" else 0,
+                            **(resolve_position_protection_params(result_df) if signal == "BUY" else {}),
                         },
                     )
 
@@ -493,6 +494,26 @@ def should_start_cooldown(signal: str, execution, requested_qty: float) -> bool:
     )
 
 
+
+
+def resolve_position_protection_params(result_df) -> Dict[str, float]:
+    """Freeze validated entry protection parameters from the strategy output."""
+    resolved: Dict[str, float] = {}
+    for column in ("stop_loss_pct", "take_profit_pct"):
+        if column not in result_df.columns:
+            resolved[column] = 0.0
+            continue
+        raw = result_df.iloc[-1][column]
+        if isinstance(raw, bool) or str(getattr(raw, "dtype", "")).lower() == "bool":
+            raise ValueError(f"{column} must be between 0 and 100.")
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"{column} must be between 0 and 100.") from None
+        if value < 0 or value > 100:
+            raise ValueError(f"{column} must be between 0 and 100.")
+        resolved[column] = value
+    return resolved
 
 def resolve_cooldown_bars(result_df) -> int:
     """Read a validated cooldown duration from the strategy output."""
