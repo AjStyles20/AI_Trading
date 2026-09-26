@@ -206,6 +206,13 @@ class LiveTradingManager:
                                 account_equity, current_position_qty, day_start_equity, peak_equity = get_risk_context(
                                     broker, symbol, settings, execution_mode, broker_id
                                 )
+                                qty_tolerance = max(1e-8, abs(confirmed_position.qty) * 1e-6)
+                                if abs(current_position_qty - confirmed_position.qty) > qty_tolerance:
+                                    raise ValueError(
+                                        "POSITION DRIFT: confirmed-fill ledger quantity "
+                                        f"{confirmed_position.qty:.8f} does not match broker quantity "
+                                        f"{current_position_qty:.8f}."
+                                    )
                                 protection_order = BrokerOrder(
                                     symbol=symbol,
                                     side="SELL",
