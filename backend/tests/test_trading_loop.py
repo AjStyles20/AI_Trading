@@ -100,3 +100,50 @@ async def test_same_candle_is_evaluated_only_once(monkeypatch):
     assert evaluations["count"] == 1
     assert manager.last_evaluated_candle == frame.index[-1]
     assert any("Skipping already evaluated candle" in entry for entry in manager.logs)
+
+
+
+def test_manager_freezes_strategy_record_snapshot_on_start(monkeypatch):
+    import asyncio
+    from backend.trading_api import LiveTradingManager
+
+    manager = LiveTradingManager()
+    source = {
+        "strategy_format": "declarative_v1",
+        "strategy_spec": {
+            "schema_version": 1,
+            "strategy_type": "sma_cross",
+            "params": {"sma_fast": 2, "sma_slow": 5},
+        },
+        "code": "",
+    }
+
+    class DummyTask:
+        pass
+
+    monkeypatch.setattr(asyncio, "create_task", lambda coro: (coro.close(), DummyTask())[1])
+    manager.start("BTC/USDT", "crypto", "1h", source, "paper", "paper", strategy_id=7)
+
+    source["strategy_spec"]["params"]["sma_fast"] = 99
+
+    assert manager.config["strategy_id"] == 7
+    assert manager.config["strategy_format"] == "declarative_v1"
+    assert manager.config["strategy_record"]["strategy_spec"]["params"]["sma_fast"] == 2
+
+
+def test_manager_normalizes_legacy_code_to_explicit_record(monkeypatch):
+    import asyncio
+    from backend.trading_api import LiveTradingManager
+
+    manager = LiveTradingManager()
+
+    class DummyTask:
+        pass
+
+    monkeypatch.setattr(asyncio, "create_task", lambda coro: (coro.close(), DummyTask())[1])
+    manager.start("BTC/USDT", "crypto", "1h", "def strategy(df): return df", "paper", "paper")
+
+    record = manager.config["strategy_record"]
+    assert record["strategy_format"] == "legacy_python"
+    assert record["strategy_spec"] == {}
+    assert record["code"].startswith("def strategy")
