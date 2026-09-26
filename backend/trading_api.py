@@ -177,6 +177,19 @@ class LiveTradingManager:
                         broker_id,
                         execution_mode,
                     )
+                    completed_exits = [
+                        trade for trade in scoped_trades
+                        if trade.get("_completed_exit_transition")
+                    ]
+                    if completed_exits:
+                        latest_exit = completed_exits[0]
+                        self.cooldown_remaining = int(
+                            (latest_exit.get("metadata") or {}).get("cooldown_bars", 0)
+                        )
+                        self.log(
+                            f"RECONCILED SELL FILL: cooldown set to {self.cooldown_remaining} bar(s)."
+                        )
+
                     if has_unresolved_order(
                         scoped_trades,
                         symbol,
@@ -203,7 +216,10 @@ class LiveTradingManager:
                         qty=order_qty,
                         price=last_price,
                         asset_type=asset_type,
-                        metadata={"interval": interval},
+                        metadata={
+                            "interval": interval,
+                            "cooldown_bars": resolve_cooldown_bars(result_df) if signal == "SELL" else 0,
+                        },
                     )
 
                     risk = risk_engine.evaluate_order(
@@ -249,13 +265,7 @@ class LiveTradingManager:
                         filled_price=execution.filled_price,
                     )
                     if should_start_cooldown(signal, execution, order.qty):
-                        cooldown_bars = 0
-                        if "cooldown_bars" in result_df.columns:
-                            raw_cooldown = result_df.iloc[-1]["cooldown_bars"]
-                            cooldown_bars = int(raw_cooldown)
-                            if cooldown_bars < 0 or float(raw_cooldown) != cooldown_bars:
-                                raise ValueError("cooldown_bars must contain non-negative integers.")
-                        self.cooldown_remaining = cooldown_bars
+                        self.cooldown_remaining = int(order.metadata.get("cooldown_bars", 0))
                     self.log(execution.message)
                 else:
                     self.log("No signal detected.")
@@ -367,6 +377,16 @@ def reconcile_trade_order(trade: Dict[str, Any], settings: Dict[str, Any]) -> Di
         filled_qty=updated.get("filled_qty"),
         filled_price=updated.get("filled_price"),
     )
+    was_final = str(trade.get("order_status", "")).lower() in FINAL_ORDER_STATUSES
+    requested_qty = float(updated.get("requested_qty") or updated.get("qty") or 0)
+    fully_filled_exit = (
+        not was_final
+        and str(updated.get("side", "")).upper() == "SELL"
+        and str(updated.get("order_status", "")).lower() == "filled"
+        and float(updated.get("filled_qty") or 0) > 0
+        and float(updated.get("filled_qty") or 0) >= requested_qty
+    )
+    updated["_completed_exit_transition"] = fully_filled_exit
     return updated
 
 
@@ -426,6 +446,22 @@ def should_start_cooldown(signal: str, execution, requested_qty: float) -> bool:
         and float(execution.filled_qty or 0) >= float(requested_qty)
     )
 
+
+
+def resolve_cooldown_bars(result_df) -> int:
+    """Read a validated cooldown duration from the strategy output."""
+    if "cooldown_bars" not in result_df.columns:
+        return 0
+    raw = result_df.iloc[-1]["cooldown_bars"]
+    if isinstance(raw, bool):
+        raise ValueError("cooldown_bars must contain non-negative integers.")
+    try:
+        numeric = float(raw)
+    except (TypeError, ValueError):
+        raise ValueError("cooldown_bars must contain non-negative integers.") from None
+    if not numeric.is_integer() or numeric < 0:
+        raise ValueError("cooldown_bars must contain non-negative integers.")
+    return int(numeric)
 
 def resolve_strategy_quantity(result_df, signal: str, price: float, account_equity: float | None, current_position_qty: float | None) -> float:
     """Translate strategy position_size_pct into an executable quantity."""
