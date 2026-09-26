@@ -482,3 +482,52 @@ async def test_reconciliation_runs_even_when_strategy_has_no_signal(monkeypatch)
     assert calls["reconcile"] == 1
     assert calls["evaluate"] == 1
     assert any("No signal detected." in entry for entry in manager.logs)
+
+
+
+@pytest.mark.parametrize(
+    ("stop", "take", "expected"),
+    [
+        (0, 0, {"stop_loss_pct": 0.0, "take_profit_pct": 0.0}),
+        (2.5, 4, {"stop_loss_pct": 2.5, "take_profit_pct": 4.0}),
+        ("3", "5.5", {"stop_loss_pct": 3.0, "take_profit_pct": 5.5}),
+    ],
+)
+def test_resolve_position_protection_params_accepts_bounded_percentages(stop, take, expected):
+    import pandas as pd
+    from backend.trading_api import resolve_position_protection_params
+
+    frame = pd.DataFrame({"stop_loss_pct": [stop], "take_profit_pct": [take]})
+    assert resolve_position_protection_params(frame) == expected
+
+
+def test_resolve_position_protection_params_defaults_missing_columns_to_zero():
+    import pandas as pd
+    from backend.trading_api import resolve_position_protection_params
+
+    assert resolve_position_protection_params(pd.DataFrame({"signal": [1]})) == {
+        "stop_loss_pct": 0.0,
+        "take_profit_pct": 0.0,
+    }
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        ("stop_loss_pct", -1),
+        ("stop_loss_pct", 101),
+        ("stop_loss_pct", True),
+        ("take_profit_pct", -1),
+        ("take_profit_pct", 101),
+        ("take_profit_pct", True),
+        ("take_profit_pct", "bad"),
+    ],
+)
+def test_resolve_position_protection_params_rejects_invalid_values(column, value):
+    import pandas as pd
+    from backend.trading_api import resolve_position_protection_params
+
+    frame = pd.DataFrame({"stop_loss_pct": [2.0], "take_profit_pct": [3.0]})
+    frame.loc[0, column] = value
+    with pytest.raises(ValueError, match=column):
+        resolve_position_protection_params(frame)
