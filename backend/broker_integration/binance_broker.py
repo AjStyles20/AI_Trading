@@ -240,14 +240,14 @@ class BinanceBroker(BrokerClient):
         }
         response = self._signed_request("POST", "/api/v3/order", payload, settings)
         fills = response.get("fills", [])
-        average_fill_price = order.price
+        average_fill_price = 0.0
         if fills:
             fill_value = sum(float(fill.get("price", 0)) * float(fill.get("qty", 0)) for fill in fills)
             fill_qty = sum(float(fill.get("qty", 0)) for fill in fills)
             if fill_qty > 0:
                 average_fill_price = fill_value / fill_qty
 
-        executed_qty = float(response.get("executedQty", order.qty))
+        executed_qty = float(response.get("executedQty", 0) or 0)
         status = str(response.get("status", "UNKNOWN")).lower()
 
         return BrokerExecutionResult(
