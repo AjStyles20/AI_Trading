@@ -10,6 +10,7 @@ import urllib.parse
 import urllib.request
 
 from .base import BrokerClient, BrokerExecutionResult, BrokerOrder
+from core.credential_provider import resolve_api_keys
 
 
 class BitgetBroker(BrokerClient):
@@ -19,7 +20,7 @@ class BitgetBroker(BrokerClient):
     supported_asset_types = ("crypto",)
 
     def _get_api_keys(self, settings: dict) -> dict:
-        return settings.get("api_keys", {}) if settings else {}
+        return resolve_api_keys(settings)
 
     def _use_demo(self, settings: dict) -> bool:
         api_keys = self._get_api_keys(settings)
