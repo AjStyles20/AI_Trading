@@ -143,6 +143,30 @@ class LiveTradingManager:
                 df.columns = [c.lower() for c in df.columns]
                 market_data.assert_fresh(df, interval, asset_type=asset_type)
 
+                # Broker order lifecycle is independent of strategy signals and candle
+                # evaluation. Reconcile every poll so asynchronous fills are observed
+                # promptly, while strategy decisions remain deduplicated per candle.
+                settings = get_settings() or {}
+                scoped_trades = reconcile_unresolved_orders(
+                    get_trades(limit=100),
+                    settings,
+                    symbol,
+                    broker_id,
+                    execution_mode,
+                )
+                completed_exits = [
+                    trade for trade in scoped_trades
+                    if trade.get("_completed_exit_transition")
+                ]
+                if completed_exits:
+                    latest_exit = completed_exits[0]
+                    self.cooldown_remaining = int(
+                        (latest_exit.get("metadata") or {}).get("cooldown_bars", 0)
+                    )
+                    self.log(
+                        f"RECONCILED SELL FILL: cooldown set to {self.cooldown_remaining} bar(s)."
+                    )
+
                 # Evaluate each completed/latest candle at most once. Polling may run
                 # several times within a timeframe, but it must never create repeated
                 # decisions or orders from the same market observation.
@@ -169,27 +193,6 @@ class LiveTradingManager:
                     self.cooldown_remaining -= 1
                 
                 if signal:
-                    settings = get_settings() or {}
-                    scoped_trades = reconcile_unresolved_orders(
-                        get_trades(limit=100),
-                        settings,
-                        symbol,
-                        broker_id,
-                        execution_mode,
-                    )
-                    completed_exits = [
-                        trade for trade in scoped_trades
-                        if trade.get("_completed_exit_transition")
-                    ]
-                    if completed_exits:
-                        latest_exit = completed_exits[0]
-                        self.cooldown_remaining = int(
-                            (latest_exit.get("metadata") or {}).get("cooldown_bars", 0)
-                        )
-                        self.log(
-                            f"RECONCILED SELL FILL: cooldown set to {self.cooldown_remaining} bar(s)."
-                        )
-
                     if has_unresolved_order(
                         scoped_trades,
                         symbol,
