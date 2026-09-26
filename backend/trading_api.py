@@ -231,12 +231,7 @@ class LiveTradingManager:
                         filled_qty=execution.filled_qty,
                         filled_price=execution.filled_price,
                     )
-                    if (
-                        signal == "SELL"
-                        and str(execution.status).lower() == "filled"
-                        and float(execution.filled_qty or 0) > 0
-                        and float(execution.filled_qty or 0) >= float(order.qty)
-                    ):
+                    if should_start_cooldown(signal, execution, order.qty):
                         cooldown_bars = 0
                         if "cooldown_bars" in result_df.columns:
                             raw_cooldown = result_df.iloc[-1]["cooldown_bars"]
@@ -322,6 +317,16 @@ def get_risk_context(broker, symbol: str, settings: Dict[str, Any], execution_mo
         peak_equity = equity_state["peak_equity"]
 
     return account_equity, current_position_qty, day_start_equity, peak_equity
+
+
+def should_start_cooldown(signal: str, execution, requested_qty: float) -> bool:
+    """Start cooldown only after the requested exit is completely filled."""
+    return (
+        signal == "SELL"
+        and str(execution.status).lower() == "filled"
+        and float(execution.filled_qty or 0) > 0
+        and float(execution.filled_qty or 0) >= float(requested_qty)
+    )
 
 
 def resolve_strategy_quantity(result_df, signal: str, price: float, account_equity: float | None, current_position_qty: float | None) -> float:
