@@ -126,6 +126,8 @@ def init_db():
         builder_graph TEXT DEFAULT '{}',
         validation_summary TEXT DEFAULT '{}',
         optimization_summary TEXT DEFAULT '{}',
+        strategy_spec TEXT DEFAULT '{}',
+        strategy_format TEXT DEFAULT 'legacy_python',
         is_baseline BOOLEAN DEFAULT 0,
         is_archived BOOLEAN DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -143,6 +145,8 @@ def init_db():
         "builder_graph": "ALTER TABLE strategies ADD COLUMN builder_graph TEXT DEFAULT '{}'",
         "validation_summary": "ALTER TABLE strategies ADD COLUMN validation_summary TEXT DEFAULT '{}'",
         "optimization_summary": "ALTER TABLE strategies ADD COLUMN optimization_summary TEXT DEFAULT '{}'",
+        "strategy_spec": "ALTER TABLE strategies ADD COLUMN strategy_spec TEXT DEFAULT '{}'",
+        "strategy_format": "ALTER TABLE strategies ADD COLUMN strategy_format TEXT DEFAULT 'legacy_python'",
         "is_baseline": "ALTER TABLE strategies ADD COLUMN is_baseline BOOLEAN DEFAULT 0",
         "is_archived": "ALTER TABLE strategies ADD COLUMN is_archived BOOLEAN DEFAULT 0",
     }
@@ -700,6 +704,8 @@ def save_strategy(
     builder_graph: dict | None = None,
     validation_summary: dict | None = None,
     optimization_summary: dict | None = None,
+    strategy_spec: dict | None = None,
+    strategy_format: str | None = None,
     is_baseline: bool = False,
     strategy_id: int | None = None,
 ):
@@ -709,6 +715,10 @@ def save_strategy(
     graph_json = json.dumps(builder_graph or {})
     validation_json = json.dumps(validation_summary or {})
     optimization_json = json.dumps(optimization_summary or {})
+    spec_json = json.dumps(strategy_spec or {})
+    resolved_format = strategy_format or ("declarative_v1" if strategy_spec else "legacy_python")
+    if resolved_format not in {"legacy_python", "declarative_v1"}:
+        raise ValueError("strategy_format must be 'legacy_python' or 'declarative_v1'")
 
     if is_baseline:
         cursor.execute("UPDATE strategies SET is_baseline = 0")
@@ -717,18 +727,18 @@ def save_strategy(
         cursor.execute(
             '''
             UPDATE strategies
-            SET name = ?, code = ?, symbol = ?, asset_type = ?, tags = ?, builder_graph = ?, validation_summary = ?, optimization_summary = ?, is_baseline = ?, last_modified = CURRENT_TIMESTAMP
+            SET name = ?, code = ?, symbol = ?, asset_type = ?, tags = ?, builder_graph = ?, validation_summary = ?, optimization_summary = ?, strategy_spec = ?, strategy_format = ?, is_baseline = ?, last_modified = CURRENT_TIMESTAMP
             WHERE id = ?
             ''',
-            (name, code, symbol, asset_type, tags_json, graph_json, validation_json, optimization_json, int(is_baseline), strategy_id),
+            (name, code, symbol, asset_type, tags_json, graph_json, validation_json, optimization_json, spec_json, resolved_format, int(is_baseline), strategy_id),
         )
     else:
         cursor.execute(
             '''
-            INSERT INTO strategies (name, code, symbol, asset_type, tags, builder_graph, validation_summary, optimization_summary, is_baseline)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO strategies (name, code, symbol, asset_type, tags, builder_graph, validation_summary, optimization_summary, strategy_spec, strategy_format, is_baseline)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
-            (name, code, symbol, asset_type, tags_json, graph_json, validation_json, optimization_json, int(is_baseline)),
+            (name, code, symbol, asset_type, tags_json, graph_json, validation_json, optimization_json, spec_json, resolved_format, int(is_baseline)),
         )
         strategy_id = cursor.lastrowid
 
@@ -746,7 +756,7 @@ def get_strategies(limit: int = 50, include_archived: bool = False, archived_onl
         where_clause = "WHERE is_archived = 0"
     cursor.execute(
         f'''
-        SELECT id, name, code, symbol, asset_type, tags, builder_graph, validation_summary, optimization_summary, is_baseline, is_archived, created_at, last_modified
+        SELECT id, name, code, symbol, asset_type, tags, builder_graph, validation_summary, optimization_summary, strategy_spec, strategy_format, is_baseline, is_archived, created_at, last_modified
         FROM strategies
         {where_clause}
         ORDER BY is_baseline DESC, last_modified DESC
@@ -767,10 +777,12 @@ def get_strategies(limit: int = 50, include_archived: bool = False, archived_onl
             "builder_graph": json.loads(row[6] or '{}'),
             "validation_summary": json.loads(row[7] or '{}'),
             "optimization_summary": json.loads(row[8] or '{}'),
-            "is_baseline": bool(row[9]),
-            "is_archived": bool(row[10]),
-            "created_at": row[11],
-            "last_modified": row[12],
+            "strategy_spec": json.loads(row[9] or '{}'),
+            "strategy_format": row[10] or "legacy_python",
+            "is_baseline": bool(row[11]),
+            "is_archived": bool(row[12]),
+            "created_at": row[13],
+            "last_modified": row[14],
         }
         for row in rows
     ]
@@ -780,7 +792,7 @@ def get_strategy(strategy_id: int):
     cursor = conn.cursor()
     cursor.execute(
         '''
-        SELECT id, name, code, symbol, asset_type, tags, builder_graph, validation_summary, optimization_summary, is_baseline, is_archived, created_at, last_modified
+        SELECT id, name, code, symbol, asset_type, tags, builder_graph, validation_summary, optimization_summary, strategy_spec, strategy_format, is_baseline, is_archived, created_at, last_modified
         FROM strategies
         WHERE id = ?
         ''',
@@ -892,6 +904,8 @@ def duplicate_strategy(strategy_id: int):
         builder_graph=strategy.get("builder_graph", {}),
         validation_summary=strategy.get("validation_summary", {}),
         optimization_summary=strategy.get("optimization_summary", {}),
+        strategy_spec=strategy.get("strategy_spec", {}),
+        strategy_format=strategy.get("strategy_format", "legacy_python"),
         is_baseline=False,
     )
 
