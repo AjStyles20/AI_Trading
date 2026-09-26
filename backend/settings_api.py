@@ -4,8 +4,8 @@ from typing import Dict, Optional
 import sys, os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from database.sqlite_manager import get_public_settings, update_settings
-from core.credential_provider import set_secure_credential
+from database.sqlite_manager import get_public_settings, get_settings, update_settings
+from core.credential_provider import credential_presence, set_secure_credential
 
 router = APIRouter()
 
@@ -24,6 +24,8 @@ def get_current_settings():
     settings = get_public_settings()
     if not settings:
         raise HTTPException(status_code=404, detail="Settings not found")
+    internal = get_settings() or {}
+    settings["credential_presence"] = credential_presence(internal)
     return settings
 
 @router.post("/api/settings")
