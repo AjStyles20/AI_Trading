@@ -199,7 +199,7 @@ def test_optimizer_reports_search_space_risk():
     assert risk["candidate_count"] == 4
     assert risk["development_rows"] == 48
     assert risk["observations_per_candidate"] == 12.0
-    assert any("Fewer than five development observations" in warning for warning in risk["warnings"])
+    assert not any("Fewer than five development observations" in warning for warning in risk["warnings"])
     assert risk["winner_closed_round_trips"] == result["best"]["closed_round_trips"]
     assert isinstance(risk["warnings"], list)
     assert "not statistical significance tests" in risk["interpretation"]
