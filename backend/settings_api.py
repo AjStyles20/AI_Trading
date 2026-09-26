@@ -51,5 +51,9 @@ def save_settings(update: SettingsUpdate):
             return {"status": "success", "message": "Settings updated"}
         else:
             raise HTTPException(status_code=500, detail="Failed to update settings")
-    except Exception as e:
+    except HTTPException:
+        raise
+    except (ValueError, RuntimeError) as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to update settings") from e
