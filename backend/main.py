@@ -35,7 +35,14 @@ init_db()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # For desktop app
+    # Desktop development origins only. Wildcard origins combined with credentials
+    # unnecessarily expose the local trading API to arbitrary web pages.
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -69,7 +76,7 @@ class StrategyRequest(BaseModel):
 @app.post("/api/strategy")
 async def generate_strategy(request: StrategyRequest):
     try:
-        generator = StrategyGenerator(ai_assistant.llm)
+        generator = StrategyGenerator(ai_assistant.get_llm())
         code = generator.generate(request.prompt)
         return {"code": code, "status": "success"}
     except Exception as e:

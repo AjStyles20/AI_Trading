@@ -1,4 +1,3 @@
-import React from 'react';
 import { render, screen } from '@testing-library/react';
 import BottomPanel from '../BottomPanel';
 import { describe, it, expect, vi } from 'vitest';
@@ -24,7 +23,7 @@ describe('BottomPanel Component', () => {
   };
 
   it('renders without crashing and displays default tabs', () => {
-    const { container } = render(<BottomPanel {...dummyProps} />);
+    render(<BottomPanel {...dummyProps} />);
     
     // Should display the Code tab
     const codeTabList = screen.getAllByText(/Code/i);

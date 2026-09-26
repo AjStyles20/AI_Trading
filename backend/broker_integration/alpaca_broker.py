@@ -6,6 +6,7 @@ import urllib.parse
 import urllib.request
 
 from .base import BrokerClient, BrokerExecutionResult, BrokerOrder
+from core.credential_provider import resolve_api_keys
 
 
 class AlpacaBroker(BrokerClient):
@@ -15,7 +16,7 @@ class AlpacaBroker(BrokerClient):
     supported_asset_types = ("stock",)
 
     def _get_api_keys(self, settings: dict) -> dict:
-        return settings.get("api_keys", {}) if settings else {}
+        return resolve_api_keys(settings)
 
     def _get_base_url(self, execution_mode: str) -> str:
         if execution_mode == "paper":
@@ -151,8 +152,10 @@ class AlpacaBroker(BrokerClient):
             execution_mode=execution_mode,
             status=status,
             message=f"Alpaca {execution_mode} order {status}: {order.side.upper()} {qty} {order.symbol}",
-            filled_qty=filled_qty if filled_qty > 0 else qty,
-            filled_price=filled_avg_price,
+            # Broker acceptance is not a fill. Preserve zero/partial fill quantity
+            # so portfolio state and trade history do not fabricate executions.
+            filled_qty=filled_qty,
+            filled_price=filled_avg_price if filled_qty > 0 else 0.0,
             metadata={
                 **response,
                 "order_status": status,
@@ -184,9 +187,12 @@ class AlpacaBroker(BrokerClient):
         status = str(response.get("status", trade.get("order_status", "unknown"))).lower()
         filled_qty = float(response.get("filled_qty", 0) or 0)
         original_qty = float(response.get("qty", trade.get("qty", 0)) or 0)
+        filled_avg_price = float(response.get("filled_avg_price", 0) or 0)
         return {
             "order_status": status,
             "broker_order_id": self._extract_broker_order_id(response) or broker_order_id,
+            "filled_qty": filled_qty,
+            "filled_price": filled_avg_price if filled_qty > 0 else 0.0,
             "metadata": {
                 **response,
                 "orig_qty": original_qty,
@@ -203,10 +209,13 @@ class AlpacaBroker(BrokerClient):
 
         self._request("DELETE", f"/v2/orders/{broker_order_id}", settings, trade.get("execution_mode", "live"))
         return {
-            "order_status": "canceled",
+            "order_status": "cancel_requested",
             "broker_order_id": broker_order_id,
-            "metadata": {"broker_reason": "canceled"},
-            "message": f"Alpaca order {broker_order_id} canceled.",
+            "metadata": {
+                "broker_reason": "cancel_requested",
+                "executed_qty": float(trade.get("filled_qty", 0) or 0),
+            },
+            "message": f"Cancellation requested for Alpaca order {broker_order_id}; final status requires broker reconciliation.",
         }
 
     def list_open_orders(self, symbol: str, asset_type: str, settings: dict, execution_mode: str) -> list[dict]:

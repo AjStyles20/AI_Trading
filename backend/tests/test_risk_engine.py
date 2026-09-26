@@ -1,0 +1,121 @@
+from core.risk_engine import RiskEngine
+
+
+def test_paper_order_within_limit_is_approved():
+    decision = RiskEngine().evaluate_order(
+        side="BUY",
+        qty=1,
+        price=100,
+        execution_mode="paper",
+        settings={"risk_max_order_notional": 1000},
+    )
+    assert decision.approved is True
+
+
+def test_order_over_notional_limit_is_rejected():
+    decision = RiskEngine().evaluate_order(
+        side="BUY",
+        qty=2,
+        price=600,
+        execution_mode="paper",
+        settings={"risk_max_order_notional": 1000},
+    )
+    assert decision.approved is False
+    assert "exceeds configured limit" in " ".join(decision.reasons)
+
+
+def test_live_trading_is_locked_by_default():
+    decision = RiskEngine().evaluate_order(
+        side="BUY",
+        qty=1,
+        price=100,
+        execution_mode="live",
+        settings={"risk_max_order_notional": 1000},
+    )
+    assert decision.approved is False
+    assert "Live trading is locked" in " ".join(decision.reasons)
+
+
+def test_live_trading_requires_explicit_opt_in():
+    decision = RiskEngine().evaluate_order(
+        side="BUY",
+        qty=1,
+        price=100,
+        execution_mode="live",
+        settings={
+            "risk_max_order_notional": 1000,
+            "risk_live_trading_enabled": True,
+        },
+    )
+    assert decision.approved is True
+
+
+def test_invalid_quantity_and_price_are_rejected():
+    decision = RiskEngine().evaluate_order(
+        side="BUY",
+        qty=0,
+        price=0,
+        execution_mode="paper",
+        settings={},
+    )
+    assert decision.approved is False
+    assert len(decision.reasons) >= 2
+
+
+def test_rejects_sell_larger_than_current_position():
+    decision = RiskEngine().evaluate_order(
+        side="SELL", qty=2, price=100, execution_mode="paper",
+        settings={"risk_max_order_notional": 1000},
+        current_position_qty=1,
+    )
+    assert not decision.approved
+    assert "exceeds current position" in decision.reasons[0]
+
+
+def test_rejects_buy_above_position_equity_limit():
+    decision = RiskEngine().evaluate_order(
+        side="BUY", qty=3, price=100, execution_mode="paper",
+        settings={"risk_max_order_notional": 1000, "risk_max_position_pct": 25},
+        account_equity=1000,
+    )
+    assert not decision.approved
+    assert "per-position equity limit" in decision.reasons[0]
+
+
+def test_daily_loss_limit_blocks_new_orders():
+    decision = RiskEngine().evaluate_order(
+        side="BUY", qty=1, price=100, execution_mode="paper",
+        settings={"risk_max_order_notional": 1000, "risk_max_daily_loss_pct": 3},
+        account_equity=960,
+        day_start_equity=1000,
+        peak_equity=1000,
+    )
+    assert not decision.approved
+    assert "Daily loss" in " ".join(decision.reasons)
+
+
+def test_drawdown_limit_blocks_new_orders():
+    decision = RiskEngine().evaluate_order(
+        side="BUY", qty=1, price=100, execution_mode="paper",
+        settings={"risk_max_order_notional": 1000, "risk_max_drawdown_pct": 10},
+        account_equity=890,
+        day_start_equity=900,
+        peak_equity=1000,
+    )
+    assert not decision.approved
+    assert "Account drawdown" in " ".join(decision.reasons)
+
+
+def test_loss_limits_allow_order_below_thresholds():
+    decision = RiskEngine().evaluate_order(
+        side="BUY", qty=1, price=100, execution_mode="paper",
+        settings={
+            "risk_max_order_notional": 1000,
+            "risk_max_daily_loss_pct": 3,
+            "risk_max_drawdown_pct": 10,
+        },
+        account_equity=980,
+        day_start_equity=1000,
+        peak_equity=1000,
+    )
+    assert decision.approved

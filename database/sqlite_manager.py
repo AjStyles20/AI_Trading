@@ -38,9 +38,79 @@ def init_db():
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS settings (
         id INTEGER PRIMARY KEY DEFAULT 1,
-        api_keys TEXT, -- JSON blob of encrypted API keys
+        api_keys TEXT, -- JSON credentials; plaintext legacy storage pending secure migration
         theme TEXT DEFAULT 'dark',
-        paper_trading BOOLEAN DEFAULT 1
+        paper_trading BOOLEAN DEFAULT 1,
+        risk_live_trading_enabled BOOLEAN DEFAULT 0,
+        risk_max_order_notional REAL DEFAULT 1000.0,
+        risk_max_position_pct REAL DEFAULT 25.0,
+        risk_max_daily_loss_pct REAL DEFAULT 3.0,
+        risk_max_drawdown_pct REAL DEFAULT 10.0,
+        binance_environment TEXT DEFAULT 'live',
+        bitget_environment TEXT DEFAULT 'live'
+    )
+    ''')
+
+    existing_settings_columns = {row[1] for row in cursor.execute("PRAGMA table_info(settings)").fetchall()}
+    settings_column_migrations = {
+        "risk_live_trading_enabled": "ALTER TABLE settings ADD COLUMN risk_live_trading_enabled BOOLEAN DEFAULT 0",
+        "risk_max_order_notional": "ALTER TABLE settings ADD COLUMN risk_max_order_notional REAL DEFAULT 1000.0",
+        "risk_max_position_pct": "ALTER TABLE settings ADD COLUMN risk_max_position_pct REAL DEFAULT 25.0",
+        "risk_max_daily_loss_pct": "ALTER TABLE settings ADD COLUMN risk_max_daily_loss_pct REAL DEFAULT 3.0",
+        "risk_max_drawdown_pct": "ALTER TABLE settings ADD COLUMN risk_max_drawdown_pct REAL DEFAULT 10.0",
+        "binance_environment": "ALTER TABLE settings ADD COLUMN binance_environment TEXT DEFAULT 'live'",
+        "bitget_environment": "ALTER TABLE settings ADD COLUMN bitget_environment TEXT DEFAULT 'live'",
+    }
+    for column, statement in settings_column_migrations.items():
+        if column not in existing_settings_columns:
+            cursor.execute(statement)
+
+    # One-time compatibility migration: broker environment flags were historically
+    # mixed into api_keys. Move only those non-secret flags into dedicated columns.
+    row = cursor.execute(
+        "SELECT api_keys, binance_environment, bitget_environment FROM settings WHERE id = 1"
+    ).fetchone()
+    if row:
+        try:
+            legacy_keys = json.loads(row[0] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            legacy_keys = {}
+        if isinstance(legacy_keys, dict):
+            changed = False
+            binance_flag = legacy_keys.pop("binance_testnet", None)
+            bitget_flag = legacy_keys.pop("bitget_demo", None)
+            if binance_flag is not None:
+                binance_env = "testnet" if str(binance_flag).strip().lower() in {"1", "true", "yes", "on"} else "live"
+                cursor.execute("UPDATE settings SET binance_environment = ? WHERE id = 1", (binance_env,))
+                changed = True
+            if bitget_flag is not None:
+                bitget_env = "demo" if str(bitget_flag).strip().lower() in {"1", "true", "yes", "on"} else "live"
+                cursor.execute("UPDATE settings SET bitget_environment = ? WHERE id = 1", (bitget_env,))
+                changed = True
+            if changed:
+                cursor.execute("UPDATE settings SET api_keys = ? WHERE id = 1", (json.dumps(legacy_keys),))
+
+    # Persistent account equity baselines for loss/drawdown risk controls.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS risk_equity_state (
+        broker_id TEXT NOT NULL,
+        execution_mode TEXT NOT NULL,
+        trading_day TEXT NOT NULL,
+        day_start_equity REAL NOT NULL,
+        peak_equity REAL NOT NULL,
+        last_equity REAL NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (broker_id, execution_mode)
+    )
+    ''')
+
+    # Persistent simulated brokerage account. A single JSON payload is used so
+    # cash, positions, and marks are committed atomically.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS paper_account_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        state_json TEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
 
@@ -56,6 +126,8 @@ def init_db():
         builder_graph TEXT DEFAULT '{}',
         validation_summary TEXT DEFAULT '{}',
         optimization_summary TEXT DEFAULT '{}',
+        strategy_spec TEXT DEFAULT '{}',
+        strategy_format TEXT DEFAULT 'legacy_python',
         is_baseline BOOLEAN DEFAULT 0,
         is_archived BOOLEAN DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -73,6 +145,8 @@ def init_db():
         "builder_graph": "ALTER TABLE strategies ADD COLUMN builder_graph TEXT DEFAULT '{}'",
         "validation_summary": "ALTER TABLE strategies ADD COLUMN validation_summary TEXT DEFAULT '{}'",
         "optimization_summary": "ALTER TABLE strategies ADD COLUMN optimization_summary TEXT DEFAULT '{}'",
+        "strategy_spec": "ALTER TABLE strategies ADD COLUMN strategy_spec TEXT DEFAULT '{}'",
+        "strategy_format": "ALTER TABLE strategies ADD COLUMN strategy_format TEXT DEFAULT 'legacy_python'",
         "is_baseline": "ALTER TABLE strategies ADD COLUMN is_baseline BOOLEAN DEFAULT 0",
         "is_archived": "ALTER TABLE strategies ADD COLUMN is_archived BOOLEAN DEFAULT 0",
     }
@@ -117,10 +191,14 @@ def init_db():
         "broker_order_id": "ALTER TABLE trades ADD COLUMN broker_order_id TEXT",
         "is_test": "ALTER TABLE trades ADD COLUMN is_test BOOLEAN DEFAULT 0",
         "metadata": "ALTER TABLE trades ADD COLUMN metadata TEXT DEFAULT '{}'",
+        "requested_qty": "ALTER TABLE trades ADD COLUMN requested_qty REAL",
+        "filled_qty": "ALTER TABLE trades ADD COLUMN filled_qty REAL DEFAULT 0",
+        "filled_price": "ALTER TABLE trades ADD COLUMN filled_price REAL DEFAULT 0",
     }
     for column, statement in trade_column_migrations.items():
         if column not in existing_trade_columns:
             cursor.execute(statement)
+    cursor.execute("UPDATE trades SET requested_qty = qty WHERE requested_qty IS NULL")
 
     # Ensure a default settings row exists
     cursor.execute("INSERT OR IGNORE INTO settings (id, api_keys, theme, paper_trading) VALUES (1, '{}', 'dark', 1)")
@@ -129,46 +207,305 @@ def init_db():
     conn.close()
 
 def get_settings():
+    """Return internal settings, including secrets. Never log this object."""
     try:
-        print(f"DEBUG: get_settings() from: {DB_PATH}")
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM settings WHERE id=1")
+        cursor.execute("""
+            SELECT id, api_keys, theme, paper_trading,
+                   risk_live_trading_enabled, risk_max_order_notional, risk_max_position_pct,
+                   risk_max_daily_loss_pct, risk_max_drawdown_pct,
+                   binance_environment, bitget_environment
+            FROM settings WHERE id=1
+        """)
         row = cursor.fetchone()
         conn.close()
-        print(f"DEBUG: get_settings() row: {row}")
         if row:
             return {
-                "id": row[0], 
-                "api_keys": json.loads(row[1] if row[1] else '{}'), 
-                "theme": row[2], 
-                "paper_trading": bool(row[3])
+                "id": row[0],
+                "api_keys": json.loads(row[1] or "{}"),
+                "theme": row[2],
+                "paper_trading": bool(row[3]),
+                "risk_live_trading_enabled": bool(row[4]),
+                "risk_max_order_notional": float(row[5] or 1000.0),
+                "risk_max_position_pct": float(row[6] or 25.0),
+                "risk_max_daily_loss_pct": float(row[7] or 3.0),
+                "risk_max_drawdown_pct": float(row[8] or 10.0),
+                "binance_environment": row[9] or "live",
+                "bitget_environment": row[10] or "live",
             }
-    except Exception as e:
-        print(f"DEBUG: ERROR in get_settings(): {e}")
+    except sqlite3.Error:
+        return None
     return None
 
-def update_settings(api_keys: dict = None, theme: str = None, paper_trading: bool = None):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
+
+def get_public_settings():
+    settings = get_settings()
+    if not settings:
+        return None
+    public = dict(settings)
+    public["api_keys"] = {
+        key: ("********" if value else "")
+        for key, value in settings.get("api_keys", {}).items()
+    }
+    return public
+
+
+def _preserve_legacy_api_keys(api_keys: dict | None, current_api_keys: dict | None) -> dict:
+    """Never persist newly supplied credential material to SQLite.
+
+    Masked placeholders preserve existing legacy values during migration.
+    Empty values remove a legacy value. Any new non-masked secret must be
+    stored by the credential provider instead of this settings table.
+    """
+    current = dict(current_api_keys or {})
+    if api_keys is None:
+        return current
+
+    for key, value in api_keys.items():
+        value = "" if value is None else str(value)
+        if value == "********":
+            continue
+        if value == "":
+            current.pop(key, None)
+            continue
+        if current.get(key) == value:
+            continue
+        raise ValueError(
+            f"Refusing to persist credential '{key}' in plaintext SQLite. "
+            "Use the secure credential store or environment variable."
+        )
+    return current
+
+
+def update_settings(
+    api_keys: dict = None,
+    theme: str = None,
+    paper_trading: bool = None,
+    risk_live_trading_enabled: bool = None,
+    risk_max_order_notional: float = None,
+    risk_max_position_pct: float = None,
+    risk_max_daily_loss_pct: float = None,
+    risk_max_drawdown_pct: float = None,
+    binance_environment: str = None,
+    bitget_environment: str = None,
+):
     current = get_settings()
     if not current:
         return False
-        
-    new_api_keys = json.dumps(api_keys if api_keys is not None else current["api_keys"])
-    new_theme = theme if theme is not None else current["theme"]
-    new_paper_trading = int(paper_trading) if paper_trading is not None else int(current["paper_trading"])
-    
-    cursor.execute('''
-    UPDATE settings 
-    SET api_keys = ?, theme = ?, paper_trading = ? 
-    WHERE id = 1
-    ''', (new_api_keys, new_theme, new_paper_trading))
-    
+    max_notional = (
+        float(risk_max_order_notional)
+        if risk_max_order_notional is not None
+        else current["risk_max_order_notional"]
+    )
+    if max_notional <= 0:
+        raise ValueError("risk_max_order_notional must be positive")
+    max_position_pct = (
+        float(risk_max_position_pct)
+        if risk_max_position_pct is not None
+        else current["risk_max_position_pct"]
+    )
+    if not 0 < max_position_pct <= 100:
+        raise ValueError("risk_max_position_pct must be between 0 and 100")
+    max_daily_loss_pct = float(risk_max_daily_loss_pct) if risk_max_daily_loss_pct is not None else current["risk_max_daily_loss_pct"]
+    if not 0 < max_daily_loss_pct <= 100:
+        raise ValueError("risk_max_daily_loss_pct must be between 0 and 100")
+    max_drawdown_pct = float(risk_max_drawdown_pct) if risk_max_drawdown_pct is not None else current["risk_max_drawdown_pct"]
+    if not 0 < max_drawdown_pct <= 100:
+        raise ValueError("risk_max_drawdown_pct must be between 0 and 100")
+
+    next_binance_environment = binance_environment if binance_environment is not None else current["binance_environment"]
+    next_bitget_environment = bitget_environment if bitget_environment is not None else current["bitget_environment"]
+    if next_binance_environment not in {"live", "testnet"}:
+        raise ValueError("binance_environment must be 'live' or 'testnet'")
+    if next_bitget_environment not in {"live", "demo"}:
+        raise ValueError("bitget_environment must be 'live' or 'demo'")
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE settings
+        SET api_keys = ?, theme = ?, paper_trading = ?,
+            risk_live_trading_enabled = ?, risk_max_order_notional = ?, risk_max_position_pct = ?,
+            risk_max_daily_loss_pct = ?, risk_max_drawdown_pct = ?,
+            binance_environment = ?, bitget_environment = ?
+        WHERE id = 1
+    """, (
+        json.dumps(_preserve_legacy_api_keys(api_keys, current["api_keys"])),
+        theme if theme is not None else current["theme"],
+        int(paper_trading) if paper_trading is not None else int(current["paper_trading"]),
+        int(risk_live_trading_enabled) if risk_live_trading_enabled is not None else int(current["risk_live_trading_enabled"]),
+        max_notional,
+        max_position_pct,
+        max_daily_loss_pct,
+        max_drawdown_pct,
+        next_binance_environment,
+        next_bitget_environment,
+    ))
     conn.commit()
     conn.close()
     return True
+
+
+
+def remove_legacy_api_keys(keys: list[str]) -> bool:
+    """Remove only explicitly named legacy credential entries from SQLite."""
+    if not keys:
+        return True
+    current = get_settings()
+    if not current:
+        return False
+    legacy = dict(current.get("api_keys", {}) or {})
+    for key in keys:
+        legacy.pop(key, None)
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE settings SET api_keys = ? WHERE id = 1",
+        (json.dumps(legacy),),
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+def get_paper_account_state():
+    """Return the persisted paper account payload, or None when not initialized."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT state_json FROM paper_account_state WHERE id = 1")
+        row = cursor.fetchone()
+    except sqlite3.Error:
+        row = None
+    finally:
+        conn.close()
+    if not row:
+        return None
+    try:
+        state = json.loads(row[0])
+    except (TypeError, json.JSONDecodeError):
+        return None
+    return state if isinstance(state, dict) else None
+
+
+def save_paper_account_state(state: dict) -> None:
+    """Atomically persist the complete simulated brokerage account."""
+    payload = json.dumps(state, sort_keys=True)
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO paper_account_state (id, state_json, updated_at)
+        VALUES (1, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+            state_json = excluded.state_json,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (payload,),
+    )
+    conn.commit()
+    conn.close()
+
+
+def clear_risk_equity_state(broker_id: str, execution_mode: str) -> None:
+    """Clear a risk baseline when its underlying simulated account is reset."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM risk_equity_state WHERE broker_id = ? AND execution_mode = ?",
+        (broker_id, execution_mode),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_risk_equity_state(
+    broker_id: str,
+    execution_mode: str,
+    equity: float,
+    trading_day: str | None = None,
+):
+    """Persist daily-start and peak equity so risk limits survive restarts."""
+    equity = float(equity)
+    if equity <= 0:
+        raise ValueError("equity must be positive")
+    trading_day = trading_day or datetime.now().date().isoformat()
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT trading_day, day_start_equity, peak_equity
+        FROM risk_equity_state
+        WHERE broker_id = ? AND execution_mode = ?
+        """,
+        (broker_id, execution_mode),
+    )
+    row = cursor.fetchone()
+
+    if row is None:
+        day_start_equity = equity
+        peak_equity = equity
+        cursor.execute(
+            """
+            INSERT INTO risk_equity_state
+                (broker_id, execution_mode, trading_day, day_start_equity, peak_equity, last_equity)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (broker_id, execution_mode, trading_day, equity, equity, equity),
+        )
+    else:
+        stored_day, stored_day_start, stored_peak = row
+        day_start_equity = equity if stored_day != trading_day else float(stored_day_start)
+        peak_equity = max(float(stored_peak), equity)
+        cursor.execute(
+            """
+            UPDATE risk_equity_state
+            SET trading_day = ?, day_start_equity = ?, peak_equity = ?,
+                last_equity = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE broker_id = ? AND execution_mode = ?
+            """,
+            (trading_day, day_start_equity, peak_equity, equity, broker_id, execution_mode),
+        )
+
+    conn.commit()
+    conn.close()
+    return {
+        "broker_id": broker_id,
+        "execution_mode": execution_mode,
+        "trading_day": trading_day,
+        "day_start_equity": day_start_equity,
+        "peak_equity": peak_equity,
+        "last_equity": equity,
+    }
+
+
+def get_risk_equity_state(broker_id: str, execution_mode: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT trading_day, day_start_equity, peak_equity, last_equity, updated_at
+        FROM risk_equity_state
+        WHERE broker_id = ? AND execution_mode = ?
+        """,
+        (broker_id, execution_mode),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "broker_id": broker_id,
+        "execution_mode": execution_mode,
+        "trading_day": row[0],
+        "day_start_equity": float(row[1]),
+        "peak_equity": float(row[2]),
+        "last_equity": float(row[3]),
+        "updated_at": row[4],
+    }
+
 
 def record_trade(
     symbol: str,
@@ -183,30 +520,34 @@ def record_trade(
     broker_order_id: str | None = None,
     is_test: bool = False,
     metadata: dict | None = None,
+    requested_qty: float | None = None,
+    filled_qty: float | None = None,
+    filled_price: float | None = None,
 ):
+    requested_qty = float(qty if requested_qty is None else requested_qty)
+    filled_qty = float(qty if filled_qty is None and order_status == "filled" else (filled_qty or 0.0))
+    filled_price = float(price if filled_price is None and filled_qty > 0 else (filled_price or 0.0))
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('''
-    INSERT INTO trades (symbol, side, qty, price, broker_id, execution_mode, is_paper, order_status, order_type, broker_order_id, is_test, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        symbol,
-        side,
-        qty,
-        price,
-        broker_id,
-        execution_mode,
-        int(is_paper),
-        order_status,
-        order_type,
-        broker_order_id,
-        int(is_test),
-        json.dumps(metadata or {}),
-    ))
+    cursor.execute(
+        """
+        INSERT INTO trades (
+            symbol, side, qty, price, broker_id, execution_mode, is_paper,
+            order_status, order_type, broker_order_id, is_test, metadata,
+            requested_qty, filled_qty, filled_price
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            symbol, side, qty, price, broker_id, execution_mode, int(is_paper),
+            order_status, order_type, broker_order_id, int(is_test),
+            json.dumps(metadata or {}), requested_qty, filled_qty, filled_price,
+        ),
+    )
     conn.commit()
     conn.close()
     return True
-
 def record_chat_message(conversation_id: str, role: str, content: str):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -248,7 +589,9 @@ def get_trades(limit: int = 50):
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, symbol, side, qty, price, broker_id, execution_mode, timestamp, is_paper, order_status, order_type, broker_order_id, is_test, metadata
+        SELECT id, symbol, side, qty, price, broker_id, execution_mode, timestamp,
+               is_paper, order_status, order_type, broker_order_id, is_test, metadata,
+               requested_qty, filled_qty, filled_price
         FROM trades
         ORDER BY timestamp DESC
         LIMIT ?
@@ -272,16 +615,54 @@ def get_trades(limit: int = 50):
             "order_type": r[10] or "market",
             "broker_order_id": r[11],
             "is_test": bool(r[12]),
-            "metadata": json.loads(r[13] or '{}'),
-        } for r in rows
+            "metadata": json.loads(r[13] or "{}"),
+            "requested_qty": float(r[14] if r[14] is not None else r[3]),
+            "filled_qty": float(r[15] or 0),
+            "filled_price": float(r[16] or 0),
+        }
+        for r in rows
     ]
+
+
+def get_trades_for_scope(symbol: str, broker_id: str, execution_mode: str):
+    """Return complete persisted order history for one trading-account scope."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, symbol, side, qty, price, broker_id, execution_mode, timestamp,
+               is_paper, order_status, order_type, broker_order_id, is_test, metadata,
+               requested_qty, filled_qty, filled_price
+        FROM trades
+        WHERE symbol = ? AND broker_id = ? AND execution_mode = ?
+        ORDER BY timestamp ASC, id ASC
+        """,
+        (symbol, broker_id, execution_mode),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "id": r[0], "symbol": r[1], "side": r[2], "qty": r[3], "price": r[4],
+            "broker_id": r[5], "execution_mode": r[6], "timestamp": r[7],
+            "is_paper": bool(r[8]), "order_status": r[9] or "unknown",
+            "order_type": r[10] or "market", "broker_order_id": r[11],
+            "is_test": bool(r[12]), "metadata": json.loads(r[13] or "{}"),
+            "requested_qty": float(r[14] if r[14] is not None else r[3]),
+            "filled_qty": float(r[15] or 0), "filled_price": float(r[16] or 0),
+        }
+        for r in rows
+    ]
+
 
 def get_trade_by_id(trade_id: int):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, symbol, side, qty, price, broker_id, execution_mode, timestamp, is_paper, order_status, order_type, broker_order_id, is_test, metadata
+        SELECT id, symbol, side, qty, price, broker_id, execution_mode, timestamp,
+               is_paper, order_status, order_type, broker_order_id, is_test, metadata,
+               requested_qty, filled_qty, filled_price
         FROM trades
         WHERE id = ?
         """,
@@ -305,29 +686,46 @@ def get_trade_by_id(trade_id: int):
         "order_type": row[10] or "market",
         "broker_order_id": row[11],
         "is_test": bool(row[12]),
-        "metadata": json.loads(row[13] or '{}'),
+        "metadata": json.loads(row[13] or "{}"),
+        "requested_qty": float(row[14] if row[14] is not None else row[3]),
+        "filled_qty": float(row[15] or 0),
+        "filled_price": float(row[16] or 0),
     }
+
 
 def update_trade_order_state(
     trade_id: int,
     order_status: str,
     broker_order_id: str | None = None,
     metadata: dict | None = None,
+    filled_qty: float | None = None,
+    filled_price: float | None = None,
 ):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
         """
         UPDATE trades
-        SET order_status = ?, broker_order_id = COALESCE(?, broker_order_id), metadata = ?, timestamp = timestamp
+        SET order_status = ?,
+            broker_order_id = COALESCE(?, broker_order_id),
+            metadata = ?,
+            filled_qty = COALESCE(?, filled_qty),
+            filled_price = COALESCE(?, filled_price),
+            timestamp = timestamp
         WHERE id = ?
         """,
-        (order_status, broker_order_id, json.dumps(metadata or {}), trade_id),
+        (
+            order_status,
+            broker_order_id,
+            json.dumps(metadata or {}),
+            filled_qty,
+            filled_price,
+            trade_id,
+        ),
     )
     conn.commit()
     conn.close()
     return True
-
 def save_strategy(
     name: str,
     code: str,
@@ -337,6 +735,8 @@ def save_strategy(
     builder_graph: dict | None = None,
     validation_summary: dict | None = None,
     optimization_summary: dict | None = None,
+    strategy_spec: dict | None = None,
+    strategy_format: str | None = None,
     is_baseline: bool = False,
     strategy_id: int | None = None,
 ):
@@ -346,6 +746,10 @@ def save_strategy(
     graph_json = json.dumps(builder_graph or {})
     validation_json = json.dumps(validation_summary or {})
     optimization_json = json.dumps(optimization_summary or {})
+    spec_json = json.dumps(strategy_spec or {})
+    resolved_format = strategy_format or ("declarative_v1" if strategy_spec else "legacy_python")
+    if resolved_format not in {"legacy_python", "declarative_v1"}:
+        raise ValueError("strategy_format must be 'legacy_python' or 'declarative_v1'")
 
     if is_baseline:
         cursor.execute("UPDATE strategies SET is_baseline = 0")
@@ -354,18 +758,18 @@ def save_strategy(
         cursor.execute(
             '''
             UPDATE strategies
-            SET name = ?, code = ?, symbol = ?, asset_type = ?, tags = ?, builder_graph = ?, validation_summary = ?, optimization_summary = ?, is_baseline = ?, last_modified = CURRENT_TIMESTAMP
+            SET name = ?, code = ?, symbol = ?, asset_type = ?, tags = ?, builder_graph = ?, validation_summary = ?, optimization_summary = ?, strategy_spec = ?, strategy_format = ?, is_baseline = ?, last_modified = CURRENT_TIMESTAMP
             WHERE id = ?
             ''',
-            (name, code, symbol, asset_type, tags_json, graph_json, validation_json, optimization_json, int(is_baseline), strategy_id),
+            (name, code, symbol, asset_type, tags_json, graph_json, validation_json, optimization_json, spec_json, resolved_format, int(is_baseline), strategy_id),
         )
     else:
         cursor.execute(
             '''
-            INSERT INTO strategies (name, code, symbol, asset_type, tags, builder_graph, validation_summary, optimization_summary, is_baseline)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO strategies (name, code, symbol, asset_type, tags, builder_graph, validation_summary, optimization_summary, strategy_spec, strategy_format, is_baseline)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
-            (name, code, symbol, asset_type, tags_json, graph_json, validation_json, optimization_json, int(is_baseline)),
+            (name, code, symbol, asset_type, tags_json, graph_json, validation_json, optimization_json, spec_json, resolved_format, int(is_baseline)),
         )
         strategy_id = cursor.lastrowid
 
@@ -383,7 +787,7 @@ def get_strategies(limit: int = 50, include_archived: bool = False, archived_onl
         where_clause = "WHERE is_archived = 0"
     cursor.execute(
         f'''
-        SELECT id, name, code, symbol, asset_type, tags, builder_graph, validation_summary, optimization_summary, is_baseline, is_archived, created_at, last_modified
+        SELECT id, name, code, symbol, asset_type, tags, builder_graph, validation_summary, optimization_summary, strategy_spec, strategy_format, is_baseline, is_archived, created_at, last_modified
         FROM strategies
         {where_clause}
         ORDER BY is_baseline DESC, last_modified DESC
@@ -404,10 +808,12 @@ def get_strategies(limit: int = 50, include_archived: bool = False, archived_onl
             "builder_graph": json.loads(row[6] or '{}'),
             "validation_summary": json.loads(row[7] or '{}'),
             "optimization_summary": json.loads(row[8] or '{}'),
-            "is_baseline": bool(row[9]),
-            "is_archived": bool(row[10]),
-            "created_at": row[11],
-            "last_modified": row[12],
+            "strategy_spec": json.loads(row[9] or '{}'),
+            "strategy_format": row[10] or "legacy_python",
+            "is_baseline": bool(row[11]),
+            "is_archived": bool(row[12]),
+            "created_at": row[13],
+            "last_modified": row[14],
         }
         for row in rows
     ]
@@ -417,7 +823,7 @@ def get_strategy(strategy_id: int):
     cursor = conn.cursor()
     cursor.execute(
         '''
-        SELECT id, name, code, symbol, asset_type, tags, builder_graph, validation_summary, optimization_summary, is_baseline, is_archived, created_at, last_modified
+        SELECT id, name, code, symbol, asset_type, tags, builder_graph, validation_summary, optimization_summary, strategy_spec, strategy_format, is_baseline, is_archived, created_at, last_modified
         FROM strategies
         WHERE id = ?
         ''',
@@ -437,10 +843,12 @@ def get_strategy(strategy_id: int):
         "builder_graph": json.loads(row[6] or '{}'),
         "validation_summary": json.loads(row[7] or '{}'),
         "optimization_summary": json.loads(row[8] or '{}'),
-        "is_baseline": bool(row[9]),
-        "is_archived": bool(row[10]),
-        "created_at": row[11],
-        "last_modified": row[12],
+        "strategy_spec": json.loads(row[9] or '{}'),
+        "strategy_format": row[10] or "legacy_python",
+        "is_baseline": bool(row[11]),
+        "is_archived": bool(row[12]),
+        "created_at": row[13],
+        "last_modified": row[14],
     }
 
 def set_strategy_baseline(strategy_id: int):
@@ -529,6 +937,8 @@ def duplicate_strategy(strategy_id: int):
         builder_graph=strategy.get("builder_graph", {}),
         validation_summary=strategy.get("validation_summary", {}),
         optimization_summary=strategy.get("optimization_summary", {}),
+        strategy_spec=strategy.get("strategy_spec", {}),
+        strategy_format=strategy.get("strategy_format", "legacy_python"),
         is_baseline=False,
     )
 

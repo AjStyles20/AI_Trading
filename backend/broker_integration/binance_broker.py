@@ -10,6 +10,7 @@ import urllib.request
 from decimal import Decimal, ROUND_DOWN
 
 from .base import BrokerClient, BrokerExecutionResult, BrokerOrder
+from core.credential_provider import resolve_api_keys
 
 
 class BinanceBroker(BrokerClient):
@@ -19,11 +20,10 @@ class BinanceBroker(BrokerClient):
     supported_asset_types = ("crypto",)
 
     def _get_api_keys(self, settings: dict) -> dict:
-        return settings.get("api_keys", {}) if settings else {}
+        return resolve_api_keys(settings)
 
     def _use_testnet(self, settings: dict) -> bool:
-        api_keys = self._get_api_keys(settings)
-        return str(api_keys.get("binance_testnet", "")).strip().lower() in {"1", "true", "yes", "on"}
+        return settings.get("binance_environment", "live") == "testnet"
 
     def _get_base_url(self, settings: dict) -> str:
         if self._use_testnet(settings):
@@ -240,14 +240,14 @@ class BinanceBroker(BrokerClient):
         }
         response = self._signed_request("POST", "/api/v3/order", payload, settings)
         fills = response.get("fills", [])
-        average_fill_price = order.price
+        average_fill_price = 0.0
         if fills:
             fill_value = sum(float(fill.get("price", 0)) * float(fill.get("qty", 0)) for fill in fills)
             fill_qty = sum(float(fill.get("qty", 0)) for fill in fills)
             if fill_qty > 0:
                 average_fill_price = fill_value / fill_qty
 
-        executed_qty = float(response.get("executedQty", order.qty))
+        executed_qty = float(response.get("executedQty", 0) or 0)
         status = str(response.get("status", "UNKNOWN")).lower()
 
         return BrokerExecutionResult(
@@ -317,9 +317,13 @@ class BinanceBroker(BrokerClient):
         order_status = str(response.get("status", trade.get("order_status", "unknown"))).lower()
         orig_qty = float(response.get("origQty", trade.get("qty", 0)) or 0)
         executed_qty = float(response.get("executedQty", 0) or 0)
+        cumulative_quote = float(response.get("cummulativeQuoteQty", 0) or 0)
+        filled_price = (cumulative_quote / executed_qty) if executed_qty > 0 and cumulative_quote > 0 else 0.0
         return {
             "order_status": order_status,
             "broker_order_id": self._extract_broker_order_id(response) or broker_order_id,
+            "filled_qty": executed_qty,
+            "filled_price": filled_price,
             "metadata": {
                 **response,
                 "orig_qty": orig_qty,
@@ -347,9 +351,14 @@ class BinanceBroker(BrokerClient):
             settings,
         )
         order_status = str(response.get("status", "CANCELED")).lower()
+        filled_qty = float(response.get("executedQty", trade.get("filled_qty", 0)) or 0)
+        cumulative_quote = float(response.get("cummulativeQuoteQty", 0) or 0)
+        filled_price = (cumulative_quote / filled_qty) if filled_qty > 0 and cumulative_quote > 0 else float(trade.get("filled_price", 0) or 0)
         return {
             "order_status": order_status,
             "broker_order_id": self._extract_broker_order_id(response) or broker_order_id,
+            "filled_qty": filled_qty,
+            "filled_price": filled_price,
             "metadata": {
                 **response,
                 "broker_reason": response.get("status"),

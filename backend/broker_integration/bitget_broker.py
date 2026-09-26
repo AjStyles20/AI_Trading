@@ -10,6 +10,7 @@ import urllib.parse
 import urllib.request
 
 from .base import BrokerClient, BrokerExecutionResult, BrokerOrder
+from core.credential_provider import resolve_api_keys
 
 
 class BitgetBroker(BrokerClient):
@@ -19,11 +20,10 @@ class BitgetBroker(BrokerClient):
     supported_asset_types = ("crypto",)
 
     def _get_api_keys(self, settings: dict) -> dict:
-        return settings.get("api_keys", {}) if settings else {}
+        return resolve_api_keys(settings)
 
     def _use_demo(self, settings: dict) -> bool:
-        api_keys = self._get_api_keys(settings)
-        return str(api_keys.get("bitget_demo", "")).strip().lower() in {"1", "true", "yes", "on"}
+        return settings.get("bitget_environment", "live") == "demo"
 
     def _get_environment_label(self, settings: dict) -> str:
         return "demo" if self._use_demo(settings) else "live"
@@ -240,9 +240,12 @@ class BitgetBroker(BrokerClient):
         order_status = str(response.get("status", "unknown")).lower()
         executed_qty = float(response.get("baseVolume", 0) or response.get("filledQty", 0) or 0)
         orig_qty = float(response.get("size", trade.get("qty", 0)) or 0)
+        filled_price = float(response.get("priceAvg", 0) or response.get("price", 0) or 0) if executed_qty > 0 else 0.0
         return {
             "order_status": order_status,
             "broker_order_id": broker_order_id,
+            "filled_qty": executed_qty,
+            "filled_price": filled_price,
             "metadata": {
                 **response,
                 "orig_qty": orig_qty,

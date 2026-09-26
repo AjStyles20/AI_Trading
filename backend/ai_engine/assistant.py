@@ -3,6 +3,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from database.vector_manager import VectorMemoryManager
 from database.sqlite_manager import get_settings, record_chat_message, get_recent_chat_messages
+from core.credential_provider import resolve_api_keys
 import os
 
 
@@ -11,11 +12,11 @@ class AstralAIAssistant:
         self.memory_manager = VectorMemoryManager()
         self.llm = None
         self.model_name = None
-        self._initialize_llm()
+        self._initialized = False
 
     def _initialize_llm(self):
         settings = get_settings()
-        api_key = settings.get("api_keys", {}).get("openai") if settings else None
+        api_key = resolve_api_keys(settings).get("openai")
         model_name = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
 
         # Fallback to env var if in dev mode
@@ -25,6 +26,7 @@ class AstralAIAssistant:
         if not api_key or api_key == "mock-key":
             self.llm = None
             self.model_name = model_name
+            self._initialized = True
             return
 
         self.model_name = model_name
@@ -34,10 +36,18 @@ class AstralAIAssistant:
             model=model_name,
             request_timeout=60.0 # Prevent infinite hanging
         )
+        self._initialized = True
+
+    def get_llm(self):
+        """Initialize the LLM on first use, after application startup has initialized storage."""
+        if not self._initialized:
+            self._initialize_llm()
+        return self.llm
 
     def reload_settings(self):
         """Forces a refresh of the LLM configuration."""
         print("DEBUG: Reloading AI settings...")
+        self._initialized = False
         self._initialize_llm()
 
     def analyze_market_query(self, query: str, conversation_id: str) -> str:
@@ -89,12 +99,13 @@ You should act as a collaborative partner. If the user suggests a flawed strateg
         ]
 
         # 3. Get response
-        if self.llm is None:
+        llm = self.get_llm()
+        if llm is None:
             return "Please provide a valid OpenAI API Key in the Settings menu (Settings icon) to start using the full intelligence of Astral AI."
 
         try:
             print("DEBUG: Starting LLM generation...")
-            response = self.llm.invoke(messages)
+            response = llm.invoke(messages)
             response_text = response.content
             print(f"DEBUG: LLM generation finished in {time.time() - gen_start:.2f}s")
         except Exception as e:
@@ -122,7 +133,8 @@ You should act as a collaborative partner. If the user suggests a flawed strateg
         return response_text
 
     def summarize_strategy(self, strategy_code: str, symbol: str | None = None) -> str:
-        if self.llm is None:
+        llm = self.get_llm()
+        if llm is None:
             return "Add your OpenAI API key in Settings to enable AI summaries."
 
         prompt = f"""Summarize this trading strategy in plain English.
@@ -138,11 +150,12 @@ Strategy code:
             SystemMessage(content="You are a trading strategy reviewer. Be concise, practical, and risk-aware."),
             HumanMessage(content=prompt),
         ]
-        response = self.llm.invoke(messages)
+        response = llm.invoke(messages)
         return response.content
 
     def summarize_backtest(self, backtest_results: dict, symbol: str | None = None) -> str:
-        if self.llm is None:
+        llm = self.get_llm()
+        if llm is None:
             return "Add your OpenAI API key in Settings to enable AI summaries."
 
         prompt = f"""Summarize this backtest.
@@ -157,7 +170,7 @@ Backtest results:
             SystemMessage(content="You are a quantitative trading analyst. Be concise and actionable."),
             HumanMessage(content=prompt),
         ]
-        response = self.llm.invoke(messages)
+        response = llm.invoke(messages)
         return response.content
 
 

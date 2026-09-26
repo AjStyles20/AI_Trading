@@ -7,3 +7,6 @@ pydantic
 chromadb
 pandas
 numpy
+yfinance
+ccxt
+keyring

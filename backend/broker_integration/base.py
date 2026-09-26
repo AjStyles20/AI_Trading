@@ -32,6 +32,20 @@ class BrokerClient(ABC):
     supports_live: bool = False
     supported_asset_types: tuple[str, ...] = ("crypto", "stock")
 
+    def get_capabilities(self) -> Dict[str, Any]:
+        """Declare venue features without leaking broker-specific behavior upstream."""
+        return {
+            "asset_types": list(self.supported_asset_types),
+            "live_trading": self.supports_live,
+            "market_orders": True,
+            "order_status": True,
+            "open_orders": True,
+            "positions": True,
+            "cancellation": self.__class__.cancel_order is not BrokerClient.cancel_order,
+            "streaming_order_updates": False,
+            "fractional_quantity": None,
+        }
+
     def get_status(self, settings: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "broker_id": self.broker_id,
@@ -40,6 +54,7 @@ class BrokerClient(ABC):
             "supported_asset_types": list(self.supported_asset_types),
             "configured": self.is_configured(settings),
             "environment": "paper" if self.broker_id == "paper" else "live",
+            "capabilities": self.get_capabilities(),
         }
 
     def is_configured(self, settings: Dict[str, Any]) -> bool:
