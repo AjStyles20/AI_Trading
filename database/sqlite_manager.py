@@ -215,6 +215,33 @@ def get_public_settings():
     return public
 
 
+def _preserve_legacy_api_keys(api_keys: dict | None, current_api_keys: dict | None) -> dict:
+    """Never persist newly supplied credential material to SQLite.
+
+    Masked placeholders preserve existing legacy values during migration.
+    Empty values remove a legacy value. Any new non-masked secret must be
+    stored by the credential provider instead of this settings table.
+    """
+    current = dict(current_api_keys or {})
+    if api_keys is None:
+        return current
+
+    for key, value in api_keys.items():
+        value = "" if value is None else str(value)
+        if value == "********":
+            continue
+        if value == "":
+            current.pop(key, None)
+            continue
+        if current.get(key) == value:
+            continue
+        raise ValueError(
+            f"Refusing to persist credential '{key}' in plaintext SQLite. "
+            "Use the secure credential store or environment variable."
+        )
+    return current
+
+
 def update_settings(
     api_keys: dict = None,
     theme: str = None,
@@ -258,7 +285,7 @@ def update_settings(
             risk_max_daily_loss_pct = ?, risk_max_drawdown_pct = ?
         WHERE id = 1
     """, (
-        json.dumps(api_keys if api_keys is not None else current["api_keys"]),
+        json.dumps(_preserve_legacy_api_keys(api_keys, current["api_keys"])),
         theme if theme is not None else current["theme"],
         int(paper_trading) if paper_trading is not None else int(current["paper_trading"]),
         int(risk_live_trading_enabled) if risk_live_trading_enabled is not None else int(current["risk_live_trading_enabled"]),
