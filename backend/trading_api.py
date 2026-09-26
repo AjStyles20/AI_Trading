@@ -169,6 +169,16 @@ class LiveTradingManager:
                     self.cooldown_remaining -= 1
                 
                 if signal:
+                    if has_unresolved_order(
+                        get_trades(limit=100),
+                        symbol,
+                        broker_id,
+                        execution_mode,
+                    ):
+                        self.log("ORDER BLOCKED: unresolved prior broker order must reach a final state first.")
+                        await asyncio.sleep(get_poll_delay_seconds(interval))
+                        continue
+
                     price_column = 'close' if 'close' in df.columns else 'Close'
                     last_price = float(df.iloc[-1][price_column])
                     self.log(f"SIGNAL DETECTED: {signal} at ${last_price}")
@@ -318,6 +328,28 @@ def get_risk_context(broker, symbol: str, settings: Dict[str, Any], execution_mo
 
     return account_equity, current_position_qty, day_start_equity, peak_equity
 
+
+
+def has_unresolved_order(
+    trades: list[Dict[str, Any]],
+    symbol: str,
+    broker_id: str,
+    execution_mode: str,
+) -> bool:
+    """Prevent overlapping autonomous orders until prior broker state is final."""
+    final_statuses = {"filled", "canceled", "cancelled", "rejected", "expired", "tested"}
+    for trade in trades:
+        if trade.get("is_test"):
+            continue
+        if trade.get("symbol") != symbol:
+            continue
+        if trade.get("broker_id", "paper") != broker_id:
+            continue
+        if trade.get("execution_mode", "paper") != execution_mode:
+            continue
+        if str(trade.get("order_status", "")).lower() not in final_statuses:
+            return True
+    return False
 
 def should_start_cooldown(signal: str, execution, requested_qty: float) -> bool:
     """Start cooldown only after the requested exit is completely filled."""
