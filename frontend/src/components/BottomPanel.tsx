@@ -410,18 +410,8 @@ export default function BottomPanel({
       const res = await axios.get(`${BACKEND_URL}/api/settings`);
       const apiKeys = res.data.api_keys || {};
       setSettingsApiKeys(apiKeys);
-      const binanceEnv = ['1', 'true', 'yes', 'on'].includes(
-        String(apiKeys.binance_testnet || '').trim().toLowerCase()
-      )
-        ? 'testnet'
-        : 'live';
-      setBinanceEnvironment(binanceEnv);
-      const bitgetEnv = ['1', 'true', 'yes', 'on'].includes(
-        String(apiKeys.bitget_demo || '').trim().toLowerCase()
-      )
-        ? 'demo'
-        : 'live';
-      setBitgetEnvironment(bitgetEnv);
+      setBinanceEnvironment(res.data.binance_environment === 'testnet' ? 'testnet' : 'live');
+      setBitgetEnvironment(res.data.bitget_environment === 'demo' ? 'demo' : 'live');
     } catch (err) {
       console.error('Failed to fetch settings:', err);
     }
@@ -568,18 +558,16 @@ export default function BottomPanel({
       }
       setIsEnvironmentUpdating(true);
       try {
-        const apiKeys = await resolveApiKeys();
-        const updatedKeys = { ...apiKeys };
+        const payload: Record<string, string> = {};
         if (selectedBrokerId === 'binance') {
-          updatedKeys.binance_testnet = nextEnv === 'testnet' ? 'true' : 'false';
-          setBinanceEnvironment(nextEnv === 'testnet' ? 'testnet' : 'live');
+          payload.binance_environment = nextEnv === 'testnet' ? 'testnet' : 'live';
+          setBinanceEnvironment(payload.binance_environment);
         }
         if (selectedBrokerId === 'bitget') {
-          updatedKeys.bitget_demo = nextEnv === 'demo' ? 'true' : 'false';
-          setBitgetEnvironment(nextEnv === 'demo' ? 'demo' : 'live');
+          payload.bitget_environment = nextEnv === 'demo' ? 'demo' : 'live';
+          setBitgetEnvironment(payload.bitget_environment);
         }
-        await axios.post(`${BACKEND_URL}/api/settings`, { api_keys: updatedKeys });
-        setSettingsApiKeys(updatedKeys);
+        await axios.post(`${BACKEND_URL}/api/settings`, payload);
         await fetchBrokers();
         await fetchBrokerAccount();
       } catch (err) {
@@ -588,7 +576,7 @@ export default function BottomPanel({
         setIsEnvironmentUpdating(false);
       }
     },
-    [fetchBrokerAccount, fetchBrokers, resolveApiKeys, selectedBrokerId]
+    [fetchBrokerAccount, fetchBrokers, selectedBrokerId]
   );
 
   const summarizeStrategy = async () => {
