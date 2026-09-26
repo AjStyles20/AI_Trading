@@ -170,3 +170,34 @@ def test_cooldown_starts_only_after_complete_sell_fill(
 
     execution = SimpleNamespace(status=status, filled_qty=filled_qty)
     assert should_start_cooldown(signal, execution, requested_qty) is expected
+
+
+
+@pytest.mark.parametrize(
+    ("status", "is_test", "symbol", "broker_id", "execution_mode", "expected"),
+    [
+        ("pending", False, "BTC/USDT", "binance", "live", True),
+        ("partially_filled", False, "BTC/USDT", "binance", "live", True),
+        ("submitted", False, "BTC/USDT", "binance", "live", True),
+        ("filled", False, "BTC/USDT", "binance", "live", False),
+        ("canceled", False, "BTC/USDT", "binance", "live", False),
+        ("rejected", False, "BTC/USDT", "binance", "live", False),
+        ("pending", True, "BTC/USDT", "binance", "live", False),
+        ("pending", False, "ETH/USDT", "binance", "live", False),
+        ("pending", False, "BTC/USDT", "bitget", "live", False),
+        ("pending", False, "BTC/USDT", "binance", "paper", False),
+    ],
+)
+def test_unresolved_order_guard_is_scoped_and_fail_closed(
+    status, is_test, symbol, broker_id, execution_mode, expected
+):
+    from backend.trading_api import has_unresolved_order
+
+    trades = [{
+        "order_status": status,
+        "is_test": is_test,
+        "symbol": symbol,
+        "broker_id": broker_id,
+        "execution_mode": execution_mode,
+    }]
+    assert has_unresolved_order(trades, "BTC/USDT", "binance", "live") is expected
