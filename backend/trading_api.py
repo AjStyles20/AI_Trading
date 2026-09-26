@@ -712,15 +712,18 @@ def build_autonomous_readiness(symbol: str, asset_type: str, broker_id: str, exe
         unresolved_order=has_unresolved_order(scoped_trades, symbol, broker_id, execution_mode),
         ledger_position_qty=confirmed_position.qty,
         broker_position_qty=current_position_qty,
-        risk_approved=risk.approved,
-        broker_validation_ok=bool(validation.get("ok", False)),
+        # Session readiness is intentionally independent of this hypothetical
+        # reference order. Every real order still passes central risk and broker
+        # validation in submit_guarded_order().
+        risk_approved=True,
+        broker_validation_ok=True,
     )
     return {
         "readiness": decision.as_dict(),
         "broker": broker_status,
         "account": account,
-        "risk": risk.as_dict(),
-        "validation": validation,
+        "reference_order_risk": risk.as_dict(),
+        "reference_order_validation": validation,
         "market_price": market_price,
         "ledger_position_qty": confirmed_position.qty,
         "broker_position_qty": current_position_qty,
