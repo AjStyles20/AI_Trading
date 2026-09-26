@@ -1,5 +1,7 @@
 import sqlite3
 
+import pytest
+
 from database import sqlite_manager as db
 
 
@@ -52,3 +54,39 @@ def test_declarative_strategy_round_trip_and_duplicate(tmp_path, monkeypatch):
     assert duplicate["strategy_format"] == "declarative_v1"
     assert duplicate["strategy_spec"] == spec
     assert duplicate["code"] == ""
+
+
+
+def test_strategy_artifact_normalization_is_unambiguous():
+    from backend.strategy_store_api import normalize_strategy_artifact
+
+    fmt, code, spec = normalize_strategy_artifact(
+        "",
+        {"schema_version": 1, "strategy_type": "sma_cross", "params": {"sma_fast": 2, "sma_slow": 4}},
+        None,
+    )
+    assert fmt == "declarative_v1"
+    assert code == ""
+    assert spec["strategy_type"] == "sma_cross"
+
+    fmt, code, spec = normalize_strategy_artifact("def strategy(df): return df", {}, None)
+    assert fmt == "legacy_python"
+    assert code.startswith("def strategy")
+    assert spec == {}
+
+
+@pytest.mark.parametrize(
+    ("code", "spec", "fmt"),
+    [
+        ("def strategy(df): return df", {"strategy_type": "sma_cross", "params": {}}, "declarative_v1"),
+        ("", {}, "declarative_v1"),
+        ("", {"strategy_type": "sma_cross", "params": {}}, "legacy_python"),
+        ("", {}, "legacy_python"),
+        ("def strategy(df): return df", {}, "unknown"),
+    ],
+)
+def test_strategy_artifact_normalization_rejects_contradictions(code, spec, fmt):
+    from backend.strategy_store_api import normalize_strategy_artifact
+
+    with pytest.raises(ValueError):
+        normalize_strategy_artifact(code, spec, fmt)
