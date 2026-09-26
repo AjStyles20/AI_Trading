@@ -179,6 +179,18 @@ class LiveTradingManager:
                     broker_id=broker_id,
                     execution_mode=execution_mode,
                 )
+
+                # An operator may arm the persistent kill switch while this loop is
+                # already running. Keep polling and reconciling broker state, but do
+                # not evaluate protection/strategy logic or construct new orders.
+                if bool(settings.get("autonomy_kill_switch", True)):
+                    self.log(
+                        "AUTONOMY PAUSED: kill switch is armed; broker state was "
+                        "reconciled but no autonomous orders will be generated."
+                    )
+                    await asyncio.sleep(get_poll_delay_seconds(interval))
+                    continue
+
                 if confirmed_position.qty > 0:
                     price_column = 'close'
                     protection = evaluate_position_protection(
