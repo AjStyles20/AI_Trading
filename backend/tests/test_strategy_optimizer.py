@@ -78,3 +78,30 @@ def test_walk_forward_optimizer_rejects_overlapping_oos_windows():
                 "position_size_pct": [50],
             },
         )
+
+
+def test_walk_forward_warmup_uses_only_pre_test_context():
+    df = frame(80)
+    result = strategy_optimizer.walk_forward_optimize(
+        df,
+        strategy_type="sma_cross",
+        train_rows=30,
+        test_rows=10,
+        step_rows=10,
+        warmup_rows=4,
+        custom_ranges={
+            "sma_fast": [2],
+            "sma_slow": [4],
+            "stop_loss_pct": [2],
+            "take_profit_pct": [4],
+            "cooldown_bars": [0],
+            "position_size_pct": [50],
+        },
+        fee_pct=0,
+        slippage_pct=0,
+    )
+    assert result["warmup_rows"] == 4
+    assert "never participate in parameter selection" in result["warmup_policy"]
+    for window in result["windows"]:
+        for trade in window["test_metrics"]["trade_history"]:
+            assert pd.Timestamp(trade["timestamp"]) >= pd.Timestamp(window["test_start"])
