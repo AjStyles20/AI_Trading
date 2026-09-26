@@ -54,3 +54,32 @@ def test_declarative_risk_percentages_are_bounded():
     })
     with pytest.raises(ValueError, match="position_size_pct"):
         declarative_strategy_engine.execute(spec, frame())
+
+
+
+@pytest.mark.parametrize("cooldown", [-1, 1.5, True, "not-an-int"])
+def test_declarative_cooldown_rejects_invalid_values(cooldown):
+    spec = StrategySpec("sma_cross", {
+        "sma_fast": 2,
+        "sma_slow": 3,
+        "position_size_pct": 50,
+        "stop_loss_pct": 2,
+        "take_profit_pct": 4,
+        "cooldown_bars": cooldown,
+    })
+    with pytest.raises(ValueError, match="cooldown_bars must be a non-negative integer"):
+        declarative_strategy_engine.execute(spec, frame())
+
+
+@pytest.mark.parametrize("cooldown", [0, 2, "3"])
+def test_declarative_cooldown_accepts_exact_nonnegative_integers(cooldown):
+    spec = StrategySpec("sma_cross", {
+        "sma_fast": 2,
+        "sma_slow": 3,
+        "position_size_pct": 50,
+        "stop_loss_pct": 2,
+        "take_profit_pct": 4,
+        "cooldown_bars": cooldown,
+    })
+    result = declarative_strategy_engine.execute(spec, frame())
+    assert (result["cooldown_bars"] == int(cooldown)).all()
