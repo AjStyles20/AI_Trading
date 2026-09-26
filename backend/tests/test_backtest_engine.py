@@ -288,3 +288,29 @@ def test_backtest_rejects_invalid_cooldown_values_after_exit(bad_value):
         backtest_engine.run_backtest(
             df, fee_pct=0, slippage_pct=0, execution_delay_bars=1
         )
+
+
+
+def test_risk_exit_starts_same_fill_based_cooldown():
+    import pandas as pd
+    from core.backtest_engine import backtest_engine
+
+    idx = pd.date_range("2026-01-01", periods=7, freq="h")
+    df = pd.DataFrame({
+        "open": [100.0, 100.0, 100.0, 94.0, 100.0, 100.0, 100.0],
+        "close": [100.0, 100.0, 94.0, 94.0, 100.0, 100.0, 100.0],
+        "signal": [1, 0, 1, 1, 1, 1, 0],
+        "stop_loss_pct": [5.0] * 7,
+        "take_profit_pct": [0.0] * 7,
+        "cooldown_bars": [2] * 7,
+    }, index=idx)
+
+    result = backtest_engine.run_backtest(
+        df, fee_pct=0, slippage_pct=0, execution_delay_bars=1
+    )
+    buys = [trade for trade in result["trade_history"] if trade["type"] == "BUY"]
+    sells = [trade for trade in result["trade_history"] if trade["type"] == "SELL"]
+
+    assert sells[0]["timestamp"] == idx[3]
+    assert sells[0]["exit_reason"] == "risk"
+    assert [trade["timestamp"] for trade in buys] == [idx[1], idx[6]]
