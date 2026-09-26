@@ -49,3 +49,40 @@ def test_trade_lifecycle_preserves_request_and_tracks_fills(tmp_path, monkeypatc
     conn.close()
 
     assert row == (1.0, 1.0, 102.5, "filled")
+
+
+def test_cancelled_partial_fill_preserves_execution_state(tmp_path, monkeypatch):
+    db_path = tmp_path / "trade-cancel.db"
+    monkeypatch.setattr(sqlite_manager, "DB_PATH", str(db_path))
+    sqlite_manager.init_db()
+
+    sqlite_manager.record_trade(
+        symbol="BTCUSDT",
+        side="BUY",
+        qty=2.0,
+        price=100.0,
+        broker_id="binance",
+        execution_mode="live",
+        order_status="partially_filled",
+        broker_order_id="order-456",
+        requested_qty=2.0,
+        filled_qty=0.5,
+        filled_price=100.0,
+        metadata={"executed_qty": 0.5},
+    )
+    trade = sqlite_manager.get_trades(limit=1)[0]
+
+    sqlite_manager.update_trade_order_state(
+        trade["id"],
+        "canceled",
+        "order-456",
+        {"executedQty": "0.5", "cummulativeQuoteQty": "50.0"},
+        filled_qty=0.5,
+        filled_price=100.0,
+    )
+
+    persisted = sqlite_manager.get_trade_by_id(trade["id"])
+    assert persisted["requested_qty"] == 2.0
+    assert persisted["filled_qty"] == 0.5
+    assert persisted["filled_price"] == 100.0
+    assert persisted["order_status"] == "canceled"
