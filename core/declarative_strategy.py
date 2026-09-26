@@ -69,6 +69,7 @@ class DeclarativeStrategyEngine:
         out["position_size_pct"] = self._bounded_pct(p, "position_size_pct", allow_zero=False)
         out["stop_loss_pct"] = self._bounded_pct(p, "stop_loss_pct")
         out["take_profit_pct"] = self._bounded_pct(p, "take_profit_pct")
+        out["cooldown_bars"] = self._nonnegative_int(p, "cooldown_bars")
         return out
 
     @staticmethod
@@ -76,6 +77,13 @@ class DeclarativeStrategyEngine:
         value = int(params[key])
         if value <= 0:
             raise ValueError(f"{key} must be positive.")
+        return value
+
+    @staticmethod
+    def _nonnegative_int(params: Dict[str, Any], key: str) -> int:
+        value = int(params.get(key, 0))
+        if value < 0:
+            raise ValueError(f"{key} must be non-negative.")
         return value
 
     @staticmethod
