@@ -206,10 +206,13 @@ class AlpacaBroker(BrokerClient):
 
         self._request("DELETE", f"/v2/orders/{broker_order_id}", settings, trade.get("execution_mode", "live"))
         return {
-            "order_status": "canceled",
+            "order_status": "cancel_requested",
             "broker_order_id": broker_order_id,
-            "metadata": {"broker_reason": "canceled"},
-            "message": f"Alpaca order {broker_order_id} canceled.",
+            "metadata": {
+                "broker_reason": "cancel_requested",
+                "executed_qty": float(trade.get("filled_qty", 0) or 0),
+            },
+            "message": f"Cancellation requested for Alpaca order {broker_order_id}; final status requires broker reconciliation.",
         }
 
     def list_open_orders(self, symbol: str, asset_type: str, settings: dict, execution_mode: str) -> list[dict]:
