@@ -250,6 +250,12 @@ class StrategyOptimizer:
         cleaned = sorted({int(value) for value in values if int(value) >= 0})
         return cleaned or defaults
 
+    def _sanitize_nonnegative_values(self, values: List[int] | None, defaults: List[int]) -> List[int]:
+        if values is None or len(values) == 0:
+            return defaults
+        cleaned = sorted({int(value) for value in values if int(value) >= 0})
+        return cleaned or defaults
+
     def _ema_rsi_candidates(self, custom_ranges: Dict[str, List[int]]) -> List[Dict[str, int]]:
         ema_fast = self._sanitize_values(custom_ranges.get("ema_fast"), [8, 12, 21])
         ema_slow = self._sanitize_values(custom_ranges.get("ema_slow"), [26, 34, 55])
