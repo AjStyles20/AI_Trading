@@ -38,7 +38,7 @@ def init_db():
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS settings (
         id INTEGER PRIMARY KEY DEFAULT 1,
-        api_keys TEXT, -- JSON blob of encrypted API keys
+        api_keys TEXT, -- JSON credentials; plaintext legacy storage pending secure migration
         theme TEXT DEFAULT 'dark',
         paper_trading BOOLEAN DEFAULT 1,
         risk_live_trading_enabled BOOLEAN DEFAULT 0,
