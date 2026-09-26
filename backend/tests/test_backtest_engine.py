@@ -227,3 +227,64 @@ def test_take_profit_uses_fill_price_and_next_bar_execution():
     assert result["trade_history"][0]["price"] == 100.0
     assert result["trade_history"][1]["price"] == 107.0
     assert result["trade_history"][1]["exit_reason"] == "risk"
+
+
+
+def test_cooldown_blocks_exact_number_of_full_bars_after_exit_fill():
+    import pandas as pd
+    from core.backtest_engine import backtest_engine
+
+    idx = pd.date_range("2026-01-01", periods=7, freq="h")
+    df = pd.DataFrame({
+        "open": [100.0] * 7,
+        "close": [100.0] * 7,
+        "signal": [1, -1, 1, 1, 1, 0, 0],
+        "cooldown_bars": [2] * 7,
+    }, index=idx)
+
+    result = backtest_engine.run_backtest(
+        df, fee_pct=0, slippage_pct=0, execution_delay_bars=1
+    )
+    buys = [trade for trade in result["trade_history"] if trade["type"] == "BUY"]
+    sells = [trade for trade in result["trade_history"] if trade["type"] == "SELL"]
+
+    assert sells[0]["timestamp"] == idx[2]
+    assert [trade["timestamp"] for trade in buys] == [idx[1], idx[5]]
+
+
+def test_zero_cooldown_allows_next_eligible_buy_fill():
+    import pandas as pd
+    from core.backtest_engine import backtest_engine
+
+    idx = pd.date_range("2026-01-01", periods=5, freq="h")
+    df = pd.DataFrame({
+        "open": [100.0] * 5,
+        "close": [100.0] * 5,
+        "signal": [1, -1, 1, 0, 0],
+        "cooldown_bars": [0] * 5,
+    }, index=idx)
+
+    result = backtest_engine.run_backtest(
+        df, fee_pct=0, slippage_pct=0, execution_delay_bars=1
+    )
+    buys = [trade for trade in result["trade_history"] if trade["type"] == "BUY"]
+    assert [trade["timestamp"] for trade in buys] == [idx[1], idx[3]]
+
+
+@pytest.mark.parametrize("bad_value", [-1, 1.5])
+def test_backtest_rejects_invalid_cooldown_values_after_exit(bad_value):
+    import pandas as pd
+    from core.backtest_engine import backtest_engine
+
+    idx = pd.date_range("2026-01-01", periods=4, freq="h")
+    df = pd.DataFrame({
+        "open": [100.0] * 4,
+        "close": [100.0] * 4,
+        "signal": [1, -1, 0, 0],
+        "cooldown_bars": [bad_value] * 4,
+    }, index=idx)
+
+    with pytest.raises(ValueError, match="cooldown_bars"):
+        backtest_engine.run_backtest(
+            df, fee_pct=0, slippage_pct=0, execution_delay_bars=1
+        )
