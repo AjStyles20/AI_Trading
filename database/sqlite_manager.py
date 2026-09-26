@@ -75,6 +75,16 @@ def init_db():
     )
     ''')
 
+    # Persistent simulated brokerage account. A single JSON payload is used so
+    # cash, positions, and marks are committed atomically.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS paper_account_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        state_json TEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+
     # Saved Strategies
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS strategies (
@@ -256,6 +266,58 @@ def update_settings(
     conn.commit()
     conn.close()
     return True
+
+
+def get_paper_account_state():
+    """Return the persisted paper account payload, or None when not initialized."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT state_json FROM paper_account_state WHERE id = 1")
+        row = cursor.fetchone()
+    except sqlite3.Error:
+        row = None
+    finally:
+        conn.close()
+    if not row:
+        return None
+    try:
+        state = json.loads(row[0])
+    except (TypeError, json.JSONDecodeError):
+        return None
+    return state if isinstance(state, dict) else None
+
+
+def save_paper_account_state(state: dict) -> None:
+    """Atomically persist the complete simulated brokerage account."""
+    payload = json.dumps(state, sort_keys=True)
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO paper_account_state (id, state_json, updated_at)
+        VALUES (1, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+            state_json = excluded.state_json,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (payload,),
+    )
+    conn.commit()
+    conn.close()
+
+
+def clear_risk_equity_state(broker_id: str, execution_mode: str) -> None:
+    """Clear a risk baseline when its underlying simulated account is reset."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM risk_equity_state WHERE broker_id = ? AND execution_mode = ?",
+        (broker_id, execution_mode),
+    )
+    conn.commit()
+    conn.close()
+
 
 def update_risk_equity_state(
     broker_id: str,
