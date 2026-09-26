@@ -76,7 +76,7 @@ class StrategyRequest(BaseModel):
 @app.post("/api/strategy")
 async def generate_strategy(request: StrategyRequest):
     try:
-        generator = StrategyGenerator(ai_assistant.llm)
+        generator = StrategyGenerator(ai_assistant.get_llm())
         code = generator.generate(request.prompt)
         return {"code": code, "status": "success"}
     except Exception as e:
