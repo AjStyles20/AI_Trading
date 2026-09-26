@@ -492,7 +492,9 @@ def get_trades(limit: int = 50):
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, symbol, side, qty, price, broker_id, execution_mode, timestamp, is_paper, order_status, order_type, broker_order_id, is_test, metadata
+        SELECT id, symbol, side, qty, price, broker_id, execution_mode, timestamp,
+               is_paper, order_status, order_type, broker_order_id, is_test, metadata,
+               requested_qty, filled_qty, filled_price
         FROM trades
         ORDER BY timestamp DESC
         LIMIT ?
@@ -516,16 +518,23 @@ def get_trades(limit: int = 50):
             "order_type": r[10] or "market",
             "broker_order_id": r[11],
             "is_test": bool(r[12]),
-            "metadata": json.loads(r[13] or '{}'),
-        } for r in rows
+            "metadata": json.loads(r[13] or "{}"),
+            "requested_qty": float(r[14] if r[14] is not None else r[3]),
+            "filled_qty": float(r[15] or 0),
+            "filled_price": float(r[16] or 0),
+        }
+        for r in rows
     ]
+
 
 def get_trade_by_id(trade_id: int):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, symbol, side, qty, price, broker_id, execution_mode, timestamp, is_paper, order_status, order_type, broker_order_id, is_test, metadata
+        SELECT id, symbol, side, qty, price, broker_id, execution_mode, timestamp,
+               is_paper, order_status, order_type, broker_order_id, is_test, metadata,
+               requested_qty, filled_qty, filled_price
         FROM trades
         WHERE id = ?
         """,
@@ -549,29 +558,46 @@ def get_trade_by_id(trade_id: int):
         "order_type": row[10] or "market",
         "broker_order_id": row[11],
         "is_test": bool(row[12]),
-        "metadata": json.loads(row[13] or '{}'),
+        "metadata": json.loads(row[13] or "{}"),
+        "requested_qty": float(row[14] if row[14] is not None else row[3]),
+        "filled_qty": float(row[15] or 0),
+        "filled_price": float(row[16] or 0),
     }
+
 
 def update_trade_order_state(
     trade_id: int,
     order_status: str,
     broker_order_id: str | None = None,
     metadata: dict | None = None,
+    filled_qty: float | None = None,
+    filled_price: float | None = None,
 ):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
         """
         UPDATE trades
-        SET order_status = ?, broker_order_id = COALESCE(?, broker_order_id), metadata = ?, timestamp = timestamp
+        SET order_status = ?,
+            broker_order_id = COALESCE(?, broker_order_id),
+            metadata = ?,
+            filled_qty = COALESCE(?, filled_qty),
+            filled_price = COALESCE(?, filled_price),
+            timestamp = timestamp
         WHERE id = ?
         """,
-        (order_status, broker_order_id, json.dumps(metadata or {}), trade_id),
+        (
+            order_status,
+            broker_order_id,
+            json.dumps(metadata or {}),
+            filled_qty,
+            filled_price,
+            trade_id,
+        ),
     )
     conn.commit()
     conn.close()
     return True
-
 def save_strategy(
     name: str,
     code: str,
