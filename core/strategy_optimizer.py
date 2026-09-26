@@ -91,6 +91,25 @@ class StrategyOptimizer:
                     "win_rate_pct": round(holdout_metrics["win_rate_pct"], 3),
                 },
             }
+        candidate_count = len(candidates)
+        observations_per_candidate = len(development_df) / candidate_count if candidate_count else 0.0
+        winner_round_trips = int(best.get("closed_round_trips", 0)) if best else 0
+        warnings: List[str] = []
+        if candidate_count > len(development_df):
+            warnings.append("Candidate count exceeds development observations; selection is highly exposed to multiple-testing overfit.")
+        elif observations_per_candidate < 5:
+            warnings.append("Fewer than five development observations are available per candidate; optimizer ranking has weak search-space support.")
+        if winner_round_trips < 5:
+            warnings.append("Winning candidate has fewer than five closed round trips; performance evidence is sparse.")
+        optimization_risk = {
+            "candidate_count": candidate_count,
+            "development_rows": len(development_df),
+            "observations_per_candidate": round(observations_per_candidate, 3),
+            "winner_closed_round_trips": winner_round_trips,
+            "warning_count": len(warnings),
+            "warnings": warnings,
+            "interpretation": "These are heuristic overfit warnings, not statistical significance tests.",
+        }
         return {
             "strategy_type": strategy_type,
             "method": "chronological_development_holdout",
@@ -98,6 +117,7 @@ class StrategyOptimizer:
             "holdout_rows": len(holdout_df),
             "best": best,
             "holdout": holdout,
+            "optimization_risk": optimization_risk,
             "results": ranked[:10],
         }
 
