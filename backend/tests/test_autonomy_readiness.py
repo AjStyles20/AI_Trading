@@ -102,3 +102,23 @@ def test_session_readiness_is_not_an_order_sizing_decision():
         broker_validation_ok=True,
     )
     assert decision.ready is True
+
+
+def test_readiness_fails_without_broker_quote_capability():
+    status = _status()
+    status["capabilities"]["quotes"] = False
+
+    decision = evaluate_autonomous_readiness(
+        broker_status=status,
+        account={"can_trade": True},
+        execution_mode="live",
+        asset_type="crypto",
+        unresolved_order=False,
+        ledger_position_qty=0.0,
+        broker_position_qty=0.0,
+        risk_approved=True,
+        broker_validation_ok=True,
+    )
+
+    assert decision.ready is False
+    assert any("quotes" in reason for reason in decision.reasons)
