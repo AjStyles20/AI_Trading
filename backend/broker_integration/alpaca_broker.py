@@ -5,7 +5,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .base import BrokerClient, BrokerExecutionResult, BrokerOrder
+from .base import BrokerClient, BrokerExecutionResult, BrokerOrder, BrokerQuote
 from core.credential_provider import resolve_api_keys
 
 
@@ -98,6 +98,38 @@ class AlpacaBroker(BrokerClient):
     def is_configured(self, settings: dict) -> bool:
         api_keys = self._get_api_keys(settings)
         return bool(api_keys.get("alpaca_key") and api_keys.get("alpaca_secret"))
+
+    def get_quote(self, symbol: str, asset_type: str, settings: dict, execution_mode: str) -> BrokerQuote:
+        if asset_type != "stock":
+            raise ValueError("Alpaca quote adapter supports stocks only.")
+        normalized = self._normalize_symbol(symbol)
+        api_key, api_secret = self._get_credentials(settings, execution_mode)
+        request = urllib.request.Request(
+            f"https://data.alpaca.markets/v2/stocks/{urllib.parse.quote(normalized)}/quotes/latest",
+            method="GET",
+            headers={"APCA-API-KEY-ID": api_key, "APCA-API-SECRET-KEY": api_secret},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="ignore")
+            raise ValueError(f"Alpaca data API error ({exc.code}): {error_body}") from exc
+        except urllib.error.URLError as exc:
+            raise ValueError(f"Alpaca data network error: {exc.reason}") from exc
+        quote = payload.get("quote") if isinstance(payload, dict) else None
+        if not isinstance(quote, dict):
+            raise ValueError(f"Alpaca returned an invalid quote payload for {normalized}.")
+        bid = float(quote.get("bp", 0) or 0)
+        ask = float(quote.get("ap", 0) or 0)
+        if bid <= 0 and ask <= 0:
+            raise ValueError(f"Alpaca returned an invalid quote for {normalized}.")
+        return BrokerQuote(
+            broker_id=self.broker_id, symbol=symbol,
+            bid=bid if bid > 0 else None, ask=ask if ask > 0 else None,
+            last=None, timestamp=str(quote.get("t")) if quote.get("t") else None,
+            source=f"alpaca:{self._get_environment_label(execution_mode)}:latest_quote",
+        )
 
     def get_account_summary(self, settings: dict, execution_mode: str) -> dict:
         account = self._request("GET", "/v2/account", settings, execution_mode)
