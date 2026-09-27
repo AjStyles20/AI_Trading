@@ -8,6 +8,7 @@ def _status(**overrides):
         "supported_asset_types": ["crypto"],
         "capabilities": {
             "market_orders": True,
+            "quotes": True,
             "order_status": True,
             "open_orders": True,
             "positions": True,
