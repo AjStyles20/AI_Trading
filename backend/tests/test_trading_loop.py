@@ -620,10 +620,21 @@ async def test_runtime_submits_guarded_stop_loss_exit_before_strategy_evaluation
         display_name = "Paper"
         supported_asset_types = {"crypto"}
 
+        def get_quote(self, symbol, asset_type, settings, execution_mode):
+            from backend.broker_integration.base import BrokerQuote
+            return BrokerQuote(
+                broker_id="paper",
+                symbol=symbol,
+                bid=96.8,
+                ask=97.0,
+                last=96.9,
+                timestamp="2026-09-26T13:00:01Z",
+                source="paper:test_quote",
+            )
+
     monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: DummyBroker())
     monkeypatch.setattr(trading_api.market_data, "get_crypto_data", lambda *args, **kwargs: frame.copy())
     monkeypatch.setattr(trading_api.market_data, "assert_fresh", lambda *args, **kwargs: None)
-    monkeypatch.setattr(trading_api.market_data, "get_latest_price", lambda *args, **kwargs: 96.8)
     monkeypatch.setattr(trading_api, "get_settings", lambda: {"autonomy_kill_switch": False})
     monkeypatch.setattr(trading_api, "get_trades", lambda limit=100: [])
     monkeypatch.setattr(trading_api, "reconcile_unresolved_orders", lambda *args, **kwargs: [])
