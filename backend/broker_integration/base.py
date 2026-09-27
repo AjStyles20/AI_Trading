@@ -15,6 +15,25 @@ class BrokerOrder:
     metadata: Dict[str, Any]
 
 
+@dataclass(frozen=True)
+class BrokerQuote:
+    broker_id: str
+    symbol: str
+    bid: float | None
+    ask: float | None
+    last: float | None
+    timestamp: str | None
+    source: str
+
+    def execution_reference(self, side: str) -> float:
+        side = str(side).upper()
+        preferred = self.ask if side == "BUY" else self.bid if side == "SELL" else None
+        value = preferred if preferred is not None and preferred > 0 else self.last
+        if value is None or value <= 0:
+            raise ValueError(f"{self.broker_id} quote has no valid execution reference for {side}.")
+        return float(value)
+
+
 @dataclass
 class BrokerExecutionResult:
     broker_id: str
@@ -38,6 +57,7 @@ class BrokerClient(ABC):
             "asset_types": list(self.supported_asset_types),
             "live_trading": self.supports_live,
             "market_orders": True,
+            "quotes": self.__class__.get_quote is not BrokerClient.get_quote,
             "order_status": True,
             "open_orders": True,
             "positions": True,
@@ -89,6 +109,15 @@ class BrokerClient(ABC):
             "message": f"{self.display_name} test order validated successfully.",
             "validation": validation,
         }
+
+    def get_quote(
+        self,
+        symbol: str,
+        asset_type: str,
+        settings: Dict[str, Any],
+        execution_mode: str,
+    ) -> BrokerQuote:
+        raise ValueError(f"{self.display_name} does not provide a certified broker quote.")
 
     def get_order_status(self, trade: Dict[str, Any], settings: Dict[str, Any]) -> Dict[str, Any]:
         return {
