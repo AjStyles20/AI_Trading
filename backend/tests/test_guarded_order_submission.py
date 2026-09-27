@@ -106,3 +106,42 @@ def test_guarded_submission_kill_switch_blocks_before_risk_broker_or_persistence
             broker_id="paper", account_equity=1000.0, current_position_qty=0.0,
             day_start_equity=1000.0, peak_equity=1000.0,
         )
+
+
+def test_broker_quote_uses_side_appropriate_execution_reference():
+    from backend.broker_integration.base import BrokerQuote
+
+    quote = BrokerQuote(
+        broker_id="venue", symbol="BTC/USDT",
+        bid=99.5, ask=100.5, last=100.0,
+        timestamp="2026-09-27T10:00:00Z", source="venue:test",
+    )
+
+    assert quote.execution_reference("BUY") == pytest.approx(100.5)
+    assert quote.execution_reference("SELL") == pytest.approx(99.5)
+
+
+def test_broker_quote_falls_back_to_last_when_side_price_missing():
+    from backend.broker_integration.base import BrokerQuote
+
+    quote = BrokerQuote(
+        broker_id="venue", symbol="ABC",
+        bid=None, ask=None, last=42.0,
+        timestamp=None, source="venue:last",
+    )
+
+    assert quote.execution_reference("BUY") == pytest.approx(42.0)
+    assert quote.execution_reference("SELL") == pytest.approx(42.0)
+
+
+def test_broker_quote_fails_closed_without_valid_price():
+    from backend.broker_integration.base import BrokerQuote
+
+    quote = BrokerQuote(
+        broker_id="venue", symbol="ABC",
+        bid=0.0, ask=0.0, last=None,
+        timestamp=None, source="venue:bad",
+    )
+
+    with pytest.raises(ValueError, match="no valid execution reference"):
+        quote.execution_reference("BUY")
