@@ -235,9 +235,13 @@ class LiveTradingManager:
                                         f"{confirmed_position.qty:.8f} does not match broker quantity "
                                         f"{current_position_qty:.8f}."
                                     )
-                                execution_reference_price = market_data.get_latest_price(
-                                    symbol, asset_type=asset_type
+                                quote = broker.get_quote(
+                                    symbol,
+                                    asset_type,
+                                    settings,
+                                    execution_mode,
                                 )
+                                execution_reference_price = quote.execution_reference("SELL")
                                 protection_order = BrokerOrder(
                                     symbol=symbol,
                                     side="SELL",
@@ -250,6 +254,8 @@ class LiveTradingManager:
                                         "protection_trigger_price": protection.trigger_price,
                                         "protection_observation_price": protection.market_price,
                                         "execution_reference_price": execution_reference_price,
+                                        "execution_quote_source": quote.source,
+                                        "execution_quote_timestamp": quote.timestamp,
                                         "cooldown_bars": 0,
                                     },
                                 )
