@@ -9,7 +9,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .base import BrokerClient, BrokerExecutionResult, BrokerOrder
+from .base import BrokerClient, BrokerExecutionResult, BrokerOrder, BrokerQuote
 from core.credential_provider import resolve_api_keys
 
 
@@ -117,6 +117,30 @@ class BitgetBroker(BrokerClient):
             api_keys.get("bitget_key")
             and api_keys.get("bitget_secret")
             and api_keys.get("bitget_passphrase")
+        )
+
+    def get_quote(self, symbol: str, asset_type: str, settings: dict, execution_mode: str) -> BrokerQuote:
+        if asset_type != "crypto":
+            raise ValueError("Bitget quote adapter supports crypto only.")
+        normalized = self._normalize_symbol(symbol)
+        payload = self._request(
+            "GET", "/api/v2/spot/market/tickers", settings,
+            params={"symbol": normalized},
+        )
+        item = payload[0] if isinstance(payload, list) and payload else payload
+        if not isinstance(item, dict):
+            raise ValueError(f"Bitget returned an invalid quote payload for {normalized}.")
+        bid = float(item.get("bidPr", 0) or item.get("bidPrice", 0) or 0)
+        ask = float(item.get("askPr", 0) or item.get("askPrice", 0) or 0)
+        last = float(item.get("lastPr", 0) or item.get("last", 0) or 0)
+        if bid <= 0 and ask <= 0 and last <= 0:
+            raise ValueError(f"Bitget returned an invalid quote for {normalized}.")
+        return BrokerQuote(
+            broker_id=self.broker_id, symbol=symbol,
+            bid=bid if bid > 0 else None, ask=ask if ask > 0 else None,
+            last=last if last > 0 else None,
+            timestamp=str(item.get("ts")) if item.get("ts") is not None else None,
+            source=f"bitget:{self._get_environment_label(settings)}:ticker",
         )
 
     def get_account_summary(self, settings: dict, execution_mode: str) -> dict:
