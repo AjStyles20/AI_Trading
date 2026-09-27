@@ -4,7 +4,7 @@ from backend.broker_integration.bitget_broker import BitgetBroker
 def test_bitget_quote_maps_spot_ticker_and_side_prices(monkeypatch):
     broker = BitgetBroker()
     monkeypatch.setattr(
-        broker, "_request",
+        broker, "_public_request",
         lambda *args, **kwargs: [{
             "bidPr": "99.10", "askPr": "100.90", "lastPr": "100.00", "ts": "1790500000000"
         }],
