@@ -6,6 +6,7 @@ from typing import Any, Mapping, Sequence
 
 REQUIRED_AUTONOMOUS_CAPABILITIES = (
     "market_orders",
+    "quotes",
     "order_status",
     "open_orders",
     "positions",
