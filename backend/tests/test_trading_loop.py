@@ -57,6 +57,7 @@ async def test_same_candle_is_evaluated_only_once(monkeypatch):
 
     manager = trading_api.LiveTradingManager()
     manager.is_running = True
+    manager.recovery_verified = True
     manager.config = {
         "symbol": "BTC/USDT",
         "asset_type": "crypto",
@@ -81,7 +82,7 @@ async def test_same_candle_is_evaluated_only_once(monkeypatch):
     monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: DummyBroker())
     monkeypatch.setattr(trading_api.market_data, "get_crypto_data", lambda *args, **kwargs: frame.copy())
     monkeypatch.setattr(trading_api.market_data, "assert_fresh", lambda *args, **kwargs: None)
-    monkeypatch.setattr(trading_api, "get_settings", lambda: {})
+    monkeypatch.setattr(trading_api, "get_settings", lambda: {"autonomy_kill_switch": False})
     monkeypatch.setattr(trading_api, "get_trades", lambda limit=100: [])
 
     def reconcile(*args, **kwargs):
@@ -440,6 +441,7 @@ async def test_reconciliation_runs_even_when_strategy_has_no_signal(monkeypatch)
 
     manager = trading_api.LiveTradingManager()
     manager.is_running = True
+    manager.recovery_verified = True
     manager.config = {
         "symbol": "BTC/USDT", "asset_type": "crypto", "interval": "1h",
         "broker_id": "paper", "execution_mode": "paper",
@@ -458,7 +460,7 @@ async def test_reconciliation_runs_even_when_strategy_has_no_signal(monkeypatch)
     monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: DummyBroker())
     monkeypatch.setattr(trading_api.market_data, "get_crypto_data", lambda *args, **kwargs: frame.copy())
     monkeypatch.setattr(trading_api.market_data, "assert_fresh", lambda *args, **kwargs: None)
-    monkeypatch.setattr(trading_api, "get_settings", lambda: {})
+    monkeypatch.setattr(trading_api, "get_settings", lambda: {"autonomy_kill_switch": False})
     monkeypatch.setattr(trading_api, "get_trades", lambda limit=100: [])
 
     def reconcile(*args, **kwargs):
@@ -543,6 +545,7 @@ async def test_confirmed_long_blocks_runtime_buy_before_order_submission(monkeyp
 
     manager = trading_api.LiveTradingManager()
     manager.is_running = True
+    manager.recovery_verified = True
     manager.config = {
         "symbol": "BTC/USDT", "asset_type": "crypto", "interval": "1h",
         "broker_id": "paper", "execution_mode": "paper",
@@ -560,7 +563,7 @@ async def test_confirmed_long_blocks_runtime_buy_before_order_submission(monkeyp
     monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: DummyBroker())
     monkeypatch.setattr(trading_api.market_data, "get_crypto_data", lambda *args, **kwargs: frame.copy())
     monkeypatch.setattr(trading_api.market_data, "assert_fresh", lambda *args, **kwargs: None)
-    monkeypatch.setattr(trading_api, "get_settings", lambda: {})
+    monkeypatch.setattr(trading_api, "get_settings", lambda: {"autonomy_kill_switch": False})
     monkeypatch.setattr(trading_api, "get_trades", lambda limit=100: [])
     monkeypatch.setattr(trading_api, "reconcile_unresolved_orders", lambda *args, **kwargs: [])
     monkeypatch.setattr(trading_api.trading_engine, "evaluate_strategy", lambda *args: frame.assign(signal=1))
@@ -602,6 +605,7 @@ async def test_runtime_submits_guarded_stop_loss_exit_before_strategy_evaluation
 
     manager = trading_api.LiveTradingManager()
     manager.is_running = True
+    manager.recovery_verified = True
     manager.config = {
         "symbol": "BTC/USDT", "asset_type": "crypto", "interval": "1h",
         "broker_id": "paper", "execution_mode": "paper",
@@ -620,7 +624,7 @@ async def test_runtime_submits_guarded_stop_loss_exit_before_strategy_evaluation
     monkeypatch.setattr(trading_api.market_data, "get_crypto_data", lambda *args, **kwargs: frame.copy())
     monkeypatch.setattr(trading_api.market_data, "assert_fresh", lambda *args, **kwargs: None)
     monkeypatch.setattr(trading_api.market_data, "get_latest_price", lambda *args, **kwargs: 96.8)
-    monkeypatch.setattr(trading_api, "get_settings", lambda: {})
+    monkeypatch.setattr(trading_api, "get_settings", lambda: {"autonomy_kill_switch": False})
     monkeypatch.setattr(trading_api, "get_trades", lambda limit=100: [])
     monkeypatch.setattr(trading_api, "reconcile_unresolved_orders", lambda *args, **kwargs: [])
     monkeypatch.setattr(trading_api, "has_unresolved_order", lambda *args, **kwargs: False)
@@ -676,6 +680,7 @@ async def test_runtime_protection_does_not_race_unresolved_order(monkeypatch):
 
     manager = trading_api.LiveTradingManager()
     manager.is_running = True
+    manager.recovery_verified = True
     manager.config = {
         "symbol": "BTC/USDT", "asset_type": "crypto", "interval": "1h",
         "broker_id": "paper", "execution_mode": "paper",
@@ -699,7 +704,7 @@ async def test_runtime_protection_does_not_race_unresolved_order(monkeypatch):
     monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: DummyBroker())
     monkeypatch.setattr(trading_api.market_data, "get_crypto_data", lambda *args, **kwargs: frame.copy())
     monkeypatch.setattr(trading_api.market_data, "assert_fresh", lambda *args, **kwargs: None)
-    monkeypatch.setattr(trading_api, "get_settings", lambda: {})
+    monkeypatch.setattr(trading_api, "get_settings", lambda: {"autonomy_kill_switch": False})
     monkeypatch.setattr(trading_api, "get_trades", lambda limit=100: unresolved)
     monkeypatch.setattr(trading_api, "reconcile_unresolved_orders", lambda *args, **kwargs: unresolved)
     monkeypatch.setattr(trading_api, "has_unresolved_order", lambda *args, **kwargs: True)
@@ -745,6 +750,7 @@ async def test_runtime_protection_fails_closed_on_position_drift(monkeypatch):
 
     manager = trading_api.LiveTradingManager()
     manager.is_running = True
+    manager.recovery_verified = True
     manager.config = {
         "symbol": "BTC/USDT", "asset_type": "crypto", "interval": "1h",
         "broker_id": "paper", "execution_mode": "paper",
@@ -763,7 +769,7 @@ async def test_runtime_protection_fails_closed_on_position_drift(monkeypatch):
     monkeypatch.setattr(trading_api.market_data, "get_crypto_data", lambda *args, **kwargs: frame.copy())
     monkeypatch.setattr(trading_api.market_data, "assert_fresh", lambda *args, **kwargs: None)
     monkeypatch.setattr(trading_api.market_data, "get_completed_candles", lambda df, interval: df)
-    monkeypatch.setattr(trading_api, "get_settings", lambda: {})
+    monkeypatch.setattr(trading_api, "get_settings", lambda: {"autonomy_kill_switch": False})
     monkeypatch.setattr(trading_api, "get_trades_for_scope", lambda *args: [])
     monkeypatch.setattr(trading_api, "reconcile_unresolved_orders", lambda *args, **kwargs: [])
     monkeypatch.setattr(trading_api, "has_unresolved_order", lambda *args, **kwargs: False)
@@ -805,6 +811,7 @@ async def test_armed_kill_switch_reconciles_but_skips_strategy_evaluation(monkey
 
     manager = trading_api.LiveTradingManager()
     manager.is_running = True
+    manager.recovery_verified = True
     manager.config = {
         "symbol": "BTC/USDT", "asset_type": "crypto", "interval": "1h",
         "broker_id": "paper", "execution_mode": "paper",
