@@ -97,6 +97,31 @@ class BitgetBroker(BrokerClient):
             raise ValueError(f"Bitget API error ({code}): {payload.get('msg') or payload.get('message')}")
         return payload.get("data", payload)
 
+    def _public_request(
+        self,
+        path: str,
+        params: dict[str, str | int | float] | None = None,
+    ) -> dict | list:
+        query_string = urllib.parse.urlencode(params) if params else ""
+        request_path = f"{path}?{query_string}" if query_string else path
+        request = urllib.request.Request(
+            f"{self._get_base_url()}{request_path}",
+            method="GET",
+            headers={"locale": "en-US"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="ignore")
+            raise ValueError(f"Bitget API error ({exc.code}): {error_body}") from exc
+        except urllib.error.URLError as exc:
+            raise ValueError(f"Bitget network error: {exc.reason}") from exc
+        code = str(payload.get("code", ""))
+        if code and code != "00000":
+            raise ValueError(f"Bitget API error ({code}): {payload.get('msg') or payload.get('message')}")
+        return payload.get("data", payload)
+
     def _normalize_symbol(self, symbol: str) -> str:
         return symbol.replace("/", "").replace("-", "").upper()
 
@@ -123,8 +148,8 @@ class BitgetBroker(BrokerClient):
         if asset_type != "crypto":
             raise ValueError("Bitget quote adapter supports crypto only.")
         normalized = self._normalize_symbol(symbol)
-        payload = self._request(
-            "GET", "/api/v2/spot/market/tickers", settings,
+        payload = self._public_request(
+            "/api/v2/spot/market/tickers",
             params={"symbol": normalized},
         )
         item = payload[0] if isinstance(payload, list) and payload else payload
