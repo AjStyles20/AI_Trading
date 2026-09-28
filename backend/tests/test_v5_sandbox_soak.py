@@ -292,3 +292,72 @@ def test_restart_recovery_blocks_on_unresolved_partial_fill(monkeypatch):
 
     assert result["readiness"]["ready"] is False
     assert any("unresolved prior order" in reason for reason in result["readiness"]["reasons"])
+
+
+def test_mid_session_kill_switch_activation_enters_reconcile_only_mode(monkeypatch):
+    import pandas as pd
+    import backend.trading_api as trading_api
+
+    manager = trading_api.LiveTradingManager()
+    manager.is_running = True
+    manager.recovery_verified = True
+    manager.config = {
+        "symbol": "BTC/USDT",
+        "asset_type": "crypto",
+        "interval": "1h",
+        "broker_id": "paper",
+        "execution_mode": "paper",
+        "strategy_code": "def strategy(df): return df",
+    }
+    frame = pd.DataFrame(
+        {"open": [100.0], "high": [101.0], "low": [99.0], "close": [100.0], "volume": [10.0]},
+        index=pd.DatetimeIndex([pd.Timestamp("2026-09-27T12:00:00Z")]),
+    )
+    settings_sequence = iter([
+        {"autonomy_kill_switch": False},
+        {"autonomy_kill_switch": True},
+    ])
+    calls = {"reconcile": 0, "strategy": 0, "submit": 0, "sleep": 0}
+
+    class Broker:
+        display_name = "Paper"
+        supported_asset_types = {"crypto"}
+
+    monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: Broker())
+    monkeypatch.setattr(trading_api.market_data, "get_crypto_data", lambda *args, **kwargs: frame.copy())
+    monkeypatch.setattr(trading_api.market_data, "assert_fresh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(trading_api.market_data, "get_completed_candles", lambda df, interval: df)
+    monkeypatch.setattr(trading_api, "get_settings", lambda: next(settings_sequence))
+    monkeypatch.setattr(trading_api, "get_trades_for_scope", lambda *args: [])
+
+    def reconcile(*args, **kwargs):
+        calls["reconcile"] += 1
+        return []
+
+    def evaluate(*args, **kwargs):
+        calls["strategy"] += 1
+        return frame.assign(signal=0)
+
+    def submit(**kwargs):
+        calls["submit"] += 1
+        raise AssertionError("no order expected in this incident test")
+
+    monkeypatch.setattr(trading_api, "reconcile_unresolved_orders", reconcile)
+    monkeypatch.setattr(trading_api.trading_engine, "evaluate_strategy", evaluate)
+    monkeypatch.setattr(trading_api.trading_engine, "get_signal", lambda df: None)
+    monkeypatch.setattr(trading_api, "submit_guarded_order", submit)
+
+    async def controlled_sleep(seconds):
+        calls["sleep"] += 1
+        if calls["sleep"] >= 2:
+            manager.is_running = False
+
+    monkeypatch.setattr(trading_api.asyncio, "sleep", controlled_sleep)
+
+    import asyncio
+    asyncio.run(manager.run_loop())
+
+    assert calls["reconcile"] == 2
+    assert calls["strategy"] == 1
+    assert calls["submit"] == 0
+    assert any("AUTONOMY PAUSED: kill switch is armed" in entry for entry in manager.logs)
