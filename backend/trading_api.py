@@ -240,6 +240,7 @@ class LiveTradingManager:
                                     asset_type,
                                     settings,
                                     execution_mode,
+                                    reference_price=protection.market_price,
                                 )
                                 execution_reference_price = quote.execution_reference("SELL")
                                 protection_order = BrokerOrder(
@@ -327,23 +328,41 @@ class LiveTradingManager:
                         continue
 
                     price_column = 'close' if 'close' in df.columns else 'Close'
-                    last_price = float(df.iloc[-1][price_column])
-                    self.log(f"SIGNAL DETECTED: {signal} at ${last_price}")
+                    observation_price = float(df.iloc[-1][price_column])
+                    self.log(f"SIGNAL DETECTED: {signal} at observation ${observation_price}")
 
                     account_equity, current_position_qty, day_start_equity, peak_equity = get_risk_context(
                         broker, symbol, settings, execution_mode, broker_id
                     )
+                    try:
+                        quote = broker.get_quote(
+                            symbol,
+                            asset_type,
+                            settings,
+                            execution_mode,
+                            reference_price=observation_price,
+                        )
+                        execution_reference_price = quote.execution_reference(signal)
+                    except ValueError as exc:
+                        self.log(f"ORDER BLOCKED: broker quote unavailable: {exc}")
+                        await asyncio.sleep(get_poll_delay_seconds(interval))
+                        continue
+
                     order_qty = resolve_strategy_quantity(
-                        result_df, signal, last_price, account_equity, current_position_qty
+                        result_df, signal, execution_reference_price, account_equity, current_position_qty
                     )
                     order = BrokerOrder(
                         symbol=symbol,
                         side=signal,
                         qty=order_qty,
-                        price=last_price,
+                        price=execution_reference_price,
                         asset_type=asset_type,
                         metadata={
                             "interval": interval,
+                            "signal_observation_price": observation_price,
+                            "execution_reference_price": execution_reference_price,
+                            "execution_quote_source": quote.source,
+                            "execution_quote_timestamp": quote.timestamp,
                             "cooldown_bars": resolve_cooldown_bars(result_df) if signal == "SELL" else 0,
                             **(resolve_position_protection_params(result_df) if signal == "BUY" else {}),
                         },
@@ -722,13 +741,26 @@ def build_autonomous_readiness(symbol: str, asset_type: str, broker_id: str, exe
         broker_id=broker_id,
         execution_mode=execution_mode,
     )
+    quote = broker.get_quote(
+        symbol,
+        asset_type,
+        settings,
+        execution_mode,
+        reference_price=market_price,
+    )
+    reference_price = quote.execution_reference("BUY")
     reference_order = BrokerOrder(
         symbol=symbol,
         side="BUY",
         qty=1.0,
-        price=market_price,
+        price=reference_price,
         asset_type=asset_type,
-        metadata={"source": "autonomy_preflight"},
+        metadata={
+            "source": "autonomy_preflight",
+            "market_observation_price": market_price,
+            "execution_quote_source": quote.source,
+            "execution_quote_timestamp": quote.timestamp,
+        },
     )
     risk = risk_engine.evaluate_order(
         side=reference_order.side,
@@ -764,6 +796,9 @@ def build_autonomous_readiness(symbol: str, asset_type: str, broker_id: str, exe
         "reference_order_risk": risk.as_dict(),
         "reference_order_validation": validation,
         "market_price": market_price,
+        "execution_reference_price": reference_price,
+        "execution_quote_source": quote.source,
+        "execution_quote_timestamp": quote.timestamp,
         "ledger_position_qty": confirmed_position.qty,
         "broker_position_qty": current_position_qty,
     }
