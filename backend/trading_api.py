@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
 import asyncio
 import copy
+import math
 import sys, os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -607,9 +608,20 @@ def submit_guarded_order(
     if not broker_validation.get("ok", False):
         raise ValueError(f"BROKER VALIDATION BLOCKED ORDER: {broker_validation}")
 
-    order.qty = float(broker_validation.get("normalized_qty", order.qty))
-    if order.qty <= 0:
-        raise ValueError("Broker-normalized order quantity must be greater than zero.")
+    normalized_qty = float(broker_validation.get("normalized_qty", order.qty))
+    if not math.isfinite(normalized_qty) or normalized_qty <= 0:
+        raise ValueError("Broker-normalized order quantity must be finite and greater than zero.")
+    # A venue may round a requested quantity upward. Apply central risk to the
+    # actual quantity that will be submitted, not only the initial estimate.
+    normalized_risk = risk_engine.evaluate_order(
+        side=order.side, qty=normalized_qty, price=order.price,
+        execution_mode=execution_mode, settings=settings,
+        current_position_qty=current_position_qty, account_equity=account_equity,
+        day_start_equity=day_start_equity, peak_equity=peak_equity,
+    )
+    if not normalized_risk.approved:
+        raise ValueError(f"RISK BLOCKED BROKER-NORMALIZED ORDER: {'; '.join(normalized_risk.reasons)}")
+    order.qty = normalized_qty
 
     execution = broker.execute_order(order, execution_mode, settings)
     record_trade(
