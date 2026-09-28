@@ -30,6 +30,12 @@ Every autonomous order must pass the shared guarded submission path:
 
 Broker acceptance is not treated as a fill.
 
+Numerical inputs in the order path must be finite. The risk engine rejects
+nonfinite quantity, price, notional, configured limits and supplied equity or
+position state. Broker quote references reject nonfinite prices. After broker
+quantity normalization, central risk runs again on the actual quantity before
+submission; an upward rounding cannot bypass the order or position limit.
+
 ### Price semantics
 
 Astral separates:
@@ -52,6 +58,7 @@ Safety invariants include:
 - completed SELL transitions are emitted once;
 - confirmed positions are reconstructed from cumulative fills;
 - broker position quantity is compared against the reconstructed ledger;
+- nonfinite or negative broker/ledger position quantities fail readiness;
 - material drift blocks autonomous execution.
 
 ### Startup and restart recovery
