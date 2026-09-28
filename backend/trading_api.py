@@ -495,6 +495,8 @@ def reconcile_trade_order(trade: Dict[str, Any], settings: Dict[str, Any]) -> Di
     if "filled_qty" in status:
         prior_filled_qty = float(trade.get("filled_qty") or 0)
         broker_filled_qty = float(status["filled_qty"] or 0)
+        if not math.isfinite(prior_filled_qty) or not math.isfinite(broker_filled_qty) or broker_filled_qty < 0:
+            raise ValueError("Broker cumulative filled quantity must be finite and nonnegative.")
         if broker_filled_qty + 1e-12 < prior_filled_qty:
             raise ValueError(
                 f"Broker cumulative filled quantity regressed from {prior_filled_qty} to {broker_filled_qty}."
@@ -502,6 +504,21 @@ def reconcile_trade_order(trade: Dict[str, Any], settings: Dict[str, Any]) -> Di
         updated["filled_qty"] = broker_filled_qty
     if "filled_price" in status:
         updated["filled_price"] = float(status["filled_price"] or 0)
+
+    requested_raw = updated.get("requested_qty")
+    if requested_raw is None:
+        requested_raw = updated.get("qty")
+    requested_qty = float(requested_raw) if requested_raw is not None else None
+    filled_qty = float(updated.get("filled_qty") or 0)
+    filled_price = float(updated.get("filled_price") or 0)
+    if requested_qty is not None and (not math.isfinite(requested_qty) or requested_qty <= 0):
+        raise ValueError("Requested order quantity must be finite and positive.")
+    if not math.isfinite(filled_qty) or filled_qty < 0 or (requested_qty is not None and filled_qty > requested_qty + max(1e-12, requested_qty * 1e-8)):
+        raise ValueError("Broker cumulative fill must be finite and no greater than the requested quantity.")
+    if not math.isfinite(filled_price) or filled_price < 0 or (filled_qty > 0 and filled_price <= 0):
+        raise ValueError("Broker filled price must be finite and positive for a confirmed fill.")
+    if str(updated["order_status"]).lower() == "filled" and filled_qty <= 0:
+        raise ValueError("Broker reported a filled order without confirmed quantity.")
 
     update_trade_order_state(
         updated["id"],
@@ -512,12 +529,11 @@ def reconcile_trade_order(trade: Dict[str, Any], settings: Dict[str, Any]) -> Di
         filled_price=updated.get("filled_price"),
     )
     was_final = str(trade.get("order_status", "")).lower() in FINAL_ORDER_STATUSES
-    requested_qty = float(updated.get("requested_qty") or updated.get("qty") or 0)
     fully_filled_exit = (
         not was_final
         and str(updated.get("side", "")).upper() == "SELL"
         and str(updated.get("order_status", "")).lower() == "filled"
-        and requested_qty > 0
+        and requested_qty is not None and requested_qty > 0
         and float(updated.get("filled_qty") or 0) > 0
         and float(updated.get("filled_qty") or 0) >= requested_qty
     )
