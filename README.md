@@ -65,6 +65,7 @@ The runtime includes:
 - persistent autonomy kill switch, default armed;
 - fail-closed startup recovery verification;
 - full scoped trade reconciliation before strategy execution;
+- durable order intent and client-ID recovery after uncertain submissions;
 - unresolved-order blocking;
 - confirmed-fill position reconstruction;
 - broker/ledger position-drift blocking;
@@ -141,7 +142,8 @@ GitHub Actions runs both backend and frontend validation on pushes and pull requ
 
 Real-money autonomous deployment requires explicit review after broker sandbox testing, operational incident procedures, extended soak evidence and hard capital limits.
 
-See `docs/V5_SANDBOX_READINESS.md` and `docs/SAFETY_BASELINE.md`.
+See `docs/V5_SANDBOX_READINESS.md`, `docs/ORDER_SUBMISSION_INCIDENT.md`
+and `docs/SAFETY_BASELINE.md`.
 
 ## Important limitations
 

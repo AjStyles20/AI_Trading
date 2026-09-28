@@ -28,6 +28,12 @@ Every autonomous order must pass the shared guarded submission path:
 4. broker execution;
 5. persistence of requested quantity and confirmed cumulative fill state.
 
+The order intent is committed before step 4 as `submission_pending`. Its
+client order ID is passed to the live adapters. Broker exceptions and invalid
+responses retain an unresolved intent; startup and subsequent submissions
+cannot infer rejection from a lost response. The intent claim checks the
+complete same-symbol/broker/mode scope within a SQLite write transaction.
+
 Broker acceptance is not treated as a fill.
 
 Numerical inputs in the order path must be finite. The risk engine rejects
