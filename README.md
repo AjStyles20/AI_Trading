@@ -118,6 +118,8 @@ npm ci --legacy-peer-deps
 npm run dev
 ```
 
+For the Electron desktop client, see [frontend/README.md](frontend/README.md). The current package requires a separately started Python backend; it is not yet a standalone installer.
+
 Tests:
 
 ```bash
