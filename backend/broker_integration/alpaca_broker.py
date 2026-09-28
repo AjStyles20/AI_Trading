@@ -99,7 +99,14 @@ class AlpacaBroker(BrokerClient):
         api_keys = self._get_api_keys(settings)
         return bool(api_keys.get("alpaca_key") and api_keys.get("alpaca_secret"))
 
-    def get_quote(self, symbol: str, asset_type: str, settings: dict, execution_mode: str) -> BrokerQuote:
+    def get_quote(
+        self,
+        symbol: str,
+        asset_type: str,
+        settings: dict,
+        execution_mode: str,
+        reference_price: float | None = None,
+    ) -> BrokerQuote:
         if asset_type != "stock":
             raise ValueError("Alpaca quote adapter supports stocks only.")
         normalized = self._normalize_symbol(symbol)
