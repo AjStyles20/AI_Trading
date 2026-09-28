@@ -4,8 +4,8 @@ import { createChart, ColorType, CandlestickSeries, LineSeries, createSeriesMark
 import type { CandlestickData, IChartApi, ISeriesApi, ISeriesMarkersPluginApi, LineData, SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts';
 import { calculateEMA, calculateMACD, calculateRSI, calculateSMA, calculateBollingerBands, calculateATR, type CandlePoint, type LinePoint, type MacdPoint } from '../lib/indicators';
 import type { BacktestResults } from './BottomPanel';
+import { BACKEND_URL } from '../lib/api';
 
-const BACKEND_URL = 'http://127.0.0.1:8000';
 type IndicatorKey = 'sma20' | 'ema21' | 'rsi14' | 'macd' | 'bb' | 'atr';
 type AssetType = 'crypto' | 'stock';
 

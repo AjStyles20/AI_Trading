@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
 
-const BACKEND_URL = 'http://127.0.0.1:8000';
+import { BACKEND_URL } from '../lib/api';
 
 export type AssetType = 'crypto' | 'stock';
 
