@@ -179,6 +179,8 @@ class AlpacaBroker(BrokerClient):
             "qty": qty,
             "time_in_force": "day",
         }
+        if order.metadata.get("client_order_id"):
+            payload["client_order_id"] = order.metadata["client_order_id"]
         response = self._request("POST", "/v2/orders", settings, execution_mode, body=payload)
         if not isinstance(response, dict):
             raise ValueError("Unexpected Alpaca order response.")
@@ -217,10 +219,15 @@ class AlpacaBroker(BrokerClient):
 
     def get_order_status(self, trade: dict, settings: dict) -> dict:
         broker_order_id = trade.get("broker_order_id")
-        if not broker_order_id:
+        client_order_id = (trade.get("metadata") or {}).get("client_order_id")
+        if not broker_order_id and not client_order_id:
             return super().get_order_status(trade, settings)
 
-        response = self._request("GET", f"/v2/orders/{broker_order_id}", settings, trade.get("execution_mode", "live"))
+        path = (
+            f"/v2/orders/{broker_order_id}" if broker_order_id else
+            f"/v2/orders:by_client_order_id?{urllib.parse.urlencode({'client_order_id': client_order_id})}"
+        )
+        response = self._request("GET", path, settings, trade.get("execution_mode", "live"))
         if not isinstance(response, dict):
             return super().get_order_status(trade, settings)
         status = str(response.get("status", trade.get("order_status", "unknown"))).lower()
