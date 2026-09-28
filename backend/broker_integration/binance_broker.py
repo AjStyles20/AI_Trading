@@ -135,7 +135,14 @@ class BinanceBroker(BrokerClient):
         except urllib.error.URLError as exc:
             raise ValueError(f"Binance network error: {exc.reason}") from exc
 
-    def get_quote(self, symbol: str, asset_type: str, settings: dict, execution_mode: str) -> BrokerQuote:
+    def get_quote(
+        self,
+        symbol: str,
+        asset_type: str,
+        settings: dict,
+        execution_mode: str,
+        reference_price: float | None = None,
+    ) -> BrokerQuote:
         if asset_type != "crypto":
             raise ValueError("Binance quote adapter supports crypto only.")
         normalized = self._normalize_symbol(symbol)
