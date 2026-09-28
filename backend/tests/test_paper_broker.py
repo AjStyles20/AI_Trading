@@ -77,3 +77,23 @@ def test_paper_reset_clears_persisted_risk_baseline():
     assert account["cash"] == 1000
     assert account["positions"] == []
     assert sqlite_manager.get_risk_equity_state("paper", "paper") is None
+
+
+def test_paper_quote_uses_explicit_simulation_reference_before_first_fill():
+    broker = PaperBroker(starting_cash=1000)
+
+    quote = broker.get_quote(
+        "ABC", "stock", {}, "paper", reference_price=123.45
+    )
+
+    assert quote.bid == 123.45
+    assert quote.ask == 123.45
+    assert quote.last == 123.45
+    assert quote.source == "paper:completed_candle_reference"
+
+
+def test_paper_quote_does_not_fabricate_missing_reference():
+    broker = PaperBroker(starting_cash=1000)
+
+    with pytest.raises(ValueError, match="cannot be fabricated"):
+        broker.get_quote("ABC", "stock", {}, "paper")
