@@ -13,6 +13,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import axios from 'axios';
+import { BACKEND_URL } from '../lib/api';
 import { buildStrategyCodeFromGraph, validateStrategyGraph } from '../lib/strategyBuilder';
 
 export type BuilderNodeData = {
@@ -121,7 +122,7 @@ export default function StrategyBuilder({ setStrategyCode, initialGraph, onGraph
     }
 
     try {
-      const res = await axios.post('http://127.0.0.1:8000/api/strategy/build', {
+      const res = await axios.post(`${BACKEND_URL}/api/strategy/build`, {
         nodes: strategyNodes,
         edges: flowEdges,
       });
