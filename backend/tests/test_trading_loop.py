@@ -409,7 +409,7 @@ def test_reconciliation_rejects_regressive_cumulative_fill(monkeypatch):
     assert persisted == []
 
 
-def test_reconciled_sell_without_requested_quantity_does_not_complete_exit(monkeypatch):
+def test_reconciled_sell_without_requested_quantity_stays_unresolved(monkeypatch):
     import backend.trading_api as trading_api
 
     trade = {
@@ -427,10 +427,13 @@ def test_reconciled_sell_without_requested_quantity_does_not_complete_exit(monke
             }
 
     monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: Broker())
-    monkeypatch.setattr(trading_api, "update_trade_order_state", lambda *args, **kwargs: None)
+    persisted = []
+    monkeypatch.setattr(trading_api, "update_trade_order_state", lambda *args, **kwargs: persisted.append(args))
 
-    updated = trading_api.reconcile_trade_order(trade, {})
-    assert updated["_completed_exit_transition"] is False
+    updated = trading_api.reconcile_unresolved_orders([trade], {}, "BTC/USDT", "binance", "live")
+    assert updated[0]["order_status"] == "partially_filled"
+    assert trading_api.has_unresolved_order(updated, "BTC/USDT", "binance", "live")
+    assert persisted == []
 
 
 

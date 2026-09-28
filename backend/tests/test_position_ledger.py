@@ -105,6 +105,46 @@ def test_position_ledger_rejects_unknown_filled_side():
         )
 
 
+@pytest.mark.parametrize("quantity", [float("nan"), float("inf"), -0.5])
+def test_position_ledger_rejects_invalid_fill_quantity(quantity):
+    with pytest.raises(ValueError, match="quantity must be finite and nonnegative"):
+        reconstruct_confirmed_position(
+            [trade(1, "BUY", quantity, 100.0)],
+            symbol="BTC/USDT", broker_id="binance", execution_mode="live",
+        )
+
+
+def test_position_ledger_rejects_overfilled_order():
+    item = trade(1, "BUY", 2.0, 100.0)
+    item["requested_qty"] = 1.0
+    with pytest.raises(ValueError, match="exceeds or invalidates requested"):
+        reconstruct_confirmed_position(
+            [item], symbol="BTC/USDT", broker_id="binance", execution_mode="live",
+        )
+
+
+def test_position_ledger_rejects_nonfinite_price_and_protection():
+    item = trade(1, "BUY", 1.0, float("nan"))
+    with pytest.raises(ValueError, match="finite positive filled_price"):
+        reconstruct_confirmed_position(
+            [item], symbol="BTC/USDT", broker_id="binance", execution_mode="live",
+        )
+    item["filled_price"] = 100.0
+    item["metadata"] = {"stop_loss_pct": float("nan")}
+    with pytest.raises(ValueError, match="stop_loss_pct"):
+        reconstruct_confirmed_position(
+            [item], symbol="BTC/USDT", broker_id="binance", execution_mode="live",
+        )
+
+
+def test_position_ledger_rejects_overflowing_cost_basis():
+    with pytest.raises(ValueError, match="cost basis is not finite"):
+        reconstruct_confirmed_position(
+            [trade(1, "BUY", 1e200, 1e200)],
+            symbol="BTC/USDT", broker_id="binance", execution_mode="live",
+        )
+
+
 
 def test_position_ledger_carries_surviving_entry_protection():
     first = trade(1, "BUY", 1.0, 100.0)
