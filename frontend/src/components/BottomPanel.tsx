@@ -983,7 +983,7 @@ export default function BottomPanel({
       return Boolean(trade.is_test);
     }
     if (tradeHistoryFilter === 'issues') {
-      return trade.order_status === 'rejected' || trade.order_status === 'expired';
+      return ['rejected', 'expired', 'submission_pending'].includes(trade.order_status || '');
     }
     if (tradeHistoryFilter === 'open') {
       return !trade.is_test && !['filled', 'canceled', 'cancelled', 'rejected', 'expired', 'tested'].includes(trade.order_status || '');
@@ -2620,6 +2620,12 @@ export default function BottomPanel({
               ))}
             </div>
 
+            {tradeHistory.some((trade) => trade.order_status === 'submission_pending') && (
+              <div role="alert" className="rounded border border-amber-600/60 bg-amber-900/20 p-3 text-[11px] text-amber-200">
+                Order submission outcome is unknown. Astral blocks another autonomous order in that symbol and broker scope. Refresh status and check the broker order history using the client order ID before resuming.
+              </div>
+            )}
+
             {visibleTradeHistory.length > 0 ? (
               <div className="bg-[#16161e] border border-[#2a2a35] rounded overflow-hidden">
                 <table className="w-full text-left border-collapse">
@@ -2663,6 +2669,11 @@ export default function BottomPanel({
                             {trade.order_type || 'market'}
                             {trade.broker_order_id ? ` | #${trade.broker_order_id}` : ''}
                           </div>
+                          {trade.order_status === 'submission_pending' && typeof trade.metadata?.client_order_id === 'string' && (
+                            <div className="text-[9px] text-amber-200 select-text" title="Client order ID for broker investigation">
+                              Client ID: {trade.metadata.client_order_id}
+                            </div>
+                          )}
                           {progress.executedQty > 0 && progress.originalQty > 0 && progress.fillProgressPct < 100 && (
                             <div className="text-[9px] text-amber-300">
                               Partial fill: {progress.executedQty}/{progress.originalQty} ({progress.fillProgressPct.toFixed(1)}%)
@@ -2731,4 +2742,3 @@ export default function BottomPanel({
     </div>
   );
 }
-
