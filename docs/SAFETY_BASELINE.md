@@ -61,6 +61,14 @@ Safety invariants include:
 - nonfinite or negative broker/ledger position quantities fail readiness;
 - material drift blocks autonomous execution.
 
+Broker cumulative fills must be finite, nonnegative and monotonic. When a
+requested quantity is available, a reported fill cannot exceed it. Positive
+fills require a finite positive fill price; a broker `filled` status with zero
+confirmed quantity is rejected. Invalid status refreshes are not persisted and
+leave the prior order unresolved. Ledger reconstruction also rejects invalid
+historical fill quantities, prices, protection percentages and overflowing cost
+basis rather than silently omitting a malformed row.
+
 ### Startup and restart recovery
 
 Direct runtime start defaults to `recovery_verified=False`.
