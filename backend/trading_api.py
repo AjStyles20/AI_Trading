@@ -275,6 +275,12 @@ class LiveTradingManager:
                                 continue
                             except ValueError as exc:
                                 self.log(f"PROTECTION ORDER BLOCKED: {exc}")
+                                # A triggered protection path that cannot obtain a
+                                # trustworthy execution reference or pass safety
+                                # checks must not fall through into ordinary strategy
+                                # execution on the same poll.
+                                await asyncio.sleep(get_poll_delay_seconds(interval))
+                                continue
 
                 # Evaluate each completed/latest candle at most once. Polling may run
                 # several times within a timeframe, but it must never create repeated
