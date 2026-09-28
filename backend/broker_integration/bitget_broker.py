@@ -245,7 +245,7 @@ class BitgetBroker(BrokerClient):
             "side": order.side.lower(),
             "orderType": "market",
             "size": str(validation.get("normalized_qty", order.qty)),
-            "clientOid": str(int(time.time() * 1000)),
+            "clientOid": order.metadata.get("client_order_id") or str(int(time.time() * 1000)),
         }
         response = self._request("POST", "/api/v2/spot/trade/place-order", settings, body=payload)
         broker_order_id = None
@@ -282,14 +282,15 @@ class BitgetBroker(BrokerClient):
 
     def get_order_status(self, trade: dict, settings: dict) -> dict:
         broker_order_id = trade.get("broker_order_id")
-        if not broker_order_id:
+        client_order_id = (trade.get("metadata") or {}).get("client_order_id")
+        if not broker_order_id and not client_order_id:
             return super().get_order_status(trade, settings)
 
         response = self._request(
             "GET",
             "/api/v2/spot/trade/orderInfo",
             settings,
-            params={"orderId": broker_order_id},
+            params={"orderId": broker_order_id} if broker_order_id else {"clientOid": client_order_id},
         )
         if not isinstance(response, dict):
             return super().get_order_status(trade, settings)
@@ -299,7 +300,7 @@ class BitgetBroker(BrokerClient):
         filled_price = float(response.get("priceAvg", 0) or response.get("price", 0) or 0) if executed_qty > 0 else 0.0
         return {
             "order_status": order_status,
-            "broker_order_id": broker_order_id,
+            "broker_order_id": response.get("orderId") or broker_order_id,
             "filled_qty": executed_qty,
             "filled_price": filled_price,
             "metadata": {
