@@ -1,68 +1,144 @@
-# Safety and Research Baseline
+# Astral AI Safety and Research Baseline
 
-## Baseline
+## Repository baseline
 
-The initial repository commit is `05ee280b24edb537c841962564cf9198022000ec`. The code already contains market-data retrieval, AI-assisted strategy generation, strategy validation, backtesting, optimization, persistent storage, paper trading, and live-capable broker adapters.
+The initial repository commit was `05ee280b24edb537c841962564cf9198022000ec`.
 
-## Critical findings
+The original system already included market-data retrieval, AI-assisted strategy generation, validation, backtesting, optimization, persistent storage, paper trading and live-capable broker adapters. The hardening work since that baseline has focused on making research and execution behavior explicit, testable and fail-closed.
 
-### 1. Arbitrary strategy execution
+## Current safety boundaries
 
-`core/trading_engine.py`, `core/strategy_validator.py`, and the optimizer execute Python strategy code with `exec()`. Passing empty globals does **not** make Python safe. Strategy code must therefore be treated as trusted-only until a restricted strategy representation or hardened sandbox is introduced.
+### Strategy runtime
 
-### 2. Execution outran risk controls
+Astral supports a declarative strategy format and a restricted legacy-Python runtime. The Python runtime performs AST validation and restricted builtins, but it remains an in-process Python execution mechanism.
 
-The trading loop can construct and submit broker orders. Before this hardening phase, there was no single pre-trade risk authority between a signal and broker execution.
+Therefore:
 
-The new `core/risk_engine.py` begins that boundary. It intentionally defaults to conservative limits and locks live execution unless explicitly enabled.
+- application-generated/trusted Python strategies are supported;
+- arbitrary third-party Python strategies are not considered safe;
+- the restricted runtime is not an OS-level sandbox.
 
-### 3. Backtest confidence is not yet sufficient for capital allocation
+### Order authority
 
-The current backtester models basic fees and slippage and computes return, drawdown, win rate, and buy-and-hold return. It still needs explicit execution-timing rules, stronger accounting tests, bias/leakage tests, richer risk metrics, and out-of-sample/walk-forward evaluation.
+Every autonomous order must pass the shared guarded submission path:
 
-### 4. Optimization can overfit
+1. re-read the persistent autonomy kill switch;
+2. central risk evaluation;
+3. broker validation and quantity normalization;
+4. broker execution;
+5. persistence of requested quantity and confirmed cumulative fill state.
 
-The optimizer searches parameter grids and ranks them on the same backtest sample. Its score is useful for experimentation, not evidence of future performance. Train/validation/test separation and walk-forward evaluation are required.
+Broker acceptance is not treated as a fill.
 
-### 5. Live data and execution need stronger failure semantics
+### Price semantics
 
-Market-data functions currently fail to empty DataFrames in several cases. That is useful for UI resilience, but trading execution should distinguish stale data, provider failure, invalid symbols, and genuinely empty markets and should fail closed.
+Astral separates:
+
+- **decision observation:** latest completed candle;
+- **execution reference:** selected broker quote;
+- **actual execution/accounting:** broker-confirmed fill.
+
+Protective exits and ordinary strategy orders use the broker quote contract. Paper simulation accepts an explicitly supplied completed-candle reference and labels that provenance; it does not pretend to be exchange quote data.
+
+### Order lifecycle and reconciliation
+
+The autonomous loop reconciles the full active trading scope every poll before strategy evaluation.
+
+Safety invariants include:
+
+- unresolved prior orders block overlapping autonomous orders;
+- cumulative filled quantity may never regress;
+- reconciliation failure keeps the order unresolved;
+- completed SELL transitions are emitted once;
+- confirmed positions are reconstructed from cumulative fills;
+- broker position quantity is compared against the reconstructed ledger;
+- material drift blocks autonomous execution.
+
+### Startup and restart recovery
+
+Direct runtime start defaults to `recovery_verified=False`.
+
+The normal API start path marks recovery verified only after the readiness builder has:
+
+- loaded the full scoped trade history;
+- reconciled unresolved broker orders;
+- reconstructed the confirmed-fill position;
+- retrieved broker account/position state;
+- rejected unresolved lifecycle state;
+- rejected broker/ledger quantity drift;
+- verified broker capability declarations.
+
+A restarted process therefore does not inherit previous runtime authorization.
+
+### Persistent autonomy kill switch
+
+`autonomy_kill_switch` is stored in SQLite and defaults to **armed** on both new and migrated databases.
+
+When armed:
+
+- startup is rejected;
+- guarded submission rejects new autonomous orders;
+- an already-running loop continues market/broker observation and reconciliation;
+- strategy and protection evaluation are skipped;
+- no automatic liquidation is fabricated.
+
+This is an emergency pause, not an automatic flatten-position instruction.
+
+### Broker capability readiness
+
+Required autonomous capabilities are:
+
+- market orders;
+- quotes;
+- order status;
+- open orders;
+- positions.
+
+Cancellation is currently a warning rather than a universal hard gate because broker support differs. This limitation must remain visible in sandbox certification.
+
+### Credentials
+
+Credential precedence is:
+
+1. environment variable;
+2. OS credential store;
+3. legacy SQLite value during migration compatibility.
+
+New plaintext credential writes to SQLite are rejected. Legacy credentials can be explicitly migrated to the secure store and are deleted from SQLite only after successful write-and-readback verification.
+
+## Research integrity
+
+Backtests and optimization are research evidence, not profitability claims.
+
+Current controls include deterministic accounting, fees/slippage, delayed risk exits, terminal liquidation, out-of-sample evaluation, rolling evaluation and walk-forward parameter selection. Remaining statistical and market-realism limitations must be considered before capital allocation.
 
 ## Development gates
 
-- **Gate A — deterministic research:** reproducible datasets, strategies, costs and metrics.
-- **Gate B — safe strategy runtime:** generated strategies cannot execute arbitrary host operations.
-- **Gate C — trustworthy backtests:** bias tests, execution timing, accounting and out-of-sample validation.
-- **Gate D — realistic paper trading:** portfolio cash, positions, fills, rejects, reconciliation and risk limits.
-- **Gate E — broker sandbox:** exchange/broker test environments with no meaningful capital.
-- **Gate F — controlled live pilot:** only after explicit review, hard limits and a kill switch.
+- **Gate A — deterministic research**
+- **Gate B — safe strategy representation/runtime**
+- **Gate C — trustworthy backtesting and OOS evidence**
+- **Gate D — realistic paper trading and persistent risk controls**
+- **Gate E — broker sandbox operational readiness**
+- **Gate F — controlled small-capital live pilot**
+- **Gate G — continually evaluated adaptive operation**
 
-Until Gates A-E are satisfied, live trading should remain disabled.
+Passing a software gate means the implementation and tests satisfy the stated engineering controls. It does not imply strategy profitability or eliminate market/broker risk.
 
+## Current deployment classification
 
-## Credential and broker-environment hardening
+Appropriate now:
 
-Credential storage and broker environment selection are separate concerns.
+- local research;
+- strategy development;
+- backtesting and optimization;
+- paper trading;
+- broker sandbox/test-environment validation.
 
-- New credentials are written to the operating-system credential store through `core/credential_provider.py`.
-- Environment variables remain the highest-precedence runtime credential source.
-- Legacy SQLite credentials remain readable only for backward compatibility; new plaintext writes are rejected.
-- `POST /api/settings/migrate-credentials` performs an explicit legacy migration. Each legacy secret is written to the OS store and read back for exact verification before its SQLite copy is eligible for deletion.
-- A secure-store write or verification failure fails closed and leaves the legacy SQLite copy intact.
-- Credential-presence reporting exposes booleans only, never secret values.
-- Binance `live/testnet` and Bitget `live/demo` selections are ordinary settings, not credentials. Existing `binance_testnet` and `bitget_demo` legacy flags are migrated into dedicated settings columns and removed from the legacy credential object.
-- The frontend changes broker environments by posting only the relevant environment field; it no longer round-trips the credential dictionary.
+Still gated:
 
-### Credential resolution order
+- arbitrary third-party Python strategy execution;
+- meaningful-capital autonomous live trading;
+- unattended production deployment;
+- any claim of expected profitability.
 
-1. Environment variable.
-2. OS credential store.
-3. Legacy SQLite value during migration compatibility.
-
-### Migration invariant
-
-A legacy secret must never be deleted merely because another credential source exists. Deletion is permitted only after the OS credential-store write has succeeded and the stored value has been read back and verified.
-
-### Validation status
-
-The credential/environment hardening slice is covered by database persistence, migration, cleanup, secure-store failure, presence-reporting, API, frontend test, TypeScript-build, and production-build checks. CI run #274 passed both backend and frontend jobs.
+See `docs/V5_SANDBOX_READINESS.md` for the current operational-readiness checklist.
