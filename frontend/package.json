@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "electron:dev": "cross-env NODE_ENV=development concurrently -k \"vite\" \"wait-on tcp:5173 && npx electron .\"",
     "electron:build": "tsc -b && vite build && electron-builder",
-    "test": "vitest run"
+    "test": "vitest run && node --test electron/*.node.cjs"
   },
   "dependencies": {
     "@xyflow/react": "^12.10.1",
