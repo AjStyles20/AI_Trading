@@ -116,6 +116,7 @@ class BrokerClient(ABC):
         asset_type: str,
         settings: Dict[str, Any],
         execution_mode: str,
+        reference_price: float | None = None,
     ) -> BrokerQuote:
         raise ValueError(f"{self.display_name} does not provide a certified broker quote.")
 
