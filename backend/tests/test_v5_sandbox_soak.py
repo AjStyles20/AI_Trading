@@ -154,3 +154,141 @@ def test_sandbox_soak_rejects_regressive_fill_without_persisting(monkeypatch):
         raise AssertionError("Regressive cumulative fill must fail closed.")
 
     assert persisted == []
+
+
+def test_protection_quote_failure_blocks_strategy_for_that_poll(monkeypatch):
+    import pandas as pd
+    import backend.trading_api as trading_api
+    from core.position_ledger import ConfirmedPosition
+
+    manager = trading_api.LiveTradingManager()
+    manager.is_running = True
+    manager.recovery_verified = True
+    manager.config = {
+        "symbol": "BTC/USDT",
+        "asset_type": "crypto",
+        "interval": "1h",
+        "broker_id": "sandbox",
+        "execution_mode": "live",
+        "strategy_code": "def strategy(df): return df",
+    }
+    frame = pd.DataFrame(
+        {"open": [98.0], "high": [98.5], "low": [97.0], "close": [97.5], "volume": [10.0]},
+        index=pd.DatetimeIndex([pd.Timestamp("2026-09-27T12:00:00Z")]),
+    )
+    calls = {"strategy": 0, "submit": 0}
+
+    class Broker:
+        display_name = "Sandbox"
+        supported_asset_types = {"crypto"}
+
+        def get_quote(self, *args, **kwargs):
+            raise ValueError("quote unavailable")
+
+    monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: Broker())
+    monkeypatch.setattr(trading_api.market_data, "get_crypto_data", lambda *args, **kwargs: frame.copy())
+    monkeypatch.setattr(trading_api.market_data, "assert_fresh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(trading_api.market_data, "get_completed_candles", lambda df, interval: df)
+    monkeypatch.setattr(trading_api, "get_settings", lambda: {"autonomy_kill_switch": False})
+    monkeypatch.setattr(trading_api, "get_trades_for_scope", lambda *args: [])
+    monkeypatch.setattr(trading_api, "reconcile_unresolved_orders", lambda *args, **kwargs: [])
+    monkeypatch.setattr(trading_api, "has_unresolved_order", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        trading_api,
+        "reconstruct_confirmed_position",
+        lambda *args, **kwargs: ConfirmedPosition(
+            symbol="BTC/USDT", broker_id="sandbox", execution_mode="live",
+            qty=1.0, average_entry_price=100.0, cost_basis=100.0,
+            stop_loss_pct=2.0, take_profit_pct=4.0,
+        ),
+    )
+    monkeypatch.setattr(
+        trading_api,
+        "get_risk_context",
+        lambda *args, **kwargs: (1000.0, 1.0, 1000.0, 1000.0),
+    )
+
+    def evaluate(*args, **kwargs):
+        calls["strategy"] += 1
+        return frame.assign(signal=-1)
+
+    def submit(**kwargs):
+        calls["submit"] += 1
+        raise AssertionError("no order should submit when protective quote acquisition fails")
+
+    monkeypatch.setattr(trading_api.trading_engine, "evaluate_strategy", evaluate)
+    monkeypatch.setattr(trading_api, "submit_guarded_order", submit)
+
+    async def stop_after_sleep(seconds):
+        manager.is_running = False
+
+    monkeypatch.setattr(trading_api.asyncio, "sleep", stop_after_sleep)
+    import asyncio
+    asyncio.run(manager.run_loop())
+
+    assert calls == {"strategy": 0, "submit": 0}
+    assert any("PROTECTION ORDER BLOCKED: quote unavailable" in entry for entry in manager.logs)
+
+
+def test_restart_recovery_blocks_on_unresolved_partial_fill(monkeypatch):
+    import backend.trading_api as trading_api
+    from core.position_ledger import ConfirmedPosition
+
+    class Broker:
+        broker_id = "sandbox"
+        display_name = "Sandbox"
+        supports_live = True
+        supported_asset_types = ("crypto",)
+
+        def get_account_summary(self, settings, execution_mode):
+            return {"can_trade": True, "equity": 1000.0, "positions": [{"symbol": "BTC/USDT", "qty": 0.4}]}
+
+        def get_status(self, settings):
+            return {
+                "configured": True,
+                "supports_live": True,
+                "supported_asset_types": ["crypto"],
+                "capabilities": {
+                    "market_orders": True,
+                    "quotes": True,
+                    "order_status": True,
+                    "open_orders": True,
+                    "positions": True,
+                    "cancellation": True,
+                },
+            }
+
+        def validate_order(self, order, execution_mode, settings):
+            return {"ok": True, "normalized_qty": order.qty}
+
+    partial = [{
+        "id": 77, "symbol": "BTC/USDT", "side": "BUY",
+        "broker_id": "sandbox", "execution_mode": "live",
+        "order_status": "partially_filled", "requested_qty": 1.0,
+        "filled_qty": 0.4, "filled_price": 100.0, "metadata": {},
+        "is_test": False,
+    }]
+
+    broker = Broker()
+    monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: broker)
+    monkeypatch.setattr(trading_api, "resolve_market_price", lambda *args: 100.0)
+    monkeypatch.setattr(trading_api, "get_risk_context", lambda *args, **kwargs: (1000.0, 0.4, 1000.0, 1000.0))
+    monkeypatch.setattr(trading_api, "get_trades_for_scope", lambda *args: partial)
+    monkeypatch.setattr(trading_api, "reconcile_unresolved_orders", lambda trades, *args, **kwargs: trades)
+    monkeypatch.setattr(
+        trading_api,
+        "reconstruct_confirmed_position",
+        lambda *args, **kwargs: ConfirmedPosition(
+            symbol="BTC/USDT", broker_id="sandbox", execution_mode="live",
+            qty=0.4, average_entry_price=100.0, cost_basis=40.0,
+            stop_loss_pct=None, take_profit_pct=None,
+        ),
+    )
+    monkeypatch.setattr(trading_api.risk_engine, "evaluate_order", lambda **kwargs: type("Risk", (), {"as_dict": lambda self: {"approved": True}})())
+
+    result = trading_api.build_autonomous_readiness(
+        "BTC/USDT", "crypto", "sandbox", "live", {}
+    )
+
+    assert result["readiness"]["ready"] is False
+    assert any("unresolved prior order" in reason for reason in result["readiness"]["reasons"])
