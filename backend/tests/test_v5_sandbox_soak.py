@@ -258,6 +258,15 @@ def test_restart_recovery_blocks_on_unresolved_partial_fill(monkeypatch):
                 },
             }
 
+        def get_quote(self, symbol, asset_type, settings, execution_mode, reference_price=None):
+            from backend.broker_integration.base import BrokerQuote
+            price = float(reference_price or 100.0)
+            return BrokerQuote(
+                broker_id="sandbox", symbol=symbol,
+                bid=price - 0.5, ask=price + 0.5, last=price,
+                timestamp="2026-09-28T00:00:00Z", source="sandbox:recovery_quote",
+            )
+
         def validate_order(self, order, execution_mode, settings):
             return {"ok": True, "normalized_qty": order.qty}
 
