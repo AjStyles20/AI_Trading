@@ -361,3 +361,70 @@ def test_mid_session_kill_switch_activation_enters_reconcile_only_mode(monkeypat
     assert calls["strategy"] == 1
     assert calls["submit"] == 0
     assert any("AUTONOMY PAUSED: kill switch is armed" in entry for entry in manager.logs)
+
+
+def test_normal_strategy_order_uses_broker_quote_not_candle_close(monkeypatch):
+    import pandas as pd
+    import backend.trading_api as trading_api
+    from backend.broker_integration.base import BrokerExecutionResult, BrokerQuote
+
+    manager = trading_api.LiveTradingManager()
+    manager.is_running = True
+    manager.recovery_verified = True
+    manager.config = {
+        "symbol": "BTC/USDT", "asset_type": "crypto", "interval": "1h",
+        "broker_id": "sandbox", "execution_mode": "live",
+        "strategy_code": "def strategy(df): return df",
+    }
+    frame = pd.DataFrame(
+        {"open": [100.0], "high": [101.0], "low": [99.0], "close": [100.0], "volume": [10.0]},
+        index=pd.DatetimeIndex([pd.Timestamp("2026-09-28T00:00:00Z")]),
+    )
+    submitted = []
+
+    class Broker:
+        display_name = "Sandbox"
+        supported_asset_types = {"crypto"}
+
+        def get_quote(self, symbol, asset_type, settings, execution_mode, reference_price=None):
+            assert reference_price == 100.0
+            return BrokerQuote(
+                broker_id="sandbox", symbol=symbol,
+                bid=99.5, ask=101.5, last=100.5,
+                timestamp="2026-09-28T00:00:01Z", source="sandbox:test_quote",
+            )
+
+    monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: Broker())
+    monkeypatch.setattr(trading_api.market_data, "get_crypto_data", lambda *args, **kwargs: frame.copy())
+    monkeypatch.setattr(trading_api.market_data, "assert_fresh", lambda *args, **kwargs: None)
+    monkeypatch.setattr(trading_api.market_data, "get_completed_candles", lambda df, interval: df)
+    monkeypatch.setattr(trading_api, "get_settings", lambda: {"autonomy_kill_switch": False})
+    monkeypatch.setattr(trading_api, "get_trades_for_scope", lambda *args: [])
+    monkeypatch.setattr(trading_api, "reconcile_unresolved_orders", lambda *args, **kwargs: [])
+    monkeypatch.setattr(trading_api, "has_unresolved_order", lambda *args, **kwargs: False)
+    monkeypatch.setattr(trading_api.trading_engine, "evaluate_strategy", lambda *args: frame.assign(signal=1, order_qty=1.0))
+    monkeypatch.setattr(trading_api.trading_engine, "get_signal", lambda df: "BUY")
+    monkeypatch.setattr(trading_api, "get_risk_context", lambda *args, **kwargs: (1000.0, 0.0, 1000.0, 1000.0))
+    monkeypatch.setattr(trading_api, "resolve_strategy_quantity", lambda *args, **kwargs: 1.0)
+
+    def submit(**kwargs):
+        submitted.append(kwargs["order"])
+        return BrokerExecutionResult(
+            broker_id="sandbox", execution_mode="live", status="submitted",
+            message="submitted", filled_qty=0.0, filled_price=0.0, metadata={},
+        )
+
+    monkeypatch.setattr(trading_api, "submit_guarded_order", submit)
+
+    async def stop_after_sleep(seconds):
+        manager.is_running = False
+
+    monkeypatch.setattr(trading_api.asyncio, "sleep", stop_after_sleep)
+    import asyncio
+    asyncio.run(manager.run_loop())
+
+    assert len(submitted) == 1
+    order = submitted[0]
+    assert order.price == 101.5
+    assert order.metadata["signal_observation_price"] == 100.0
+    assert order.metadata["execution_quote_source"] == "sandbox:test_quote"
