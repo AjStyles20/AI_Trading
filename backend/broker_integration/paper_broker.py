@@ -47,18 +47,31 @@ class PaperBroker(BrokerClient):
             save_paper_account_state(self._snapshot())
             clear_risk_equity_state(self.broker_id, "paper")
 
-    def get_quote(self, symbol: str, asset_type: str, settings: dict, execution_mode: str) -> BrokerQuote:
+    def get_quote(
+        self,
+        symbol: str,
+        asset_type: str,
+        settings: dict,
+        execution_mode: str,
+        reference_price: float | None = None,
+    ) -> BrokerQuote:
         with self._lock:
-            price = float(self.last_prices.get(symbol, 0.0) or 0.0)
+            persisted_price = float(self.last_prices.get(symbol, 0.0) or 0.0)
+        price = float(reference_price) if reference_price is not None else persisted_price
         if price <= 0:
             raise ValueError(
-                f"Paper broker has no simulated market price for {symbol}; "
+                f"Paper broker has no valid simulated market reference for {symbol}; "
                 "a paper quote cannot be fabricated."
             )
+        source = (
+            "paper:completed_candle_reference"
+            if reference_price is not None
+            else "paper:persisted_last_execution_price"
+        )
         return BrokerQuote(
             broker_id=self.broker_id, symbol=symbol,
             bid=price, ask=price, last=price, timestamp=None,
-            source="paper:persisted_last_execution_price",
+            source=source,
         )
 
     def get_account_summary(self, settings: dict, execution_mode: str) -> dict:
