@@ -4,7 +4,7 @@ from collections import defaultdict
 from threading import Lock
 from uuid import uuid4
 
-from .base import BrokerClient, BrokerExecutionResult, BrokerOrder
+from .base import BrokerClient, BrokerExecutionResult, BrokerOrder, BrokerQuote
 from database.sqlite_manager import clear_risk_equity_state, get_paper_account_state, save_paper_account_state
 
 
@@ -46,6 +46,33 @@ class PaperBroker(BrokerClient):
             self.last_prices.clear()
             save_paper_account_state(self._snapshot())
             clear_risk_equity_state(self.broker_id, "paper")
+
+    def get_quote(
+        self,
+        symbol: str,
+        asset_type: str,
+        settings: dict,
+        execution_mode: str,
+        reference_price: float | None = None,
+    ) -> BrokerQuote:
+        with self._lock:
+            persisted_price = float(self.last_prices.get(symbol, 0.0) or 0.0)
+        price = float(reference_price) if reference_price is not None else persisted_price
+        if price <= 0:
+            raise ValueError(
+                f"Paper broker has no valid simulated market reference for {symbol}; "
+                "a paper quote cannot be fabricated."
+            )
+        source = (
+            "paper:completed_candle_reference"
+            if reference_price is not None
+            else "paper:persisted_last_execution_price"
+        )
+        return BrokerQuote(
+            broker_id=self.broker_id, symbol=symbol,
+            bid=price, ask=price, last=price, timestamp=None,
+            source=source,
+        )
 
     def get_account_summary(self, settings: dict, execution_mode: str) -> dict:
         with self._lock:

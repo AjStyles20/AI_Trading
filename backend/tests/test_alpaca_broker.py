@@ -83,3 +83,33 @@ def test_alpaca_cancel_requires_reconciliation(monkeypatch):
     assert result["broker_order_id"] == "order-123"
     assert result["metadata"]["executed_qty"] == 0.4
     assert "reconciliation" in result["message"].lower()
+
+
+def test_alpaca_quote_maps_latest_stock_quote(monkeypatch):
+    import json
+    from contextlib import contextmanager
+
+    broker = AlpacaBroker()
+    monkeypatch.setattr(broker, "_get_credentials", lambda settings, execution_mode: ("key", "secret"))
+
+    class Response:
+        def read(self):
+            return json.dumps({
+                "quote": {"bp": 199.25, "ap": 200.75, "t": "2026-09-27T12:00:00Z"}
+            }).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda request, timeout=15: Response())
+
+    quote = broker.get_quote("AAPL", "stock", {}, "paper")
+
+    assert quote.bid == 199.25
+    assert quote.ask == 200.75
+    assert quote.timestamp == "2026-09-27T12:00:00Z"
+    assert quote.execution_reference("BUY") == 200.75
+    assert quote.execution_reference("SELL") == 199.25

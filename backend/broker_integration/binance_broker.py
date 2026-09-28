@@ -9,7 +9,7 @@ import urllib.parse
 import urllib.request
 from decimal import Decimal, ROUND_DOWN
 
-from .base import BrokerClient, BrokerExecutionResult, BrokerOrder
+from .base import BrokerClient, BrokerExecutionResult, BrokerOrder, BrokerQuote
 from core.credential_provider import resolve_api_keys
 
 
@@ -134,6 +134,32 @@ class BinanceBroker(BrokerClient):
             raise ValueError(f"Binance API error ({exc.code}): {error_body}") from exc
         except urllib.error.URLError as exc:
             raise ValueError(f"Binance network error: {exc.reason}") from exc
+
+    def get_quote(
+        self,
+        symbol: str,
+        asset_type: str,
+        settings: dict,
+        execution_mode: str,
+        reference_price: float | None = None,
+    ) -> BrokerQuote:
+        if asset_type != "crypto":
+            raise ValueError("Binance quote adapter supports crypto only.")
+        normalized = self._normalize_symbol(symbol)
+        payload = self._public_request("/api/v3/ticker/bookTicker", settings, {"symbol": normalized})
+        bid = float(payload.get("bidPrice", 0) or 0)
+        ask = float(payload.get("askPrice", 0) or 0)
+        if bid <= 0 or ask <= 0:
+            raise ValueError(f"Binance returned an invalid quote for {normalized}.")
+        return BrokerQuote(
+            broker_id=self.broker_id,
+            symbol=symbol,
+            bid=bid,
+            ask=ask,
+            last=None,
+            timestamp=None,
+            source=f"binance:{self._get_environment_label(settings)}:bookTicker",
+        )
 
     def get_account_summary(self, settings: dict, execution_mode: str) -> dict:
         if execution_mode == "paper":

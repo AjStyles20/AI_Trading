@@ -1,65 +1,148 @@
 # Astral AI Trading
 
-Astral AI Trading is a personal, AI-assisted quantitative trading workstation. It combines a React/Electron desktop interface with a FastAPI backend for market data, strategy generation, validation, backtesting, optimization, paper trading, and broker integrations.
+Astral AI Trading is a personal, AI-assisted quantitative trading workstation built around a React/Electron desktop client, FastAPI backend, deterministic research tools, a broker-neutral execution layer, and fail-closed risk controls.
 
-> **Current maturity:** research / paper-trading software. Live broker adapters exist, but live execution must not be treated as production-ready.
+> **Current maturity:** research, backtesting, optimization, paper trading, and broker-sandbox readiness. Live-capable adapters exist, but meaningful-capital autonomous live deployment remains gated.
 
 ## Architecture
 
 - **frontend/** — React + TypeScript + Electron desktop UI
-- **backend/** — FastAPI API, AI assistant, strategy APIs, broker adapters
-- **core/** — market data, indicators, validation, backtesting, optimization, trading and risk logic
-- **database/** — SQLite persistence and vector storage
-- **scripts/** — development and API test utilities
+- **backend/** — FastAPI APIs, AI assistant, broker adapters, trading runtime
+- **core/** — market data, indicators, safe/declarative strategy execution, backtesting, optimization, research evaluation, risk, position ledger/protection, autonomy readiness
+- **database/** — SQLite persistence for settings, trades, paper-account state and risk state
+- **docs/** — safety, readiness and operating documentation
+- **scripts/** — development and test utilities
 
-The intended execution pipeline is:
+The autonomous execution pipeline is:
 
 ```
-Market data -> Strategy -> Validation -> Signal -> Risk engine
-            -> Broker validation -> Paper/live execution -> Trade journal
+completed market candle
+        ↓
+strategy / protection decision
+        ↓
+selected broker quote
+        ↓
+central risk + broker validation
+        ↓
+persistent kill-switch recheck
+        ↓
+broker submission
+        ↓
+order-status reconciliation
+        ↓
+confirmed fills
+        ↓
+persistent position ledger
+        ↓
+broker-position drift verification
 ```
+
+A completed candle is an **observation/decision input**. The selected broker quote is the **execution reference**. The broker-confirmed fill is the **accounting truth**.
+
+## Broker-neutral execution
+
+Current adapters:
+
+- Paper
+- Binance
+- Bitget
+- Alpaca
+
+Broker-specific behavior is isolated behind the common broker contract. Autonomous readiness requires market-order, quote, order-status, open-order and position capabilities. Missing order cancellation is surfaced as a warning rather than silently claimed.
+
+Adding another broker or exchange does not require changing the product architecture, but the adapter must provide the required lifecycle and pricing capabilities before autonomous readiness can pass.
 
 ## Safety model
 
-Paper trading is the default. The central risk engine rejects invalid orders, enforces a maximum order notional, and keeps live trading locked unless it is explicitly enabled in settings. Broker-side validation remains mandatory after risk approval.
+Paper trading remains the default.
 
-Generated strategy code is currently Python and is therefore considered **untrusted**. The existing validator checks strategy output shape, but Python execution is not yet sandboxed. Do not run strategy code from untrusted third parties.
+The runtime includes:
+
+- central pre-trade risk checks;
+- live-trading opt-in;
+- maximum order notional and position sizing limits;
+- daily-loss and drawdown controls;
+- persistent autonomy kill switch, default armed;
+- fail-closed startup recovery verification;
+- full scoped trade reconciliation before strategy execution;
+- unresolved-order blocking;
+- confirmed-fill position reconstruction;
+- broker/ledger position-drift blocking;
+- completed-candle decision boundaries;
+- broker-specific execution references;
+- monotonic cumulative-fill reconciliation;
+- stop-loss / take-profit position protection;
+- no-pyramiding long-position semantics;
+- persistent paper-account state;
+- OS credential-store integration with legacy SQLite migration support.
+
+When the kill switch is armed, the autonomous loop remains alive only to observe and reconcile broker state. It does **not** create protective, strategy or liquidation orders automatically.
+
+## Strategy execution
+
+The preferred strategy format is declarative. Legacy Python strategies use the restricted in-process runtime and are treated as trusted/application-generated code only.
+
+The restricted Python runtime is **not an operating-system sandbox**. Do not execute arbitrary third-party Python strategies.
+
+## Research and backtesting
+
+Astral includes:
+
+- deterministic backtesting;
+- fees/slippage handling;
+- next-bar risk-exit semantics;
+- terminal liquidation;
+- out-of-sample evaluation;
+- rolling fixed-strategy OOS evaluation;
+- walk-forward parameter selection using past-only data;
+- research scoring and evidence warnings;
+- strategy optimization and validation.
+
+No backtest, optimizer score or AI output establishes future profitability.
 
 ## Development
 
-Backend dependencies are in `backend/requirements.txt`. Frontend dependencies and scripts are in `frontend/package.json`.
-
-Typical backend startup:
+Backend:
 
 ```bash
-pip install -r backend/requirements.txt
+pip install -r backend/requirements.txt -r backend/requirements-test.txt
 python backend/main.py
 ```
 
-Typical frontend startup:
+Frontend:
 
 ```bash
 cd frontend
-npm install
+npm ci --legacy-peer-deps
 npm run dev
 ```
 
-Run backend tests with:
+Tests:
 
 ```bash
-pytest backend/tests
+pytest backend/tests -q
+cd frontend
+npm test -- --run
+npm run build
 ```
 
-## Roadmap
+GitHub Actions runs both backend and frontend validation on pushes and pull requests.
 
-1. Establish deterministic tests and CI.
-2. Put all execution paths behind the central risk engine.
-3. Replace arbitrary generated-Python execution with a restricted strategy representation or hardened sandbox.
-4. Strengthen the backtester: execution timing, fees/slippage, risk exits, benchmark metrics, and bias tests.
-5. Add walk-forward/out-of-sample evaluation and experiment persistence.
-6. Improve paper-account realism and reconciliation.
-7. Permit controlled live execution only after the preceding gates pass.
+## Maturity gates
+
+- **V0 — AI-assisted strategy workstation:** completed
+- **V1 — safe strategy research platform:** completed
+- **V2 — reproducible quantitative research engine:** substantially completed
+- **V3 — AI analyst / regime-aware research:** partial
+- **V4 — portfolio/risk-aware paper trader:** substantially completed
+- **V5 — broker sandbox readiness:** current hardening milestone
+- **V6 — controlled small-capital live pilot:** gated
+- **V7 — continually evaluated adaptive trading agent:** future
+
+Real-money autonomous deployment requires explicit review after broker sandbox testing, operational incident procedures, extended soak evidence and hard capital limits.
+
+See `docs/V5_SANDBOX_READINESS.md` and `docs/SAFETY_BASELINE.md`.
 
 ## Important limitations
 
-This software does not establish that any strategy is profitable. Backtest and optimization output can be misleading if affected by overfitting, look-ahead bias, survivorship bias, poor data, or unrealistic execution assumptions. Treat AI-generated trading ideas as hypotheses to test, not trading instructions.
+Astral is engineering and research software, not evidence that a strategy is profitable. Market data, broker APIs, execution latency, spread, fees, liquidity, outages and strategy overfitting can all materially alter results. AI-generated ideas should be treated as hypotheses to test rather than trading instructions.
