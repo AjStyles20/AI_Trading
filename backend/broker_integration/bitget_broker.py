@@ -144,7 +144,14 @@ class BitgetBroker(BrokerClient):
             and api_keys.get("bitget_passphrase")
         )
 
-    def get_quote(self, symbol: str, asset_type: str, settings: dict, execution_mode: str) -> BrokerQuote:
+    def get_quote(
+        self,
+        symbol: str,
+        asset_type: str,
+        settings: dict,
+        execution_mode: str,
+        reference_price: float | None = None,
+    ) -> BrokerQuote:
         if asset_type != "crypto":
             raise ValueError("Bitget quote adapter supports crypto only.")
         normalized = self._normalize_symbol(symbol)
