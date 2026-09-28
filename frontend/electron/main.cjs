@@ -1,7 +1,14 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, protocol, net } = require('electron');
 const path = require('path');
+const { APP_ORIGIN, createProtocolHandler } = require('./protocol.cjs');
 
 const isDev = process.env.NODE_ENV === 'development';
+if (!isDev) {
+  protocol.registerSchemesAsPrivileged([{
+    scheme: 'astral',
+    privileges: { standard: true, secure: true, supportFetchAPI: true },
+  }]);
+}
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -11,9 +18,9 @@ function createWindow() {
     minHeight: 768,
     title: "Astral AI Desktop",
     webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
     },
   });
 
@@ -22,11 +29,23 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    mainWindow.loadURL(`${APP_ORIGIN}/`);
   }
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (isDev ? !url.startsWith('http://localhost:5173/') : !url.startsWith(`${APP_ORIGIN}/`)) {
+      event.preventDefault();
+    }
+  });
 }
 
 app.whenReady().then(() => {
+  if (!isDev) {
+    protocol.handle('astral', createProtocolHandler({
+      net,
+      distDir: path.join(__dirname, '../dist'),
+    }));
+  }
   createWindow();
 
   app.on('activate', function () {
