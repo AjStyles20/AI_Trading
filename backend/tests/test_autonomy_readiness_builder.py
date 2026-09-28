@@ -35,6 +35,15 @@ class DummyBroker:
             },
         }
 
+    def get_quote(self, symbol, asset_type, settings, execution_mode, reference_price=None):
+        from backend.broker_integration.base import BrokerQuote
+        price = float(reference_price or 100.0)
+        return BrokerQuote(
+            broker_id="dummy", symbol=symbol,
+            bid=price - 1.0, ask=price + 1.0, last=price,
+            timestamp="2026-09-28T00:00:00Z", source="dummy:test_quote",
+        )
+
     def validate_order(self, order, execution_mode, settings):
         return {"ok": False, "reason": "diagnostic reference order rejected"}
 
