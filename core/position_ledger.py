@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Any, Iterable
 
 
@@ -37,7 +38,6 @@ def reconstruct_confirmed_position(
         and trade.get("symbol") == symbol
         and trade.get("broker_id", "paper") == broker_id
         and trade.get("execution_mode", "paper") == execution_mode
-        and float(trade.get("filled_qty") or 0) > 0
     ]
     scoped.sort(key=lambda trade: (str(trade.get("timestamp") or ""), int(trade.get("id") or 0)))
 
@@ -48,17 +48,26 @@ def reconstruct_confirmed_position(
         side = str(trade.get("side", "")).upper()
         qty = float(trade.get("filled_qty") or 0)
         price = float(trade.get("filled_price") or 0)
+        if not math.isfinite(qty) or qty < 0:
+            raise ValueError("Confirmed fill quantity must be finite and nonnegative.")
         if qty <= 0:
             continue
-        if price <= 0:
-            raise ValueError("Confirmed fills require a positive filled_price.")
+        if not math.isfinite(price) or price <= 0:
+            raise ValueError("Confirmed fills require a finite positive filled_price.")
+        requested_raw = trade.get("requested_qty")
+        if requested_raw is None:
+            requested_raw = trade.get("qty")
+        if requested_raw is not None:
+            requested = float(requested_raw)
+            if not math.isfinite(requested) or requested <= 0 or qty > requested + max(1e-12, requested * 1e-8):
+                raise ValueError("Confirmed fill quantity exceeds or invalidates requested quantity.")
 
         if side == "BUY":
             metadata = trade.get("metadata") or {}
             stop_loss_pct = float(metadata.get("stop_loss_pct", 0) or 0)
             take_profit_pct = float(metadata.get("take_profit_pct", 0) or 0)
             for name, value in (("stop_loss_pct", stop_loss_pct), ("take_profit_pct", take_profit_pct)):
-                if value < 0 or value > 100:
+                if not math.isfinite(value) or value < 0 or value > 100:
                     raise ValueError(f"Persisted {name} must be between 0 and 100.")
             lots.append({
                 "qty": qty,
@@ -83,6 +92,8 @@ def reconstruct_confirmed_position(
 
     position_qty = sum(lot["qty"] for lot in lots)
     cost_basis = sum(lot["qty"] * lot["price"] for lot in lots)
+    if not math.isfinite(position_qty) or not math.isfinite(cost_basis):
+        raise ValueError("Confirmed position quantity or cost basis is not finite.")
     average_entry_price = cost_basis / position_qty if position_qty > epsilon else 0.0
 
     protection_pairs = {
