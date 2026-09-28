@@ -264,6 +264,8 @@ class BinanceBroker(BrokerClient):
             "quantity": normalized_qty,
             "newOrderRespType": "FULL",
         }
+        if order.metadata.get("client_order_id"):
+            payload["newClientOrderId"] = order.metadata["client_order_id"]
         response = self._signed_request("POST", "/api/v3/order", payload, settings)
         fills = response.get("fills", [])
         average_fill_price = 0.0
@@ -328,7 +330,8 @@ class BinanceBroker(BrokerClient):
             return super().get_order_status(trade, settings)
 
         broker_order_id = trade.get("broker_order_id")
-        if not broker_order_id:
+        client_order_id = (trade.get("metadata") or {}).get("client_order_id")
+        if not broker_order_id and not client_order_id:
             return super().get_order_status(trade, settings)
 
         response = self._signed_request(
@@ -336,7 +339,7 @@ class BinanceBroker(BrokerClient):
             "/api/v3/order",
             {
                 "symbol": self._normalize_symbol(trade.get("symbol", "")),
-                "orderId": broker_order_id,
+                **({"orderId": broker_order_id} if broker_order_id else {"origClientOrderId": client_order_id}),
             },
             settings,
         )
