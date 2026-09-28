@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import math
 from typing import Any, Dict
 
 
@@ -27,9 +28,11 @@ class BrokerQuote:
 
     def execution_reference(self, side: str) -> float:
         side = str(side).upper()
-        preferred = self.ask if side == "BUY" else self.bid if side == "SELL" else None
-        value = preferred if preferred is not None and preferred > 0 else self.last
-        if value is None or value <= 0:
+        if side not in {"BUY", "SELL"}:
+            raise ValueError(f"Unsupported quote side: {side}.")
+        preferred = self.ask if side == "BUY" else self.bid
+        value = preferred if preferred is not None and math.isfinite(preferred) and preferred > 0 else self.last
+        if value is None or not math.isfinite(value) or value <= 0:
             raise ValueError(f"{self.broker_id} quote has no valid execution reference for {side}.")
         return float(value)
 

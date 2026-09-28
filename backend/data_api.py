@@ -36,12 +36,12 @@ def get_history(request: DataRequest):
         else:
             raise ValueError("asset_type must be stock or crypto")
         
-        # Convert index to UTC Unix milliseconds for unambiguous frontend parsing.
-        # numpy int64 on a DatetimeIndex gives nanoseconds since epoch; divide by 10^6 for ms.
-        import numpy as np
+        # Pandas 3 may store the index in seconds, while earlier versions
+        # commonly use nanoseconds. Convert the unit explicitly before exposing
+        # Unix milliseconds to the frontend.
         if hasattr(df.index, 'tz') and df.index.tz is not None:
             df.index = df.index.tz_convert('UTC').tz_localize(None)
-        df.index = df.index.view(np.int64) // 10**6  # nanoseconds -> milliseconds
+        df.index = df.index.as_unit("ms").asi8
         df.index.name = 'timestamp'
         return df.reset_index().to_dict(orient="records")
     except MarketDataError as e:

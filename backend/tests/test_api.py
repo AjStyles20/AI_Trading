@@ -2,11 +2,13 @@ from fastapi.testclient import TestClient
 import pytest
 import sys
 import os
+import pandas as pd
 
 # Add backend directory to sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from main import app
+import data_api
 
 client = TestClient(app)
 
@@ -21,7 +23,15 @@ def test_get_settings():
     data = response.json()
     assert "theme" in data
 
-def test_market_history_crypto():
+def _history_frame():
+    return pd.DataFrame(
+        {"open": [100.0], "high": [102.0], "low": [99.0], "close": [101.0], "volume": [5.0]},
+        index=pd.DatetimeIndex(["2026-09-27T00:00:00Z"], name="timestamp"),
+    )
+
+
+def test_market_history_crypto(monkeypatch):
+    monkeypatch.setattr(data_api.market_data, "get_crypto_data", lambda *args, **kwargs: _history_frame())
     payload = {
         "symbol": "BTC/USDT",
         "asset_type": "crypto",
@@ -34,9 +44,10 @@ def test_market_history_crypto():
     data = response.json()
     assert isinstance(data, list)
     if len(data) > 0:
-        assert "timestamp" in data[0]
+        assert data[0]["timestamp"] == 1790467200000
 
-def test_market_history_stock():
+def test_market_history_stock(monkeypatch):
+    monkeypatch.setattr(data_api.market_data, "get_stock_data", lambda *args, **kwargs: _history_frame())
     payload = {
         "symbol": "AAPL",
         "asset_type": "stock",
@@ -47,6 +58,7 @@ def test_market_history_stock():
     assert response.status_code == 200, response.text
     data = response.json()
     assert isinstance(data, list)
+    assert data[0]["close"] == 101.0
 
 def test_backtest_execution():
     strategy_code = """

@@ -1,4 +1,5 @@
 from core.risk_engine import RiskEngine
+import pytest
 
 
 def test_paper_order_within_limit_is_approved():
@@ -119,3 +120,38 @@ def test_loss_limits_allow_order_below_thresholds():
         peak_equity=1000,
     )
     assert decision.approved
+
+
+@pytest.mark.parametrize("field", ["qty", "price"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_nonfinite_order_inputs_cannot_bypass_risk(field, value):
+    inputs = dict(side="BUY", qty=1.0, price=100.0, execution_mode="paper")
+    inputs[field] = value
+    decision = RiskEngine().evaluate_order(**inputs)
+    assert not decision.approved
+    assert "finite" in " ".join(decision.reasons)
+
+
+@pytest.mark.parametrize("setting", ["risk_max_order_notional", "risk_max_position_pct", "risk_max_daily_loss_pct", "risk_max_drawdown_pct"])
+def test_nonfinite_risk_limits_fail_closed(setting):
+    decision = RiskEngine().evaluate_order(
+        side="BUY", qty=1.0, price=100.0, execution_mode="paper",
+        settings={setting: float("nan")}, account_equity=1000.0,
+    )
+    assert not decision.approved
+
+
+def test_nonfinite_equity_and_position_fail_closed():
+    decision = RiskEngine().evaluate_order(
+        side="SELL", qty=1.0, price=100.0, execution_mode="paper",
+        account_equity=float("nan"), current_position_qty=float("nan"),
+        day_start_equity=float("nan"), peak_equity=float("nan"),
+    )
+    assert not decision.approved
+
+
+def test_notional_overflow_fails_closed():
+    decision = RiskEngine().evaluate_order(
+        side="BUY", qty=1e200, price=1e200, execution_mode="paper",
+    )
+    assert not decision.approved

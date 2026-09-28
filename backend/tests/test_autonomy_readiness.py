@@ -1,4 +1,5 @@
 from core.autonomy_readiness import evaluate_autonomous_readiness
+import pytest
 
 
 def _status(**overrides):
@@ -123,3 +124,24 @@ def test_readiness_fails_without_broker_quote_capability():
 
     assert decision.ready is False
     assert any("quotes" in reason for reason in decision.reasons)
+
+
+@pytest.mark.parametrize("quantity", [float("nan"), float("inf"), -1.0])
+def test_readiness_rejects_invalid_broker_position(quantity):
+    decision = evaluate_autonomous_readiness(
+        broker_status=_status(), account={"can_trade": True},
+        execution_mode="paper", asset_type="crypto", unresolved_order=False,
+        ledger_position_qty=0.0, broker_position_qty=quantity,
+        risk_approved=True, broker_validation_ok=True,
+    )
+    assert not decision.ready
+
+
+def test_readiness_rejects_nonfinite_ledger_position():
+    decision = evaluate_autonomous_readiness(
+        broker_status=_status(), account={"can_trade": True},
+        execution_mode="paper", asset_type="crypto", unresolved_order=False,
+        ledger_position_qty=float("nan"), broker_position_qty=0.0,
+        risk_approved=True, broker_validation_ok=True,
+    )
+    assert not decision.ready

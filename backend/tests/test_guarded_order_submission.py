@@ -84,6 +84,34 @@ def test_guarded_submission_rejects_nonpositive_normalized_quantity(monkeypatch)
         call(broker, item)
 
 
+@pytest.mark.parametrize("normalized", [float("nan"), float("inf"), 11.0])
+def test_guarded_submission_rejects_invalid_or_risk_exceeding_broker_quantity(monkeypatch, normalized):
+    item = order()
+    broker = SimpleNamespace(
+        validate_order=lambda *args, **kwargs: {"ok": True, "normalized_qty": normalized},
+        execute_order=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not execute")),
+    )
+    monkeypatch.setattr(trading_api, "get_settings", lambda: {"autonomy_kill_switch": False})
+    monkeypatch.setattr(trading_api, "record_trade", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not persist")))
+    with pytest.raises(ValueError, match="Broker-normalized|RISK BLOCKED BROKER-NORMALIZED"):
+        trading_api.submit_guarded_order(
+            broker=broker, order=item, settings={"risk_max_order_notional": 1000},
+            execution_mode="paper", broker_id="paper", account_equity=1000.0,
+            current_position_qty=0.0, day_start_equity=1000.0, peak_equity=1000.0,
+        )
+
+
+def test_quote_rejects_nonfinite_and_invalid_side():
+    from backend.broker_integration.base import BrokerQuote
+
+    quote = BrokerQuote("venue", "BTC/USDT", bid=float("nan"), ask=float("inf"),
+                        last=float("nan"), timestamp=None, source="test")
+    with pytest.raises(ValueError, match="no valid execution reference"):
+        quote.execution_reference("BUY")
+    with pytest.raises(ValueError, match="Unsupported quote side"):
+        quote.execution_reference("HOLD")
+
+
 def test_guarded_submission_kill_switch_blocks_before_risk_broker_or_persistence(monkeypatch):
     item = order()
     broker = SimpleNamespace(

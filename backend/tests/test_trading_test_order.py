@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-import backend.trading_api as trading_api
 from backend.main import app
+import trading_api
 
 
 client = TestClient(app)

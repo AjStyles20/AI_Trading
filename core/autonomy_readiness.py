@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import Any, Mapping, Sequence
 
 
@@ -79,9 +80,11 @@ def evaluate_autonomous_readiness(
     if not broker_validation_ok:
         reasons.append("Broker validation did not approve the reference order.")
 
-    if broker_position_qty is None:
-        reasons.append("Broker position quantity is unavailable.")
-    else:
+    if not math.isfinite(ledger_position_qty) or ledger_position_qty < 0:
+        reasons.append("Confirmed-fill ledger position quantity is invalid.")
+    if broker_position_qty is None or not math.isfinite(broker_position_qty) or broker_position_qty < 0:
+        reasons.append("Broker position quantity is unavailable or invalid.")
+    elif math.isfinite(ledger_position_qty) and ledger_position_qty >= 0:
         tolerance = max(1e-8, abs(float(ledger_position_qty)) * 1e-6)
         if abs(float(broker_position_qty) - float(ledger_position_qty)) > tolerance:
             reasons.append(
