@@ -107,6 +107,11 @@ The deterministic V5 test matrix includes:
 - broker-specific quote mapping;
 - Paper simulation quote provenance;
 - normal strategy order using broker execution quote rather than candle close.
+- durable submission intent before network I/O, client-ID lookup and
+  no-duplicate blocking after an uncertain outcome.
+
+See `docs/ORDER_SUBMISSION_INCIDENT.md` for the operator procedure and the
+remaining broker-specific evidence requirement.
 
 ## Release gate for this phase
 
