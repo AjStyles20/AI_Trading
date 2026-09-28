@@ -620,7 +620,7 @@ async def test_runtime_submits_guarded_stop_loss_exit_before_strategy_evaluation
         display_name = "Paper"
         supported_asset_types = {"crypto"}
 
-        def get_quote(self, symbol, asset_type, settings, execution_mode):
+        def get_quote(self, symbol, asset_type, settings, execution_mode, reference_price=None):
             from backend.broker_integration.base import BrokerQuote
             return BrokerQuote(
                 broker_id="paper",
