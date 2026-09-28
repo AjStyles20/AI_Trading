@@ -59,16 +59,23 @@ def test_guarded_submission_persists_normalized_requested_and_confirmed_fill(mon
     )
     monkeypatch.setattr(trading_api.risk_engine, "evaluate_order", lambda **kwargs: SimpleNamespace(approved=True, reasons=[]))
     persisted = {}
-    monkeypatch.setattr(trading_api, "record_trade", lambda *args, **kwargs: persisted.update(args=args, kwargs=kwargs))
+    def save_intent(*args, **kwargs):
+        persisted.update(args=args, kwargs=kwargs)
+        return 42
+    monkeypatch.setattr(trading_api, "record_trade", save_intent)
+    monkeypatch.setattr(trading_api, "update_trade_order_state", lambda *args, **kwargs: persisted.update(update_args=args, update_kwargs=kwargs))
 
     result = call(broker, item)
 
     assert result is execution
     assert item.qty == pytest.approx(1.5)
     assert persisted["kwargs"]["requested_qty"] == pytest.approx(1.5)
-    assert persisted["kwargs"]["filled_qty"] == pytest.approx(1.5)
-    assert persisted["kwargs"]["filled_price"] == pytest.approx(101.0)
-    assert persisted["kwargs"]["broker_order_id"] == "p-1"
+    assert persisted["kwargs"]["order_status"] == "submission_pending"
+    assert persisted["kwargs"]["filled_qty"] == 0.0
+    assert persisted["kwargs"]["require_clear_scope"] is True
+    assert persisted["update_args"][:3] == (42, "filled", "p-1")
+    assert persisted["update_kwargs"]["filled_qty"] == pytest.approx(1.5)
+    assert persisted["update_kwargs"]["filled_price"] == pytest.approx(101.0)
 
 
 def test_guarded_submission_rejects_nonpositive_normalized_quantity(monkeypatch):
