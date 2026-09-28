@@ -1,4 +1,5 @@
 import backend.trading_api as trading_api
+import pytest
 
 
 def _base_sell_trade():
@@ -154,6 +155,35 @@ def test_sandbox_soak_rejects_regressive_fill_without_persisting(monkeypatch):
         raise AssertionError("Regressive cumulative fill must fail closed.")
 
     assert persisted == []
+
+
+@pytest.mark.parametrize("fill,price", [
+    (float("nan"), 100.0),
+    (float("inf"), 100.0),
+    (-0.1, 100.0),
+    (1.1, 100.0),
+    (0.5, float("nan")),
+    (0.5, 0.0),
+    (0.0, 0.0),
+])
+def test_invalid_broker_fill_remains_unresolved_and_is_not_persisted(monkeypatch, fill, price):
+    trade = _base_sell_trade()
+
+    class InvalidBroker:
+        def get_order_status(self, trade, settings):
+            return {"order_status": "filled", "filled_qty": fill, "filled_price": price}
+
+    persisted = []
+    monkeypatch.setattr(trading_api.broker_registry, "get", lambda broker_id: InvalidBroker())
+    monkeypatch.setattr(trading_api, "update_trade_order_state", lambda *a, **kw: persisted.append((a, kw)))
+
+    reconciled = trading_api.reconcile_unresolved_orders(
+        [trade], {}, "BTC/USDT", "sandbox", "live",
+    )
+    assert persisted == []
+    assert reconciled[0]["order_status"] == "submitted"
+    assert trading_api.has_unresolved_order(reconciled, "BTC/USDT", "sandbox", "live")
+    assert "status_refresh_error" in reconciled[0]["metadata"]
 
 
 def test_protection_quote_failure_blocks_strategy_for_that_poll(monkeypatch):
