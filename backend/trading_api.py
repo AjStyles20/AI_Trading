@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional
 import asyncio
 import copy
 import math
+from uuid import uuid4
 import sys, os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -639,24 +640,59 @@ def submit_guarded_order(
         raise ValueError(f"RISK BLOCKED BROKER-NORMALIZED ORDER: {'; '.join(normalized_risk.reasons)}")
     order.qty = normalized_qty
 
-    execution = broker.execute_order(order, execution_mode, settings)
-    record_trade(
+    # Commit the intent before the external call. A timeout or process crash
+    # after broker acceptance must leave an unresolved row on restart, so the
+    # strategy cannot submit a second order from the same uncertain outcome.
+    client_order_id = f"astral-{uuid4().hex[:24]}"
+    order.metadata = {**(order.metadata or {}), "client_order_id": client_order_id}
+    trade_id = record_trade(
         order.symbol,
         order.side,
         order.qty,
         order.price,
-        is_paper=execution.execution_mode == "paper",
-        broker_id=execution.broker_id,
-        execution_mode=execution.execution_mode,
-        order_status=execution.status,
+        is_paper=execution_mode == "paper",
+        broker_id=broker_id,
+        execution_mode=execution_mode,
+        order_status="submission_pending",
         order_type="market",
-        broker_order_id=execution.metadata.get("broker_order_id"),
+        broker_order_id=None,
         is_test=False,
-        metadata=execution.metadata,
+        metadata=order.metadata,
         requested_qty=order.qty,
-        filled_qty=execution.filled_qty,
-        filled_price=execution.filled_price,
+        filled_qty=0.0,
+        filled_price=0.0,
+        require_clear_scope=True,
     )
+    if not isinstance(trade_id, int) or trade_id <= 0:
+        raise ValueError("Could not durably record submission intent; broker was not called.")
+
+    try:
+        execution = broker.execute_order(order, execution_mode, settings)
+        if execution.broker_id != broker_id or execution.execution_mode != execution_mode:
+            raise ValueError("Broker result scope differs from submitted order.")
+        filled_qty = float(execution.filled_qty)
+        filled_price = float(execution.filled_price)
+        if not math.isfinite(filled_qty) or filled_qty < 0 or filled_qty > order.qty + max(1e-12, order.qty * 1e-8):
+            raise ValueError("Broker result has invalid filled quantity.")
+        if not math.isfinite(filled_price) or filled_price < 0 or (filled_qty > 0 and filled_price <= 0):
+            raise ValueError("Broker result has invalid filled price.")
+        status = str(execution.status).lower().strip()
+        if not status or (status == "filled" and filled_qty <= 0):
+            raise ValueError("Broker result has no valid confirmed fill status.")
+        if not isinstance(execution.metadata, dict):
+            raise ValueError("Broker result metadata is invalid.")
+        update_trade_order_state(
+            trade_id, status, execution.metadata.get("broker_order_id"),
+            {**order.metadata, **execution.metadata, "client_order_id": client_order_id},
+            filled_qty=filled_qty, filled_price=filled_price,
+        )
+    except Exception as exc:
+        # Keep submission_pending. An exception from a broker call cannot prove
+        # that the order was rejected; retrying the submission could duplicate it.
+        raise ValueError(
+            f"SUBMISSION OUTCOME UNKNOWN for trade {trade_id}; inspect broker order "
+            "history and reconcile before any further autonomous order."
+        ) from exc
     return execution
 
 
