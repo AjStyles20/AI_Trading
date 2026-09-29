@@ -1,8 +1,12 @@
 const { app, BrowserWindow, protocol, net } = require('electron');
+const { dialog } = require('electron');
 const path = require('path');
 const { APP_ORIGIN, createProtocolHandler } = require('./protocol.cjs');
+const { launchBackend } = require('./backend.cjs');
 
 const isDev = process.env.NODE_ENV === 'development';
+let backendChild;
+let desktopToken;
 if (!isDev) {
   protocol.registerSchemesAsPrivileged([{
     scheme: 'astral',
@@ -39,11 +43,36 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
+const hasInstanceLock = app.requestSingleInstanceLock();
+if (!hasInstanceLock) app.quit();
+
+app.whenReady().then(async () => {
+  if (!hasInstanceLock) return;
+  if (app.isPackaged) {
+    try {
+      const started = await launchBackend({
+        resourcesPath: process.resourcesPath,
+        userDataPath: app.getPath('userData'),
+      });
+      backendChild = started.child;
+      desktopToken = started.token;
+      backendChild.once('exit', () => {
+        if (!backendChild.killed) {
+          dialog.showErrorBox('Astral AI backend stopped', 'The backend stopped unexpectedly. See the backend log in the application data folder.');
+          app.quit();
+        }
+      });
+    } catch (error) {
+      dialog.showErrorBox('Astral AI could not start', error.message);
+      app.quit();
+      return;
+    }
+  }
   if (!isDev) {
     protocol.handle('astral', createProtocolHandler({
       net,
       distDir: path.join(__dirname, '../dist'),
+      desktopToken,
     }));
   }
   createWindow();
@@ -51,6 +80,10 @@ app.whenReady().then(() => {
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on('before-quit', () => {
+  if (backendChild && !backendChild.killed) backendChild.kill();
 });
 
 app.on('window-all-closed', function () {

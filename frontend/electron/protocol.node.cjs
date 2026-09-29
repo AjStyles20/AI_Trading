@@ -44,3 +44,17 @@ test('forwards API method and body to loopback and reports an unavailable backen
   });
   assert.equal((await unavailable({ url: 'astral://app/api/settings', method: 'GET', headers: {} })).status, 503);
 });
+
+test('the packaged desktop injects its token and ignores renderer-supplied tokens', async () => {
+  let received;
+  const handler = createProtocolHandler({
+    distDir: '/app/dist',
+    desktopToken: 'private-token',
+    net: { fetch: async (_url, options) => { received = options.headers; return new Response('ok'); } },
+  });
+  await handler({
+    url: 'astral://app/api/settings', method: 'GET',
+    headers: { 'x-astral-desktop-token': 'forged-token' },
+  });
+  assert.equal(received.get('x-astral-desktop-token'), 'private-token');
+});

@@ -42,6 +42,7 @@ DEV_ORIGINS = (
     "http://127.0.0.1:3000",
 )
 ALLOWED_ORIGINS = frozenset((*DEV_ORIGINS, "http://127.0.0.1:8000", "http://localhost:8000"))
+DESKTOP_TOKEN = os.environ.get("ASTRAL_DESKTOP_TOKEN")
 
 app.add_middleware(
     CORSMiddleware,
@@ -55,6 +56,11 @@ app.add_middleware(
 
 @app.middleware("http")
 async def reject_untrusted_browser_requests(request, call_next):
+    if DESKTOP_TOKEN and (request.url.path.startswith("/api/") or request.url.path == "/desktop/health"):
+        import secrets
+        supplied = request.headers.get("x-astral-desktop-token", "")
+        if not secrets.compare_digest(supplied, DESKTOP_TOKEN):
+            return JSONResponse({"detail": "Desktop session required"}, status_code=401)
     origin = request.headers.get("origin")
     if origin is not None and origin not in ALLOWED_ORIGINS:
         return JSONResponse({"detail": "Untrusted request origin"}, status_code=403)
@@ -145,6 +151,12 @@ def read_root():
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+@app.get("/desktop/health")
+def desktop_health():
+    if not DESKTOP_TOKEN:
+        return JSONResponse({"detail": "Desktop session unavailable"}, status_code=404)
+    return {"status": "healthy", "service": "astral-backend"}
 
 if __name__ == "__main__":
     import uvicorn
