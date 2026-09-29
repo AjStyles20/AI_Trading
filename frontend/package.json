@@ -1,7 +1,8 @@
 {
   "name": "frontend",
+  "productName": "Astral AI Trading",
+  "version": "0.1.0",
   "private": true,
-  "version": "0.0.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -10,7 +11,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "electron:dev": "cross-env NODE_ENV=development concurrently -k \"vite\" \"wait-on tcp:5173 && npx electron .\"",
-    "electron:build": "tsc -b && vite build && electron-builder",
+    "electron:build": "npm run build && node electron/verify-backend.cjs && electron-builder --win nsis --x64",
     "test": "vitest run && node --test electron/*.node.cjs"
   },
   "dependencies": {
@@ -45,5 +46,13 @@
     "vite": "^8.0.0",
     "vitest": "^4.1.4",
     "wait-on": "^9.0.4"
+  },
+  "build": {
+    "appId": "com.ajstyles20.astralai",
+    "files": ["dist/**/*", "electron/**/*.cjs", "package.json"],
+    "extraResources": [{ "from": "backend-bundle/astral-backend", "to": "backend" }],
+    "directories": { "output": "release" },
+    "win": { "target": "nsis" },
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true }
   }
 }
