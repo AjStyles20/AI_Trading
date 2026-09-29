@@ -10,6 +10,7 @@ on:
       - 'frontend/**'
       - 'scripts/build_windows_backend.ps1'
       - 'scripts/smoke_windows_backend.ps1'
+      - 'scripts/smoke_windows_desktop.ps1'
       - '.github/workflows/windows-desktop.yml'
 
 jobs:
@@ -34,6 +35,8 @@ jobs:
         working-directory: frontend
       - run: npm run electron:build
         working-directory: frontend
+      - run: ./scripts/smoke_windows_desktop.ps1
+        shell: pwsh
       - uses: actions/upload-artifact@v4
         with:
           name: astral-windows-installer
