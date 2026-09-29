@@ -1,5 +1,4 @@
 from langchain_core.messages import HumanMessage, SystemMessage
-# Can swap this with ChatOllama for local LLMs or ChatOpenAI for OpenAI
 from langchain_openai import ChatOpenAI
 from database.vector_manager import VectorMemoryManager
 from database.sqlite_manager import get_settings, record_chat_message, get_recent_chat_messages
@@ -16,26 +15,35 @@ class AstralAIAssistant:
 
     def _initialize_llm(self):
         settings = get_settings()
-        api_key = resolve_api_keys(settings).get("openai")
-        model_name = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
-
-        # Fallback to env var if in dev mode
-        if not api_key or api_key == "mock-key":
-            api_key = os.environ.get("OPENAI_API_KEY", "mock-key")
-
-        if not api_key or api_key == "mock-key":
+        provider = (settings or {}).get("ai_provider", "openai")
+        defaults = {"openai": "gpt-4.1-mini", "groq": "openai/gpt-oss-20b", "ollama": ""}
+        if provider not in defaults:
+            raise ValueError("Unsupported AI provider")
+        configured_model = (settings or {}).get("ai_model") or ""
+        model_name = configured_model or (os.environ.get("OPENAI_MODEL", defaults[provider]) if provider == "openai" else defaults[provider])
+        self.provider = provider
+        self.model_name = model_name
+        if provider == "ollama" and not model_name:
             self.llm = None
-            self.model_name = model_name
             self._initialized = True
             return
 
-        self.model_name = model_name
-        self.llm = ChatOpenAI(
+        api_key = "ollama" if provider == "ollama" else resolve_api_keys(settings).get(provider)
+        if not api_key or api_key == "mock-key":
+            self.llm = None
+            self._initialized = True
+            return
+
+        base_urls = {"groq": "https://api.groq.com/openai/v1", "ollama": "http://127.0.0.1:11434/v1"}
+        options = dict(
             temperature=0.4,
             api_key=api_key,
             model=model_name,
-            request_timeout=60.0 # Prevent infinite hanging
+            request_timeout=120.0,
         )
+        if provider in base_urls:
+            options["base_url"] = base_urls[provider]
+        self.llm = ChatOpenAI(**options)
         self._initialized = True
 
     def get_llm(self):
@@ -101,7 +109,7 @@ You should act as a collaborative partner. If the user suggests a flawed strateg
         # 3. Get response
         llm = self.get_llm()
         if llm is None:
-            return "Please provide a valid OpenAI API Key in the Settings menu (Settings icon) to start using the full intelligence of Astral AI."
+            return "Configure an AI provider in Settings. OpenAI and Groq need API keys; Ollama needs a local model and running server."
 
         try:
             print("DEBUG: Starting LLM generation...")
@@ -112,7 +120,7 @@ You should act as a collaborative partner. If the user suggests a flawed strateg
             err_msg = str(e)
             print(f"CRITICAL: LLM generation failed: {err_msg}")
             if "401" in err_msg or "invalid_api_key" in err_msg:
-                return "Error: Invalid API Key. Please check your OpenAI key in settings."
+                return "Error: Invalid API key. Please check the selected AI provider and its key in Settings."
             return f"Error during generation: {err_msg}"
 
         # 4. Save this interaction to Long-Term Memory
@@ -135,7 +143,7 @@ You should act as a collaborative partner. If the user suggests a flawed strateg
     def summarize_strategy(self, strategy_code: str, symbol: str | None = None) -> str:
         llm = self.get_llm()
         if llm is None:
-            return "Add your OpenAI API key in Settings to enable AI summaries."
+            return "Configure an AI provider in Settings to enable AI summaries."
 
         prompt = f"""Summarize this trading strategy in plain English.
 Explain the indicators, entry/exit logic, risk controls, and any risks or missing safeguards.
@@ -156,7 +164,7 @@ Strategy code:
     def summarize_backtest(self, backtest_results: dict, symbol: str | None = None) -> str:
         llm = self.get_llm()
         if llm is None:
-            return "Add your OpenAI API key in Settings to enable AI summaries."
+            return "Configure an AI provider in Settings to enable AI summaries."
 
         prompt = f"""Summarize this backtest.
 Explain return, drawdown, win rate, and any red flags. Suggest one improvement to test next.

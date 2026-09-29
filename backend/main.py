@@ -102,7 +102,7 @@ class StrategyRequest(BaseModel):
 async def generate_strategy(request: StrategyRequest):
     llm = ai_assistant.get_llm()
     if llm is None:
-        raise HTTPException(status_code=503, detail="AI strategy generation requires an OpenAI API key in Settings.")
+        raise HTTPException(status_code=503, detail="Configure an AI provider in Settings. OpenAI and Groq need API keys; Ollama needs a local model and running server.")
     try:
         generator = StrategyGenerator(llm)
         code = generator.generate(request.prompt)
@@ -118,7 +118,7 @@ class BuildRequest(BaseModel):
 async def build_strategy(request: BuildRequest):
     llm = ai_assistant.get_llm()
     if llm is None:
-        raise HTTPException(status_code=503, detail="AI graph export requires an OpenAI API key in Settings. Use the local graph export instead.")
+        raise HTTPException(status_code=503, detail="Configure an AI provider in Settings. OpenAI and Groq need API keys; Ollama needs a local model and running server. You can use the local graph export instead.")
     try:
         generator = StrategyGenerator(llm)
         code = generator.generate_from_graph(request.nodes, request.edges)
