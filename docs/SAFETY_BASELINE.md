@@ -8,6 +8,19 @@ The original system already included market-data retrieval, AI-assisted strategy
 
 ## Current safety boundaries
 
+### Local API requests
+
+The FastAPI server binds to `127.0.0.1`. It accepts only loopback Host
+headers and rejects browser requests with origins outside the configured local
+development and backend origins. Browser requests with cross-site fetch
+metadata and no Origin are rejected as well. The Electron production client
+forwards API requests from its scoped app protocol to the loopback backend.
+
+These checks reduce cross-site requests and DNS rebinding exposure. They are
+not authentication: other local processes with access to the user's loopback
+interface can call the API. Do not expose port 8000 to a network or run
+untrusted local software alongside a live trading session.
+
 ### Strategy runtime
 
 Astral supports a declarative strategy format and a restricted legacy-Python runtime. The Python runtime performs AST validation and restricted builtins, but it remains an in-process Python execution mechanism.
