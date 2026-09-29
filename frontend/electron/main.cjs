@@ -89,8 +89,15 @@ app.whenReady().then(async () => {
           method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
         });
         const validation = await posted.json();
+        const builderButton = Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === 'STRATEGY BUILDER');
+        builderButton?.click();
+        await new Promise(resolve => setTimeout(resolve, 300));
+        const node = document.querySelector('.react-flow__node-input');
+        const nodeStyle = node && getComputedStyle(node);
         return response.ok && Boolean(settings.theme) &&
           posted.status === 422 && validation.detail?.some(item => item.loc?.includes('prompt')) &&
+          node?.textContent.includes('Start Strategy') && nodeStyle.backgroundColor !== 'rgb(255, 255, 255)' &&
+          nodeStyle.color !== nodeStyle.backgroundColor &&
           Boolean(document.querySelector('#root')?.children.length);
       })()`);
       if (passed) exitCode = 0;
