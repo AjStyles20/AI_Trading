@@ -217,6 +217,7 @@ export default function BottomPanel({
   const [activeTab, setActiveTab] = useState('code');
   const [strategyPrompt, setStrategyPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState('');
   const [isBacktesting, setIsBacktesting] = useState(false);
   const [isLiveTrading, setIsLiveTrading] = useState(false);
   const [tradingLogs, setTradingLogs] = useState<string[]>([]);
@@ -472,12 +473,20 @@ export default function BottomPanel({
     setIsGenerating(true);
     setActiveTab('code');
     setStrategySummary('');
-    setStrategyCode('# Generating strategy with Astral AI...\n# Please wait...');
+    setGenerationError('');
     try {
       const res = await axios.post(`${BACKEND_URL}/api/strategy`, { prompt: strategyPrompt });
-      setStrategyCode(res.data.code || '# No code returned.');
-    } catch {
-      setStrategyCode('# Backend offline. Start the Python server:\n# python backend/main.py');
+      if (res.data.status !== 'success' || !res.data.code) {
+        throw new Error(res.data.error || 'AI did not return a strategy.');
+      }
+      setStrategyCode(res.data.code);
+    } catch (err: unknown) {
+      const detail = axios.isAxiosError(err) && typeof err.response?.data?.detail === 'string'
+        ? err.response.data.detail
+        : err instanceof Error && !axios.isAxiosError(err)
+          ? err.message
+          : 'AI generation failed. Check your API key and backend connection.';
+      setGenerationError(detail);
     } finally {
       setIsGenerating(false);
     }
@@ -1645,6 +1654,11 @@ export default function BottomPanel({
           </button>
         </div>
       </div>
+      {generationError && (
+        <p role="alert" className="text-xs text-amber-300 border border-amber-500/40 bg-amber-500/10 rounded px-3 py-2 mt-2">
+          {generationError} Your existing strategy code was kept.
+        </p>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2 py-3 border-b border-[#2a2a35]">
         <label className="text-[10px] text-gray-400 uppercase tracking-wider">

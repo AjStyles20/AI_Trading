@@ -1,7 +1,7 @@
 import sys
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -100,10 +100,13 @@ class StrategyRequest(BaseModel):
 
 @app.post("/api/strategy")
 async def generate_strategy(request: StrategyRequest):
+    llm = ai_assistant.get_llm()
+    if llm is None:
+        raise HTTPException(status_code=503, detail="AI strategy generation requires an OpenAI API key in Settings.")
     try:
-        generator = StrategyGenerator(ai_assistant.get_llm())
+        generator = StrategyGenerator(llm)
         code = generator.generate(request.prompt)
-        return {"code": code, "status": "success"}
+        return {"code": code, "status": "success", "generation_mode": "ai"}
     except Exception as e:
         return {"code": "", "error": str(e), "status": "error"}
 
@@ -113,10 +116,13 @@ class BuildRequest(BaseModel):
 
 @app.post("/api/strategy/build")
 async def build_strategy(request: BuildRequest):
+    llm = ai_assistant.get_llm()
+    if llm is None:
+        raise HTTPException(status_code=503, detail="AI graph export requires an OpenAI API key in Settings. Use the local graph export instead.")
     try:
-        generator = StrategyGenerator(ai_assistant.llm)
+        generator = StrategyGenerator(llm)
         code = generator.generate_from_graph(request.nodes, request.edges)
-        return {"code": code, "status": "success"}
+        return {"code": code, "status": "success", "generation_mode": "ai"}
     except Exception as e:
         return {"code": "", "error": str(e), "status": "error"}
 

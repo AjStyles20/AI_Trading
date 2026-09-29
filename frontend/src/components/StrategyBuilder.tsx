@@ -117,23 +117,18 @@ export default function StrategyBuilder({ setStrategyCode, initialGraph, onGraph
     const strategyNodes = nodes.map((node) => ({ id: node.id, type: node.data?.label || node.type }));
     const flowEdges = edges.map((edge) => ({ source: edge.source, target: edge.target }));
 
-    if (setStrategyCode) {
-      setStrategyCode('# Building strategy from visual flow...\n# Please wait...');
-    }
-
     try {
       const res = await axios.post(`${BACKEND_URL}/api/strategy/build`, {
         nodes: strategyNodes,
         edges: flowEdges,
       });
-      if (setStrategyCode) {
-        setStrategyCode(res.data.code);
-      }
+      if (res.data.status !== 'success' || !res.data.code) throw new Error(res.data.error || 'AI export failed.');
+      if (setStrategyCode) setStrategyCode(res.data.code);
       alert('Strategy generated. Check the Strategy Code tab in the bottom panel.');
     } catch (err) {
       console.error(err);
       exportLocalCode();
-      alert('Backend generation is unavailable, so a local strategy draft has been exported instead.');
+      alert('AI export is unavailable. A local strategy draft based on your graph was exported instead; review and validate it before use.');
     }
   };
 

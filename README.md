@@ -101,6 +101,11 @@ Astral includes:
 
 No backtest, optimizer score or AI output establishes future profitability.
 
+AI strategy generation and AI graph export require a configured OpenAI API key.
+Without one, these endpoints report that AI is unavailable; the visual builder
+can export a local deterministic draft. The app does not substitute an unrelated
+example strategy and call it AI generation.
+
 ## Development
 
 Backend:
