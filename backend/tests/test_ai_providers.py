@@ -1,5 +1,8 @@
 import pytest
+import os
+import sys
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ai_engine import assistant
 from database import sqlite_manager
 
