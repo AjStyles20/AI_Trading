@@ -35,3 +35,16 @@ def test_local_clients_and_dev_preflight_remain_available():
 def test_dns_rebinding_host_is_rejected():
     response = client.get("/api/settings", headers={"Host": "attacker.invalid:8000"})
     assert response.status_code == 400
+
+
+def test_packaged_desktop_requires_its_session_token(monkeypatch):
+    import backend.main as backend_main
+
+    monkeypatch.setattr(backend_main, "DESKTOP_TOKEN", "test-desktop-secret")
+    assert client.get("/desktop/health").status_code == 401
+    assert client.get("/api/settings").status_code == 401
+    headers = {"x-astral-desktop-token": "test-desktop-secret"}
+    response = client.get("/desktop/health", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["service"] == "astral-backend"
+    assert client.get("/api/settings", headers=headers).status_code == 200
