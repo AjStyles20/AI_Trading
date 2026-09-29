@@ -1,6 +1,9 @@
 from fastapi.testclient import TestClient
+import os
+import sys
 
-from backend import main
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import main
 
 
 client = TestClient(main.app, base_url="http://127.0.0.1:8000")
