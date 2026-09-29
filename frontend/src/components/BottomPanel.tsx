@@ -898,8 +898,10 @@ export default function BottomPanel({
       setIsLiveTrading(newStatus);
       await fetchTradeHistory(newStatus && executionMode === 'live');
       if (newStatus) setActiveTab('logs');
-    } catch {
-      alert('Failed to toggle live trading. Check backend.');
+    } catch (err: unknown) {
+      const detail = axios.isAxiosError(err) && typeof err.response?.data?.detail === 'string'
+        ? err.response.data.detail : 'The trading request failed. Check the backend connection.';
+      alert(`Could not ${newStatus ? 'start' : 'stop'} ${executionMode} trading: ${detail}`);
     }
   };
 
