@@ -44,6 +44,12 @@ export default function Sidebar({
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [openaiKey, setOpenaiKey] = useState('');
   const [tempKey, setTempKey] = useState('');
+  const [aiProvider, setAiProvider] = useState<'openai' | 'groq' | 'ollama'>('openai');
+  const [tempAiProvider, setTempAiProvider] = useState<'openai' | 'groq' | 'ollama'>('openai');
+  const [aiModel, setAiModel] = useState('');
+  const [tempAiModel, setTempAiModel] = useState('');
+  const [groqKey, setGroqKey] = useState('');
+  const [tempGroqKey, setTempGroqKey] = useState('');
   const [binanceKey, setBinanceKey] = useState('');
   const [binanceSecret, setBinanceSecret] = useState('');
   const [binanceTestnetEnabled, setBinanceTestnetEnabled] = useState(false);
@@ -80,7 +86,9 @@ export default function Sidebar({
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const messageEndRef = useRef<HTMLDivElement>(null);
-  const hasOpenaiKey = Boolean(openaiKey && openaiKey !== 'mock-key');
+  const aiConfigured = aiProvider === 'ollama'
+    ? Boolean(aiModel.trim())
+    : aiProvider === 'groq' ? Boolean(groqKey) : Boolean(openaiKey && openaiKey !== 'mock-key');
  
   // Fetch settings on load
   useEffect(() => {
@@ -88,9 +96,21 @@ export default function Sidebar({
       try {
         const res = await axios.get(`${BACKEND_URL}/api/settings`);
         setBackendOnline(true);
+        const provider = ['openai', 'groq', 'ollama'].includes(res.data.ai_provider)
+          ? res.data.ai_provider as 'openai' | 'groq' | 'ollama' : 'openai';
+        setAiProvider(provider);
+        setTempAiProvider(provider);
+        setAiModel(res.data.ai_model || '');
+        setTempAiModel(res.data.ai_model || '');
+        const groqConfigured = res.data.api_keys?.groq || (res.data.credential_presence?.groq ? '********' : '');
+        setGroqKey(groqConfigured);
+        setTempGroqKey(groqConfigured);
         if (res.data.api_keys?.openai) {
           setOpenaiKey(res.data.api_keys.openai);
           setTempKey(res.data.api_keys.openai);
+        } else if (res.data.credential_presence?.openai) {
+          setOpenaiKey('********');
+          setTempKey('********');
         }
         if (res.data.api_keys?.binance_key) {
           setBinanceKey(res.data.api_keys.binance_key);
@@ -168,8 +188,11 @@ export default function Sidebar({
   const saveSettings = async () => {
     try {
       await axios.post(`${BACKEND_URL}/api/settings`, {
+        ai_provider: tempAiProvider,
+        ai_model: tempAiModel,
         api_keys: {
           openai: tempKey,
+          groq: tempGroqKey,
           binance_key: tempBinanceKey,
           binance_secret: tempBinanceSecret,
           binance_testnet: tempBinanceTestnetEnabled ? 'true' : 'false',
@@ -189,6 +212,9 @@ export default function Sidebar({
         }
       });
       setOpenaiKey(tempKey);
+      setGroqKey(tempGroqKey);
+      setAiProvider(tempAiProvider);
+      setAiModel(tempAiModel);
       setBinanceKey(tempBinanceKey);
       setBinanceSecret(tempBinanceSecret);
       setBinanceTestnetEnabled(tempBinanceTestnetEnabled);
@@ -261,7 +287,7 @@ export default function Sidebar({
       } else if (axios.isAxiosError(err) && err.response) {
         const detail = err.response.data?.detail;
         if (err.response.status === 401 || (typeof detail === 'string' && detail.includes('API key'))) {
-             errorText = "Error: Invalid or missing API key. Please click the settings button above and provide a valid OpenAI key.";
+             errorText = "Check the selected AI provider and its configuration in Settings.";
         } else {
              errorText = `AI Error: ${typeof detail === 'string' ? detail : "Unknown error"}`;
         }
@@ -319,6 +345,27 @@ export default function Sidebar({
             
             <div className="space-y-4 text-xs overflow-y-auto pr-2 min-h-0">
               <div>
+                <label className="block text-gray-400 mb-1.5 font-medium">AI Provider</label>
+                <select value={tempAiProvider} onChange={(e) => { setTempAiProvider(e.target.value as 'openai' | 'groq' | 'ollama'); setTempAiModel(''); }}
+                  className="w-full bg-[#0a0a0c] border border-[#2a2a35] rounded-lg py-2 px-3 text-white">
+                  <option value="openai">OpenAI (API key)</option>
+                  <option value="groq">Groq (hosted, free tier subject to limits)</option>
+                  <option value="ollama">Ollama (local, no API key)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-gray-400 mb-1.5 font-medium">Model</label>
+                <input value={tempAiModel} onChange={(e) => setTempAiModel(e.target.value)}
+                  placeholder={tempAiProvider === 'openai' ? 'gpt-4.1-mini (default)' : tempAiProvider === 'groq' ? 'openai/gpt-oss-20b (default)' : 'Enter a model installed with ollama pull'}
+                  className="w-full bg-[#0a0a0c] border border-[#2a2a35] rounded-lg py-2 px-3 text-white" />
+                <p className="text-[10px] text-gray-500 mt-2">Ollama must be running on this computer at 127.0.0.1:11434. Local speed and memory needs depend on the model and computer.</p>
+              </div>
+              {tempAiProvider === 'groq' && <div>
+                <label className="block text-gray-400 mb-1.5 font-medium">Groq API Key</label>
+                <input type="password" value={tempGroqKey} onChange={(e) => setTempGroqKey(e.target.value)} placeholder="Groq key"
+                  className="w-full bg-[#0a0a0c] border border-[#2a2a35] rounded-lg py-2 px-3 text-white" />
+              </div>}
+              {tempAiProvider === 'openai' && <div>
                 <label className="block text-gray-400 mb-1.5 font-medium">OpenAI API Key</label>
                 <input 
                   type="password"
@@ -328,10 +375,9 @@ export default function Sidebar({
                   className="w-full bg-[#0a0a0c] border border-[#2a2a35] rounded-lg py-2 px-3 text-white focus:border-[#a55eea] outline-none transition-all"
                 />
                 <p className="text-[10px] text-gray-500 mt-2 leading-relaxed">
-                  Keys are stored locally in <code className="text-[#a55eea]">astral.db</code>. 
-                  They are never sent to our servers.
+                  Keys are stored in the operating system credential store. Requests go directly to the selected AI provider.
                 </p>
-              </div>
+              </div>}
 
               <div>
                 <label className="block text-gray-400 mb-1.5 font-medium">Binance API Key</label>
@@ -561,6 +607,9 @@ export default function Sidebar({
            <button 
              onClick={() => {
                setTempKey(openaiKey);
+               setTempGroqKey(groqKey);
+               setTempAiProvider(aiProvider);
+               setTempAiModel(aiModel);
                setTempBinanceKey(binanceKey);
                setTempBinanceSecret(binanceSecret);
                setTempBinanceTestnetEnabled(binanceTestnetEnabled);
@@ -587,13 +636,13 @@ export default function Sidebar({
             <div className="flex items-center gap-2">
               <span
                 className={`text-[9px] uppercase tracking-widest px-2 py-0.5 rounded-full border ${
-                  hasOpenaiKey
+                  aiConfigured
                     ? 'border-emerald-400/50 text-emerald-300'
                     : 'border-amber-400/40 text-amber-300'
                 }`}
-                title={hasOpenaiKey ? 'OpenAI key detected' : 'Add an OpenAI key to enable AI features'}
+                title={aiConfigured ? `${aiProvider} configured; availability has not been verified` : 'Configure an AI provider in Settings'}
               >
-                {hasOpenaiKey ? 'AI Ready' : 'AI Key Needed'}
+                {aiConfigured ? `${aiProvider} Configured` : 'AI Setup Needed'}
               </span>
               <div
                 className={`w-2 h-2 rounded-full ${
@@ -725,12 +774,12 @@ export default function Sidebar({
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={isLoading}
-            placeholder={openaiKey ? "Ask AI to analyze or trade..." : "Please configure API key in settings ⚙️"}
+            placeholder={aiConfigured ? "Ask AI to analyze..." : "Configure an AI provider in Settings ⚙️"}
             className="flex-1 bg-[#1c1c24] text-sm text-white rounded-lg border border-[#2a2a35] focus:border-[#a55eea] focus:ring-1 focus:ring-[#a55eea] outline-none py-2.5 pl-3 pr-3 transition-all disabled:opacity-50"
           />
           <button
             onClick={() => sendMessage(input)}
-            disabled={isLoading || !input.trim() || !openaiKey}
+            disabled={isLoading || !input.trim() || !aiConfigured}
             className="w-9 h-9 rounded-lg bg-[#a55eea] flex items-center justify-center text-white hover:bg-[#b87ef7] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

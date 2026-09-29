@@ -17,7 +17,7 @@ def test_missing_key_never_returns_an_unrelated_example_strategy(monkeypatch):
     ):
         response = client.post(endpoint, json=payload)
         assert response.status_code == 503
-        assert "OpenAI API key" in response.json()["detail"]
+        assert "AI provider" in response.json()["detail"]
 
 
 def test_graph_export_initializes_the_configured_model(monkeypatch):

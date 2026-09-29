@@ -13,6 +13,7 @@ SERVICE_NAME = "AstralAI"
 
 ENV_KEY_MAP = {
     "openai": "OPENAI_API_KEY",
+    "groq": "GROQ_API_KEY",
     "alpaca_key": "ALPACA_API_KEY",
     "alpaca_secret": "ALPACA_API_SECRET",
     "alpaca_paper_key": "ALPACA_PAPER_API_KEY",

@@ -50,7 +50,9 @@ def init_db():
         risk_max_daily_loss_pct REAL DEFAULT 3.0,
         risk_max_drawdown_pct REAL DEFAULT 10.0,
         binance_environment TEXT DEFAULT 'live',
-        bitget_environment TEXT DEFAULT 'live'
+        bitget_environment TEXT DEFAULT 'live',
+        ai_provider TEXT DEFAULT 'openai',
+        ai_model TEXT DEFAULT ''
     )
     ''')
 
@@ -64,6 +66,8 @@ def init_db():
         "risk_max_drawdown_pct": "ALTER TABLE settings ADD COLUMN risk_max_drawdown_pct REAL DEFAULT 10.0",
         "binance_environment": "ALTER TABLE settings ADD COLUMN binance_environment TEXT DEFAULT 'live'",
         "bitget_environment": "ALTER TABLE settings ADD COLUMN bitget_environment TEXT DEFAULT 'live'",
+        "ai_provider": "ALTER TABLE settings ADD COLUMN ai_provider TEXT DEFAULT 'openai'",
+        "ai_model": "ALTER TABLE settings ADD COLUMN ai_model TEXT DEFAULT ''",
     }
     for column, statement in settings_column_migrations.items():
         if column not in existing_settings_columns:
@@ -219,7 +223,7 @@ def get_settings():
             SELECT id, api_keys, theme, paper_trading,
                    risk_live_trading_enabled, autonomy_kill_switch, risk_max_order_notional, risk_max_position_pct,
                    risk_max_daily_loss_pct, risk_max_drawdown_pct,
-                   binance_environment, bitget_environment
+                   binance_environment, bitget_environment, ai_provider, ai_model
             FROM settings WHERE id=1
         """)
         row = cursor.fetchone()
@@ -238,6 +242,8 @@ def get_settings():
                 "risk_max_drawdown_pct": float(row[9] or 10.0),
                 "binance_environment": row[10] or "live",
                 "bitget_environment": row[11] or "live",
+                "ai_provider": row[12] or "openai",
+                "ai_model": row[13] or "",
             }
     except sqlite3.Error:
         return None
@@ -295,6 +301,8 @@ def update_settings(
     risk_max_drawdown_pct: float = None,
     binance_environment: str = None,
     bitget_environment: str = None,
+    ai_provider: str = None,
+    ai_model: str = None,
 ):
     current = get_settings()
     if not current:
@@ -326,6 +334,12 @@ def update_settings(
         raise ValueError("binance_environment must be 'live' or 'testnet'")
     if next_bitget_environment not in {"live", "demo"}:
         raise ValueError("bitget_environment must be 'live' or 'demo'")
+    next_ai_provider = ai_provider if ai_provider is not None else current["ai_provider"]
+    if next_ai_provider not in {"openai", "groq", "ollama"}:
+        raise ValueError("Unsupported AI provider")
+    next_ai_model = ai_model.strip() if ai_model is not None else current["ai_model"]
+    if len(next_ai_model) > 128 or any(ord(char) < 32 for char in next_ai_model):
+        raise ValueError("Invalid AI model name")
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -334,7 +348,7 @@ def update_settings(
         SET api_keys = ?, theme = ?, paper_trading = ?,
             risk_live_trading_enabled = ?, autonomy_kill_switch = ?, risk_max_order_notional = ?, risk_max_position_pct = ?,
             risk_max_daily_loss_pct = ?, risk_max_drawdown_pct = ?,
-            binance_environment = ?, bitget_environment = ?
+            binance_environment = ?, bitget_environment = ?, ai_provider = ?, ai_model = ?
         WHERE id = 1
     """, (
         json.dumps(_preserve_legacy_api_keys(api_keys, current["api_keys"])),
@@ -348,6 +362,8 @@ def update_settings(
         max_drawdown_pct,
         next_binance_environment,
         next_bitget_environment,
+        next_ai_provider,
+        next_ai_model,
     ))
     conn.commit()
     conn.close()

@@ -101,10 +101,28 @@ Astral includes:
 
 No backtest, optimizer score or AI output establishes future profitability.
 
-AI strategy generation and AI graph export require a configured OpenAI API key.
-Without one, these endpoints report that AI is unavailable; the visual builder
-can export a local deterministic draft. The app does not substitute an unrelated
-example strategy and call it AI generation.
+AI chat, strategy generation, summaries and AI graph export can use OpenAI,
+Groq or a locally running Ollama model. In Settings, choose the provider and
+optionally enter a model ID. OpenAI uses its API key (default model
+`gpt-4.1-mini`); Groq uses its own API key (default `openai/gpt-oss-20b`);
+Ollama needs no API key, but must be running on this computer at
+`127.0.0.1:11434` with the selected model already installed. The Ollama
+model name is required. Groq's free tier has usage limits and provider
+availability/pricing can change. Local model speed and memory needs depend
+on the chosen model and computer; no hardware requirement is assumed.
+
+The selected provider is used explicitly; Astral does not silently send
+prompts to another provider. Without a configured provider, AI endpoints
+report that AI is unavailable; the visual builder can still export a local
+deterministic draft. Backtesting and paper trading work without any AI key.
+
+For Groq, obtain your own key from its [console](https://console.groq.com/keys),
+choose Groq in Settings, enter the key and save. For Ollama, [install
+Ollama](https://docs.ollama.com/quickstart), pull a model suitable for your
+computer with `ollama pull <model-name>`, choose Ollama in Settings, enter
+the same model name and save. Ollama runs separately; the installer does not
+include a model or start its server. OpenAI and Groq prompts leave your
+computer for their respective providers; Ollama prompts go to localhost.
 
 ## Development
 
