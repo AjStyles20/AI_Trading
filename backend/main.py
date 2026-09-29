@@ -3,6 +3,8 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from pydantic import BaseModel
 
@@ -33,20 +35,37 @@ app = FastAPI(
 # Ensure database is initialized on startup
 init_db()
 
+DEV_ORIGINS = (
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+)
+ALLOWED_ORIGINS = frozenset((*DEV_ORIGINS, "http://127.0.0.1:8000", "http://localhost:8000"))
+
 app.add_middleware(
     CORSMiddleware,
     # Desktop development origins only. Wildcard origins combined with credentials
     # unnecessarily expose the local trading API to arbitrary web pages.
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=list(DEV_ORIGINS),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def reject_untrusted_browser_requests(request, call_next):
+    origin = request.headers.get("origin")
+    if origin is not None and origin not in ALLOWED_ORIGINS:
+        return JSONResponse({"detail": "Untrusted request origin"}, status_code=403)
+    # Some browser navigations and no-CORS requests omit Origin. Native API
+    # clients omit both headers, while browsers set this fetch metadata header.
+    if origin is None and request.headers.get("sec-fetch-site") in {"cross-site", "same-site"}:
+        return JSONResponse({"detail": "Untrusted browser request"}, status_code=403)
+    return await call_next(request)
+
+# A hostile DNS name resolving to loopback must not become an API origin.
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
 
 app.include_router(indicators_router)
 app.include_router(data_router)

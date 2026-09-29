@@ -4,7 +4,7 @@ from backend.main import app
 import trading_api
 
 
-client = TestClient(app)
+client = TestClient(app, base_url="http://127.0.0.1:8000")
 
 
 def test_test_order_risk_rejection_never_reaches_broker(monkeypatch):

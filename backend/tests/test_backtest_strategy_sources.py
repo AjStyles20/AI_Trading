@@ -7,7 +7,7 @@ import sys
 backtest_api = sys.modules.get("backtest_api") or sys.modules["backend.backtest_api"]
 
 
-client = TestClient(app)
+client = TestClient(app, base_url="http://127.0.0.1:8000")
 
 
 def market_frame():
