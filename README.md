@@ -125,7 +125,7 @@ Tests:
 ```bash
 pytest backend/tests -q
 cd frontend
-npm test -- --run
+npm test
 npm run build
 ```
 

@@ -28,12 +28,13 @@ function createWindow() {
     },
   });
 
+  let loadPromise;
   if (isDev) {
     // Vite dev server typically runs on 5173
-    mainWindow.loadURL('http://localhost:5173');
+    loadPromise = mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadURL(`${APP_ORIGIN}/`);
+    loadPromise = mainWindow.loadURL(`${APP_ORIGIN}/`);
   }
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', (event, url) => {
@@ -41,6 +42,7 @@ function createWindow() {
       event.preventDefault();
     }
   });
+  return { mainWindow, loadPromise };
 }
 
 const hasInstanceLock = app.requestSingleInstanceLock();
@@ -75,7 +77,25 @@ app.whenReady().then(async () => {
       desktopToken,
     }));
   }
-  createWindow();
+  const { mainWindow, loadPromise } = createWindow();
+  if (app.isPackaged && process.argv.includes('--smoke-test')) {
+    let exitCode = 1;
+    try {
+      await loadPromise;
+      const passed = await mainWindow.webContents.executeJavaScript(`(async () => {
+        const response = await fetch('/api/settings');
+        const settings = await response.json();
+        return response.ok && Boolean(settings.theme) &&
+          Boolean(document.querySelector('#root')?.children.length);
+      })()`);
+      if (passed) exitCode = 0;
+    } catch (error) {
+      console.error('Desktop renderer smoke test failed:', error);
+    }
+    if (backendChild && !backendChild.killed) backendChild.kill();
+    app.exit(exitCode);
+    return;
+  }
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
