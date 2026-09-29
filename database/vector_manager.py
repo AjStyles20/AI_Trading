@@ -1,7 +1,7 @@
 import os
 import chromadb
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), 'chroma_data')
+DATA_DIR = os.path.join(os.environ.get("ASTRAL_DATA_DIR") or os.path.dirname(__file__), 'chroma_data')
 
 class VectorMemoryManager:
     """Manages the AI's persistent memory using ChromaDB."""
