@@ -4,7 +4,7 @@ const { pathToFileURL } = require('node:url');
 const APP_ORIGIN = 'astral://app';
 const BACKEND_ORIGIN = 'http://127.0.0.1:8000';
 
-function createProtocolHandler({ net, distDir }) {
+function createProtocolHandler({ net, distDir, desktopToken }) {
   return async (request) => {
     const url = new URL(request.url);
     if (url.protocol !== 'astral:' || url.host !== 'app' || url.username || url.password) {
@@ -15,6 +15,7 @@ function createProtocolHandler({ net, distDir }) {
       const headers = new Headers(request.headers);
       // The backend receives a local request, not a request to the custom scheme.
       for (const name of ['host', 'origin', 'content-length']) headers.delete(name);
+      if (desktopToken) headers.set('x-astral-desktop-token', desktopToken);
       try {
         return await net.fetch(`${BACKEND_ORIGIN}${url.pathname}${url.search}`, {
           method: request.method,
