@@ -44,6 +44,7 @@ export default function ChartPanel({
 
   const [timeframe, setTimeframe] = useState('1h');
   const [isLoading, setIsLoading] = useState(false);
+  const [dataError, setDataError] = useState('');
   const [sentiment, setSentiment] = useState<{ score: number, label: string } | null>(null);
   const [candleData, setCandleData] = useState<CandlePoint[]>([]);
   const [enabledIndicators, setEnabledIndicators] = useState<Record<IndicatorKey, boolean>>({
@@ -58,6 +59,7 @@ export default function ChartPanel({
   const fetchChartData = useCallback(async () => {
     if (!seriesRef.current) return;
     setIsLoading(true);
+    setDataError('');
     try {
       const assetType: AssetType = symbol.includes('/') || symbol.includes('-') ? 'crypto' : 'stock';
       const res = await axios.post(`${BACKEND_URL}/api/market/history`, {
@@ -69,6 +71,7 @@ export default function ChartPanel({
 
       if (!res.data || !Array.isArray(res.data)) {
         console.warn('Invalid data format for', symbol);
+        setDataError('The data provider returned an invalid response.');
         return;
       }
 
@@ -93,9 +96,13 @@ export default function ChartPanel({
         seriesRef.current.setData(uniqueData);
         setCandleData(uniqueData as CandlePoint[]);
         chartRef.current?.timeScale().fitContent();
+      } else {
+        setDataError('No price history was returned for this symbol and interval.');
       }
     } catch (err) {
       console.error('Failed to fetch chart data:', err);
+      setDataError(axios.isAxiosError(err) && typeof err.response?.data?.detail === 'string'
+        ? err.response.data.detail : 'Could not load price history. Check your connection and retry.');
     } finally {
       setIsLoading(false);
     }
@@ -361,6 +368,12 @@ export default function ChartPanel({
               <div className="w-8 h-8 border-4 border-[#a55eea] border-t-transparent rounded-full animate-spin"></div>
               <span className="text-[10px] text-white font-bold tracking-widest uppercase">Syncing Price Data...</span>
             </div>
+          </div>
+        )}
+        {!isLoading && dataError && (
+          <div role="alert" className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#0a0a0c]/90 rounded-xl p-6 text-center">
+            <p className="text-sm text-amber-300">{dataError}</p>
+            <button onClick={() => void fetchChartData()} className="px-3 py-2 bg-[#a55eea] text-white rounded-lg text-xs">Retry price data</button>
           </div>
         )}
       </div>

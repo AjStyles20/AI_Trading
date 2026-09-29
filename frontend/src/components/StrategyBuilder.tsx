@@ -200,6 +200,7 @@ export default function StrategyBuilder({ setStrategyCode, initialGraph, onGraph
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           fitView
+          colorMode="dark"
           className="bg-[#0a0a0c]"
           proOptions={{ hideAttribution: true }}
         >

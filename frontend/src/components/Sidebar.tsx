@@ -253,6 +253,12 @@ export default function Sidebar({
 
   const sendMessage = async (query: string) => {
     if (!query.trim() || isLoading) return;
+    if (!aiConfigured) {
+      setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant',
+        text: 'Choose and configure an AI provider in Settings before using chat. Backtesting and local graph export do not need an AI provider.',
+        timestamp: new Date().toLocaleTimeString() }]);
+      return;
+    }
 
     const userMessage: Message = {
       id: Date.now().toString(),

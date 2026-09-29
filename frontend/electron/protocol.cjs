@@ -14,18 +14,21 @@ function createProtocolHandler({ net, distDir, desktopToken }) {
     if (url.pathname.startsWith('/api/')) {
       const headers = new Headers(request.headers);
       // The backend receives a local request, not a request to the custom scheme.
-      for (const name of ['host', 'origin', 'content-length']) headers.delete(name);
+      for (const name of ['host', 'origin', 'content-length', 'sec-fetch-site', 'sec-fetch-mode', 'sec-fetch-dest']) headers.delete(name);
       if (desktopToken) headers.set('x-astral-desktop-token', desktopToken);
       try {
+        // A protocol Request carries a stream. Buffer JSON uploads before passing
+        // them to Chromium fetch, which cannot forward a stream without duplex.
+        const body = request.body ? await request.arrayBuffer() : undefined;
         return await net.fetch(`${BACKEND_ORIGIN}${url.pathname}${url.search}`, {
           method: request.method,
           headers,
-          body: request.body || undefined,
+          body,
         });
       } catch {
-        return new Response('Local backend unavailable. Start python backend/main.py and retry.', {
+        return new Response(JSON.stringify({ detail: 'The desktop could not reach its local backend. Restart Astral and retry.' }), {
           status: 503,
-          headers: { 'content-type': 'text/plain' },
+          headers: { 'content-type': 'application/json' },
         });
       }
     }
