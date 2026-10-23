@@ -5,6 +5,7 @@ import type { CandlestickData, IChartApi, ISeriesApi, ISeriesMarkersPluginApi, L
 import { calculateEMA, calculateMACD, calculateRSI, calculateSMA, calculateBollingerBands, calculateATR, type CandlePoint, type LinePoint, type MacdPoint } from '../lib/indicators';
 import type { BacktestResults } from './BottomPanel';
 import { BACKEND_URL } from '../lib/api';
+import { getRefreshIntervalMs } from '../lib/liveRefresh';
 
 type IndicatorKey = 'sma20' | 'ema21' | 'rsi14' | 'macd' | 'bb' | 'atr';
 type AssetType = 'crypto' | 'stock';
@@ -41,10 +42,17 @@ export default function ChartPanel({
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const overlaySeriesRef = useRef<Record<string, ISeriesApi<'Line'>>>({});
+  // Each fetch takes a new id; a response is applied only if its id is still the
+  // latest, so a slow reply for a previous symbol/timeframe or a disposed chart
+  // is discarded.
+  const requestIdRef = useRef(0);
+  const inFlightRef = useRef(false);
 
   const [timeframe, setTimeframe] = useState('1h');
   const [isLoading, setIsLoading] = useState(false);
   const [dataError, setDataError] = useState('');
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [refreshFailed, setRefreshFailed] = useState(false);
   const [sentiment, setSentiment] = useState<{ score: number, label: string } | null>(null);
   const [candleData, setCandleData] = useState<CandlePoint[]>([]);
   const [enabledIndicators, setEnabledIndicators] = useState<Record<IndicatorKey, boolean>>({
@@ -56,10 +64,17 @@ export default function ChartPanel({
     atr: false,
   });
 
-  const fetchChartData = useCallback(async () => {
+  // A background fetch is a live refresh: no loading overlay, no view reset, and
+  // a failure keeps the last good chart instead of replacing it with an error.
+  const fetchChartData = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
     if (!seriesRef.current) return;
-    setIsLoading(true);
-    setDataError('');
+    if (background && inFlightRef.current) return;
+    const requestId = ++requestIdRef.current;
+    inFlightRef.current = true;
+    if (!background) {
+      setIsLoading(true);
+      setDataError('');
+    }
     try {
       const assetType: AssetType = symbol.includes('/') || symbol.includes('-') ? 'crypto' : 'stock';
       const res = await axios.post(`${BACKEND_URL}/api/market/history`, {
@@ -68,10 +83,12 @@ export default function ChartPanel({
         interval: timeframe === '1D' ? '1d' : timeframe,
         limit: 500,
       });
+      if (requestId !== requestIdRef.current) return;
 
       if (!res.data || !Array.isArray(res.data)) {
         console.warn('Invalid data format for', symbol);
-        setDataError('The data provider returned an invalid response.');
+        if (background) setRefreshFailed(true);
+        else setDataError('The data provider returned an invalid response.');
         return;
       }
 
@@ -95,16 +112,29 @@ export default function ChartPanel({
       if (uniqueData.length > 0 && seriesRef.current) {
         seriesRef.current.setData(uniqueData);
         setCandleData(uniqueData as CandlePoint[]);
-        chartRef.current?.timeScale().fitContent();
+        if (!background) chartRef.current?.timeScale().fitContent();
+        setLastUpdated(new Date());
+        setRefreshFailed(false);
+      } else if (background) {
+        setRefreshFailed(true);
       } else {
         setDataError('No price history was returned for this symbol and interval.');
       }
     } catch (err) {
-      console.error('Failed to fetch chart data:', err);
-      setDataError(axios.isAxiosError(err) && typeof err.response?.data?.detail === 'string'
-        ? err.response.data.detail : 'Could not load price history. Check your connection and retry.');
+      if (requestId !== requestIdRef.current) return;
+      if (background) {
+        console.warn('Live chart refresh failed:', err);
+        setRefreshFailed(true);
+      } else {
+        console.error('Failed to fetch chart data:', err);
+        setDataError(axios.isAxiosError(err) && typeof err.response?.data?.detail === 'string'
+          ? err.response.data.detail : 'Could not load price history. Check your connection and retry.');
+      }
     } finally {
-      setIsLoading(false);
+      if (requestId === requestIdRef.current) {
+        inFlightRef.current = false;
+        if (!background) setIsLoading(false);
+      }
     }
   }, [symbol, timeframe]);
 
@@ -204,9 +234,25 @@ export default function ChartPanel({
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      // Invalidate any in-flight fetch so it cannot write to the removed chart.
+      requestIdRef.current += 1;
+      inFlightRef.current = false;
       chart.remove();
     };
   }, [fetchChartData]);
+
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === 'visible') void fetchChartData({ background: true });
+    };
+    const intervalId = window.setInterval(refresh, getRefreshIntervalMs(timeframe));
+    // Hidden tabs skip refreshes; catch up as soon as the tab is shown again.
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [fetchChartData, timeframe]);
 
   useEffect(() => {
     const smaSeries = overlaySeriesRef.current.sma20;
@@ -308,9 +354,17 @@ export default function ChartPanel({
     <div className="w-full h-full flex flex-col bg-[#121216]">
       <div className="flex items-center justify-between pb-3 border-b border-[#2a2a35] flex-shrink-0">
         <div className="flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+          <div
+            className="flex items-center gap-2"
+            title={`Refreshes every ${getRefreshIntervalMs(timeframe) / 1000}s from Yahoo Finance via the backend; prices can lag the exchange.`}
+          >
+            <div className={`w-2 h-2 rounded-full ${refreshFailed ? 'bg-amber-500' : lastUpdated ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`}></div>
             <h2 className="text-lg font-bold text-white tracking-widest uppercase">{symbol}</h2>
+            {lastUpdated && (
+              <span data-testid="live-status" className={`text-[10px] ${refreshFailed ? 'text-amber-400' : 'text-gray-500'}`}>
+                {refreshFailed ? 'Update failed · last' : 'Live · updated'} {lastUpdated.toLocaleTimeString()}
+              </span>
+            )}
           </div>
           <div className="flex gap-1 bg-[#1c1c24] p-1 rounded-lg border border-[#2a2a35]">
             {timeframes.map((tf) => (
