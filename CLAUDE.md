@@ -24,7 +24,7 @@ npm run dev            # Vite renderer only (talks to backend at 127.0.0.1:8000)
 npm run electron:dev   # Vite + Electron together
 npm test               # vitest run + node --test electron/*.node.cjs
 npx vitest run src/components/__tests__/StrategyBuilder.test.tsx   # one test file
-npm run lint
+npm run lint           # eslint (CI runs this; errors fail it)
 npm run build          # tsc -b && vite build (CI runs this; type errors fail it)
 ```
 
