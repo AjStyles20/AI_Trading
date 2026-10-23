@@ -154,6 +154,41 @@ npm run build
 
 GitHub Actions runs both backend and frontend validation on pushes and pull requests.
 
+### Backend dependencies
+
+The backend's `requirements*.txt` files are generated, fully pinned and hashed
+lock files, so CI, the Windows bundle and development machines install
+identical versions. They target Python 3.12; use 3.12 locally for an
+environment identical to CI. Do not edit them by hand:
+
+| Edit | Generated lock | Used by |
+| --- | --- | --- |
+| `backend/requirements.in` | `backend/requirements.txt` | everything (runtime) |
+| `backend/requirements-test.in` | `backend/requirements-test.txt` | CI and local tests |
+| `backend/requirements-build.in` | `backend/requirements-build.txt` | Windows bundle build |
+
+To add, remove or change a dependency, edit the `.in` file, then regenerate
+the locks with [uv](https://docs.astral.sh/uv/) (Git Bash on Windows):
+
+```bash
+bash scripts/lock_backend.sh                           # after editing a .in file
+bash scripts/lock_backend.sh --upgrade-package fastapi # upgrade one locked package
+bash scripts/lock_backend.sh --upgrade                 # upgrade everything
+```
+
+Commit the `.in` change together with the regenerated locks. Regenerating
+without changes reproduces the same files, and the CI `backend-locks` job fails
+if the committed locks are stale. CI pins the uv version in
+`.github/workflows/ci.yml`; keep your local uv on the same version, since a
+different uv release can format the locks differently.
+
+A matching Python 3.12 development environment:
+
+```bash
+uv venv --python 3.12 .venv
+uv pip install --python .venv -r backend/requirements.txt -r backend/requirements-test.txt
+```
+
 ## Maturity gates
 
 - **V0 — AI-assisted strategy workstation:** completed

@@ -28,6 +28,8 @@ npm run lint
 npm run build          # tsc -b && vite build (CI runs this; type errors fail it)
 ```
 
+Backend dependencies: `backend/requirements*.txt` are generated, hashed, universal (Linux + Windows) lock files for Python 3.12. Never edit them by hand. Edit `backend/requirements.in` (runtime), `requirements-test.in` or `requirements-build.in` (PyInstaller), then run `bash scripts/lock_backend.sh` and commit the `.in` file and the regenerated locks together. Pass `--upgrade-package <name>` to upgrade a single locked package. The CI `backend-locks` job fails when the locks are stale. It pins the uv version, so generate locally with that same version. Because the locks contain hashes, pip refuses any requirement without a hash. Never add an extra package on a pip command line next to `-r backend/requirements*.txt`; add it to a `.in` file instead.
+
 Windows bundle (PowerShell, repo root): `scripts/build_windows_backend.ps1`, then `npm run electron:build` in `frontend/`. `scripts/smoke_windows_backend.ps1` and `scripts/smoke_windows_desktop.ps1` are what the `windows-desktop.yml` workflow uses to verify the bundle.
 
 ## Architecture
