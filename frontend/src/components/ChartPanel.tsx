@@ -6,6 +6,7 @@ import { calculateEMA, calculateMACD, calculateRSI, calculateSMA, calculateBolli
 import type { BacktestResults } from './BottomPanel';
 import { BACKEND_URL } from '../lib/api';
 import { getRefreshIntervalMs } from '../lib/liveRefresh';
+import { formatPrice, get24hChange, getPriceDirection, type PriceDirection } from '../lib/priceTicker';
 
 type IndicatorKey = 'sma20' | 'ema21' | 'rsi14' | 'macd' | 'bb' | 'atr';
 type AssetType = 'crypto' | 'stock';
@@ -47,12 +48,16 @@ export default function ChartPanel({
   // is discarded.
   const requestIdRef = useRef(0);
   const inFlightRef = useRef(false);
+  const lastPriceRef = useRef<number | null>(null);
+  const flashTimerRef = useRef<number | undefined>(undefined);
 
   const [timeframe, setTimeframe] = useState('1h');
   const [isLoading, setIsLoading] = useState(false);
   const [dataError, setDataError] = useState('');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [refreshFailed, setRefreshFailed] = useState(false);
+  const [priceDirection, setPriceDirection] = useState<PriceDirection>('flat');
+  const [priceFlash, setPriceFlash] = useState<PriceDirection>('flat');
   const [sentiment, setSentiment] = useState<{ score: number, label: string } | null>(null);
   const [candleData, setCandleData] = useState<CandlePoint[]>([]);
   const [enabledIndicators, setEnabledIndicators] = useState<Record<IndicatorKey, boolean>>({
@@ -112,6 +117,21 @@ export default function ChartPanel({
       if (uniqueData.length > 0 && seriesRef.current) {
         seriesRef.current.setData(uniqueData);
         setCandleData(uniqueData as CandlePoint[]);
+        // Colour the price by the direction of the last live move. A fresh load
+        // (new symbol/timeframe) starts neutral rather than comparing against
+        // another market's price.
+        const latestClose = uniqueData[uniqueData.length - 1].close;
+        const direction = background ? getPriceDirection(lastPriceRef.current, latestClose) : 'flat';
+        lastPriceRef.current = latestClose;
+        window.clearTimeout(flashTimerRef.current);
+        if (!background) {
+          setPriceDirection('flat');
+          setPriceFlash('flat');
+        } else if (direction !== 'flat') {
+          setPriceDirection(direction);
+          setPriceFlash(direction);
+          flashTimerRef.current = window.setTimeout(() => setPriceFlash('flat'), 700);
+        }
         if (!background) chartRef.current?.timeScale().fitContent();
         setLastUpdated(new Date());
         setRefreshFailed(false);
@@ -237,6 +257,7 @@ export default function ChartPanel({
       // Invalidate any in-flight fetch so it cannot write to the removed chart.
       requestIdRef.current += 1;
       inFlightRef.current = false;
+      window.clearTimeout(flashTimerRef.current);
       chart.remove();
     };
   }, [fetchChartData]);
@@ -341,6 +362,8 @@ export default function ChartPanel({
   const macdData = calculateMACD(candleData);
   const latestRsi = rsiData[rsiData.length - 1]?.value ?? null;
   const latestMacd: MacdPoint | null = macdData[macdData.length - 1] ?? null;
+  const latestPrice = candleData[candleData.length - 1]?.close ?? null;
+  const dayChange = get24hChange(candleData);
   const timeframes = ['1m', '5m', '15m', '1h', '4h', '1D'];
 
   const toggleIndicator = (key: IndicatorKey) => {
@@ -360,6 +383,30 @@ export default function ChartPanel({
           >
             <div className={`w-2 h-2 rounded-full ${refreshFailed ? 'bg-amber-500' : lastUpdated ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`}></div>
             <h2 className="text-lg font-bold text-white tracking-widest uppercase">{symbol}</h2>
+            {latestPrice !== null && (
+              <div className="flex items-baseline gap-2">
+                <span
+                  data-testid="last-price"
+                  data-direction={priceDirection}
+                  className={`text-lg font-bold tabular-nums px-1.5 rounded transition-colors duration-700 ${
+                    priceDirection === 'up' ? 'text-green-400' : priceDirection === 'down' ? 'text-red-400' : 'text-white'
+                  } ${priceFlash === 'up' ? 'bg-green-500/25' : priceFlash === 'down' ? 'bg-red-500/25' : 'bg-transparent'}`}
+                >
+                  {formatPrice(latestPrice)}
+                </span>
+                {dayChange && (
+                  <span
+                    data-testid="day-change"
+                    title="Change over the last 24 hours"
+                    className={`text-xs font-semibold tabular-nums ${
+                      dayChange.change > 0 ? 'text-green-400' : dayChange.change < 0 ? 'text-red-400' : 'text-gray-400'
+                    }`}
+                  >
+                    {formatPrice(dayChange.change, { signed: true })} ({dayChange.percent > 0 ? '+' : ''}{dayChange.percent.toFixed(2)}%) 24h
+                  </span>
+                )}
+              </div>
+            )}
             {lastUpdated && (
               <span data-testid="live-status" className={`text-[10px] ${refreshFailed ? 'text-amber-400' : 'text-gray-500'}`}>
                 {refreshFailed ? 'Update failed · last' : 'Live · updated'} {lastUpdated.toLocaleTimeString()}

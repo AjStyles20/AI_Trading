@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import ChartPanel from '../ChartPanel';
 import { getRefreshIntervalMs } from '../../lib/liveRefresh';
+import { formatPrice, get24hChange, getPriceDirection } from '../../lib/priceTicker';
 
 type MockSeries = { kind: string; setData: ReturnType<typeof vi.fn> };
 type MockChart = { series: MockSeries[]; fitContent: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> };
@@ -141,5 +142,129 @@ describe('ChartPanel live refresh', () => {
     expect(current.setData).toHaveBeenLastCalledWith(
       expect.arrayContaining([expect.objectContaining({ close: 200 })]),
     );
+  });
+});
+
+describe('price ticker helpers', () => {
+  it('formats normal and sub-1 prices', () => {
+    expect(formatPrice(81518.594)).toBe('81,518.59');
+    expect(formatPrice(0.000123456)).toBe('0.0001235');
+    expect(formatPrice(-212.5, { signed: true })).toBe('-212.50');
+    expect(formatPrice(3, { signed: true })).toBe('+3.00');
+  });
+
+  it('reports the direction of a price move', () => {
+    expect(getPriceDirection(null, 10)).toBe('flat');
+    expect(getPriceDirection(10, 10)).toBe('flat');
+    expect(getPriceDirection(10, 11)).toBe('up');
+    expect(getPriceDirection(10, 9)).toBe('down');
+  });
+
+  it('measures change against the close 24 hours before the latest candle', () => {
+    const day = 86_400;
+    const series = [
+      { time: 0, open: 1, high: 1, low: 1, close: 100 },
+      { time: day / 2, open: 1, high: 1, low: 1, close: 150 },
+      { time: day, open: 1, high: 1, low: 1, close: 110 },
+    ];
+    expect(get24hChange(series)).toEqual({ change: 10, percent: 10 });
+    expect(get24hChange(series.slice(1))).toBeNull();
+    expect(get24hChange([])).toBeNull();
+  });
+});
+
+describe('ChartPanel live price', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    charts.length = 0;
+    post.mockReset();
+    setVisibility('visible');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const refresh = () => act(async () => { await vi.advanceTimersByTimeAsync(getRefreshIntervalMs('1h')); });
+
+  it('shows the latest price neutrally on first load', async () => {
+    post.mockResolvedValue({ data: candles(105) });
+    render(<ChartPanel symbol="BTC/USDT" />);
+    await flush();
+
+    const price = screen.getByTestId('last-price');
+    expect(price).toHaveTextContent('105.00');
+    expect(price).toHaveAttribute('data-direction', 'flat');
+    expect(price).toHaveClass('text-white');
+  });
+
+  it('turns green and flashes when a live refresh moves the price up', async () => {
+    post.mockResolvedValueOnce({ data: candles(105) }).mockResolvedValue({ data: candles(108.5) });
+    render(<ChartPanel symbol="BTC/USDT" />);
+    await flush();
+    await refresh();
+
+    const price = screen.getByTestId('last-price');
+    expect(price).toHaveTextContent('108.50');
+    expect(price).toHaveAttribute('data-direction', 'up');
+    expect(price).toHaveClass('text-green-400', 'bg-green-500/25');
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(700); });
+    expect(price).toHaveClass('text-green-400', 'bg-transparent');
+  });
+
+  it('turns red when a live refresh moves the price down, and stays red while unchanged', async () => {
+    post
+      .mockResolvedValueOnce({ data: candles(105) })
+      .mockResolvedValueOnce({ data: candles(101) })
+      .mockResolvedValue({ data: candles(101) });
+    render(<ChartPanel symbol="BTC/USDT" />);
+    await flush();
+    await refresh();
+
+    const price = screen.getByTestId('last-price');
+    expect(price).toHaveAttribute('data-direction', 'down');
+    expect(price).toHaveClass('text-red-400', 'bg-red-500/25');
+
+    await refresh();
+    expect(price).toHaveAttribute('data-direction', 'down');
+    expect(price).toHaveClass('text-red-400', 'bg-transparent');
+  });
+
+  it('resets to neutral when switching timeframe instead of comparing across loads', async () => {
+    post
+      .mockResolvedValueOnce({ data: candles(105) })
+      .mockResolvedValueOnce({ data: candles(120) })
+      .mockResolvedValue({ data: candles(90) });
+    render(<ChartPanel symbol="BTC/USDT" />);
+    await flush();
+    await refresh();
+    expect(screen.getByTestId('last-price')).toHaveAttribute('data-direction', 'up');
+
+    fireEvent.click(screen.getByText('1m'));
+    await flush();
+    expect(screen.getByTestId('last-price')).toHaveTextContent('90.00');
+    expect(screen.getByTestId('last-price')).toHaveAttribute('data-direction', 'flat');
+  });
+
+  it('shows the 24h change in green or red when history covers a day', async () => {
+    const day = [
+      { timestamp: '2026-10-22T11:00:00Z', open: 100, high: 100, low: 100, close: 200 },
+      { timestamp: '2026-10-23T11:00:00Z', open: 100, high: 100, low: 100, close: 190 },
+    ];
+    post.mockResolvedValue({ data: day });
+    render(<ChartPanel symbol="BTC/USDT" />);
+    await flush();
+
+    const change = screen.getByTestId('day-change');
+    expect(change).toHaveTextContent('-10.00 (-5.00%) 24h');
+    expect(change).toHaveClass('text-red-400');
+  });
+
+  it('hides the 24h change when history is shorter than a day', async () => {
+    post.mockResolvedValue({ data: candles(105) });
+    render(<ChartPanel symbol="BTC/USDT" />);
+    await flush();
+    expect(screen.queryByTestId('day-change')).not.toBeInTheDocument();
   });
 });
