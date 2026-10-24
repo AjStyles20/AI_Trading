@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 import sys, os
 
@@ -13,7 +13,7 @@ class DataRequest(BaseModel):
     asset_type: str = "stock" # "stock" or "crypto"
     interval: str = "1d"
     period: Optional[str] = None
-    limit: int = 500
+    limit: int = Field(500, ge=1, le=5000)
 
 @router.get("/api/market/price/{asset_type}/{symbol}")
 def get_price(asset_type: str, symbol: str):
@@ -35,7 +35,13 @@ def get_history(request: DataRequest):
             df = market_data.get_crypto_data(request.symbol, request.interval, request.limit)
         else:
             raise ValueError("asset_type must be stock or crypto")
-        
+
+        # The provider returns a whole period (7 days of 1m candles is ~10k
+        # rows, ~1.5 MB of JSON). Return only the most recent `limit` candles;
+        # the chart polls this endpoint. The limit is applied here rather than in
+        # the data service so the trading loop's history is unchanged.
+        df = df.tail(request.limit)
+
         # Pandas 3 may store the index in seconds, while earlier versions
         # commonly use nanoseconds. Convert the unit explicitly before exposing
         # Unix milliseconds to the frontend.

@@ -5,7 +5,7 @@ import type { CandlestickData, IChartApi, ISeriesApi, ISeriesMarkersPluginApi, L
 import { calculateEMA, calculateMACD, calculateRSI, calculateSMA, calculateBollingerBands, calculateATR, type CandlePoint, type LinePoint, type MacdPoint } from '../lib/indicators';
 import type { BacktestResults } from './BottomPanel';
 import { BACKEND_URL } from '../lib/api';
-import { getRefreshIntervalMs } from '../lib/liveRefresh';
+import { getHistoryLimit, getRefreshIntervalMs, INITIAL_VISIBLE_CANDLES } from '../lib/liveRefresh';
 import { formatPrice, get24hChange, getPriceDirection, type PriceDirection } from '../lib/priceTicker';
 
 type IndicatorKey = 'sma20' | 'ema21' | 'rsi14' | 'macd' | 'bb' | 'atr';
@@ -86,7 +86,7 @@ export default function ChartPanel({
         symbol,
         asset_type: assetType,
         interval: timeframe === '1D' ? '1d' : timeframe,
-        limit: 500,
+        limit: getHistoryLimit(timeframe),
       });
       if (requestId !== requestIdRef.current) return;
 
@@ -132,7 +132,16 @@ export default function ChartPanel({
           setPriceFlash(direction);
           flashTimerRef.current = window.setTimeout(() => setPriceFlash('flat'), 700);
         }
-        if (!background) chartRef.current?.timeScale().fitContent();
+        if (!background) {
+          // Open on the recent candles rather than squeezing the whole history
+          // into view; older candles are a drag away.
+          const timeScale = chartRef.current?.timeScale();
+          if (uniqueData.length > INITIAL_VISIBLE_CANDLES) {
+            timeScale?.setVisibleLogicalRange({ from: uniqueData.length - INITIAL_VISIBLE_CANDLES, to: uniqueData.length + 2 });
+          } else {
+            timeScale?.fitContent();
+          }
+        }
         setLastUpdated(new Date());
         setRefreshFailed(false);
       } else if (background) {

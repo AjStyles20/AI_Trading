@@ -9,6 +9,7 @@ type MockSeries = { kind: string; setData: ReturnType<typeof vi.fn> };
 type MockChart = {
   series: MockSeries[];
   fitContent: ReturnType<typeof vi.fn>;
+  setVisibleLogicalRange: ReturnType<typeof vi.fn>;
   remove: ReturnType<typeof vi.fn>;
   // Stands in for the real chart's own wheel (zoom) handler on its drawing surface.
   wheel: Mock<(event: Event) => void>;
@@ -25,7 +26,7 @@ vi.mock('lightweight-charts', () => ({
   createChart: (container: HTMLElement) => {
     const surface = document.createElement('div');
     container.appendChild(surface);
-    const chart: MockChart = { series: [], fitContent: vi.fn(), remove: vi.fn(), wheel: vi.fn<(event: Event) => void>(), surface };
+    const chart: MockChart = { series: [], fitContent: vi.fn(), setVisibleLogicalRange: vi.fn(), remove: vi.fn(), wheel: vi.fn<(event: Event) => void>(), surface };
     surface.addEventListener('wheel', (event) => chart.wheel(event));
     charts.push(chart);
     return {
@@ -34,7 +35,7 @@ vi.mock('lightweight-charts', () => ({
         chart.series.push(series);
         return series;
       },
-      timeScale: () => ({ fitContent: chart.fitContent }),
+      timeScale: () => ({ fitContent: chart.fitContent, setVisibleLogicalRange: chart.setVisibleLogicalRange }),
       applyOptions: vi.fn(),
       remove: chart.remove,
     };
@@ -301,5 +302,42 @@ describe('ChartPanel mouse wheel', () => {
     fireEvent.wheel(charts[0].surface, { deltaY: -120, metaKey: true });
 
     expect(charts[0].wheel).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('ChartPanel history window', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    charts.length = 0;
+    post.mockReset();
+    setVisibility('visible');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const manyCandles = (count: number) => Array.from({ length: count }, (_, i) => ({
+    timestamp: new Date(Date.UTC(2026, 9, 23, 0, i)).toISOString(), open: 100, high: 101, low: 99, close: 100,
+  }));
+
+  it('requests a day of candles on 1m and the default elsewhere', async () => {
+    post.mockResolvedValue({ data: candles(105) });
+    render(<ChartPanel symbol="BTC/USDT" />);
+    await flush();
+    expect(post).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ interval: '1h', limit: 500 }));
+
+    fireEvent.click(screen.getByText('1m'));
+    await flush();
+    expect(post).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ interval: '1m', limit: 1_500 }));
+  });
+
+  it('opens on the most recent candles instead of squeezing the whole history into view', async () => {
+    post.mockResolvedValue({ data: manyCandles(1_000) });
+    render(<ChartPanel symbol="BTC/USDT" />);
+    await flush();
+
+    expect(charts[0].fitContent).not.toHaveBeenCalled();
+    expect(charts[0].setVisibleLogicalRange).toHaveBeenCalledWith({ from: 850, to: 1_002 });
   });
 });

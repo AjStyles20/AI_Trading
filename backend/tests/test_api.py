@@ -46,6 +46,36 @@ def test_market_history_crypto(monkeypatch):
     if len(data) > 0:
         assert data[0]["timestamp"] == 1790467200000
 
+def _long_history_frame(rows):
+    return pd.DataFrame(
+        {
+            "open": [100.0 + i for i in range(rows)],
+            "high": [102.0 + i for i in range(rows)],
+            "low": [99.0 + i for i in range(rows)],
+            "close": [101.0 + i for i in range(rows)],
+            "volume": [5.0] * rows,
+        },
+        index=pd.date_range("2026-09-27", periods=rows, freq="1min", tz="UTC", name="timestamp"),
+    )
+
+
+@pytest.mark.parametrize("asset_type, provider", [("crypto", "get_crypto_data"), ("stock", "get_stock_data")])
+def test_market_history_returns_only_the_latest_limit_candles(monkeypatch, asset_type, provider):
+    monkeypatch.setattr(data_api.market_data, provider, lambda *args, **kwargs: _long_history_frame(50))
+    payload = {"symbol": "BTC/USDT", "asset_type": asset_type, "interval": "1m", "limit": 3}
+    response = client.post("/api/market/history", json=payload)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert [row["close"] for row in data] == [148.0, 149.0, 150.0]
+
+
+@pytest.mark.parametrize("limit", [0, -1, 5001])
+def test_market_history_rejects_out_of_range_limits(limit):
+    payload = {"symbol": "BTC/USDT", "asset_type": "crypto", "interval": "1m", "limit": limit}
+    response = client.post("/api/market/history", json=payload)
+    assert response.status_code == 422
+
+
 def test_market_history_stock(monkeypatch):
     monkeypatch.setattr(data_api.market_data, "get_stock_data", lambda *args, **kwargs: _history_frame())
     payload = {

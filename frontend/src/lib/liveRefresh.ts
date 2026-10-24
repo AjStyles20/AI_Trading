@@ -14,3 +14,19 @@ export const DEFAULT_REFRESH_INTERVAL_MS = 60_000;
 
 export const getRefreshIntervalMs = (timeframe: string): number =>
   REFRESH_INTERVAL_MS[timeframe] ?? DEFAULT_REFRESH_INTERVAL_MS;
+
+// How many candles to request. Enough for a full day on the short timeframes so
+// the 24h change can be computed, without downloading the provider's whole
+// period on every refresh.
+const HISTORY_LIMIT: Record<string, number> = {
+  '1m': 1_500,
+  '5m': 600,
+};
+
+export const DEFAULT_HISTORY_LIMIT = 500;
+
+export const getHistoryLimit = (timeframe: string): number =>
+  HISTORY_LIMIT[timeframe] ?? DEFAULT_HISTORY_LIMIT;
+
+// Candles in view when a chart first loads; older history stays a drag away.
+export const INITIAL_VISIBLE_CANDLES = 150;
