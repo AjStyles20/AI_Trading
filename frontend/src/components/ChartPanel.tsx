@@ -7,6 +7,16 @@ import type { BacktestResults } from './BottomPanel';
 import { BACKEND_URL } from '../lib/api';
 import { getHistoryLimit, getRefreshIntervalMs, INITIAL_VISIBLE_CANDLES } from '../lib/liveRefresh';
 import { formatPrice, get24hChange, getPriceDirection, type PriceDirection } from '../lib/priceTicker';
+import {
+  binanceStreamUrl,
+  fetchBinanceKlines,
+  mergeLiveCandle,
+  parseStreamMessage,
+  RECONNECT_DELAYS_MS,
+  toBinanceInterval,
+  toBinanceSymbol,
+  type LiveTicker,
+} from '../lib/binanceMarket';
 
 type IndicatorKey = 'sma20' | 'ema21' | 'rsi14' | 'macd' | 'bb' | 'atr';
 type AssetType = 'crypto' | 'stock';
@@ -31,6 +41,35 @@ type ChartCandle = CandlestickData<Time>;
 type ChartLine = LineData<Time>;
 type ChartMarker = SeriesMarker<Time>;
 
+// Where the chart's data comes from: Binance (history + live stream) for crypto
+// pairs it lists, otherwise the backend (Yahoo Finance) refreshed on a timer.
+type DataSource = 'binance' | 'backend';
+type StreamStatus = 'connecting' | 'live' | 'reconnecting';
+
+const PRICE_FLASH_MS = 500;
+// Upper bound on candles kept while live candles are appended.
+const MAX_LIVE_CANDLES = 2_000;
+
+const toChartCandles = (candles: CandlePoint[]): ChartCandle[] =>
+  candles.map((candle) => ({ ...candle, time: candle.time as UTCTimestamp }));
+
+const normalizeBackendHistory = (points: HistoryPoint[]): CandlePoint[] => {
+  const candles = points.map((point) => {
+    const dateVal = point.timestamp || point.Date || point.date || point.index || point.Datetime;
+    const timeVal = dateVal ? new Date(dateVal).getTime() : NaN;
+    return {
+      time: Math.floor(timeVal / 1000),
+      open: Number(point.open || point.Open || 0),
+      high: Number(point.high || point.High || 0),
+      low: Number(point.low || point.Low || 0),
+      close: Number(point.close || point.Close || 0),
+    };
+  })
+    .filter((point) => !Number.isNaN(point.time))
+    .sort((a, b) => a.time - b.time);
+  return candles.filter((point, index, values) => index === 0 || point.time !== values[index - 1].time);
+};
+
 export default function ChartPanel({
   symbol,
   backtestResults,
@@ -50,6 +89,9 @@ export default function ChartPanel({
   const inFlightRef = useRef(false);
   const lastPriceRef = useRef<number | null>(null);
   const flashTimerRef = useRef<number | undefined>(undefined);
+  // The Binance stream key ("BTCUSDT:1m") whose history is on the chart. Live
+  // candles are applied only on top of their own market's history.
+  const historyKeyRef = useRef<string | null>(null);
 
   const [timeframe, setTimeframe] = useState('1h');
   const [isLoading, setIsLoading] = useState(false);
@@ -58,6 +100,11 @@ export default function ChartPanel({
   const [refreshFailed, setRefreshFailed] = useState(false);
   const [priceDirection, setPriceDirection] = useState<PriceDirection>('flat');
   const [priceFlash, setPriceFlash] = useState<PriceDirection>('flat');
+  const [dataSource, setDataSource] = useState<DataSource | null>(null);
+  // Stream status and ticker are stored with the stream key they belong to, so
+  // a switch to another symbol/timeframe never shows the previous market's state.
+  const [streamState, setStreamState] = useState<{ key: string; status: StreamStatus } | null>(null);
+  const [tickerState, setTickerState] = useState<{ key: string; ticker: LiveTicker } | null>(null);
   const [sentiment, setSentiment] = useState<{ score: number, label: string } | null>(null);
   const [candleData, setCandleData] = useState<CandlePoint[]>([]);
   const [enabledIndicators, setEnabledIndicators] = useState<Record<IndicatorKey, boolean>>({
@@ -81,42 +128,48 @@ export default function ChartPanel({
       setDataError('');
     }
     try {
-      const assetType: AssetType = symbol.includes('/') || symbol.includes('-') ? 'crypto' : 'stock';
-      const res = await axios.post(`${BACKEND_URL}/api/market/history`, {
-        symbol,
-        asset_type: assetType,
-        interval: timeframe === '1D' ? '1d' : timeframe,
-        limit: getHistoryLimit(timeframe),
-      });
-      if (requestId !== requestIdRef.current) return;
-
-      if (!res.data || !Array.isArray(res.data)) {
-        console.warn('Invalid data format for', symbol);
-        if (background) setRefreshFailed(true);
-        else setDataError('The data provider returned an invalid response.');
-        return;
+      // Crypto pairs Binance lists come straight from Binance, matching the live
+      // stream. Anything else, or Binance being unreachable, uses the backend.
+      const binanceSymbol = toBinanceSymbol(symbol);
+      const binanceInterval = toBinanceInterval(timeframe);
+      let history: CandlePoint[] | null = null;
+      let source: DataSource = 'backend';
+      if (binanceSymbol && binanceInterval) {
+        try {
+          history = await fetchBinanceKlines(binanceSymbol, binanceInterval, getHistoryLimit(timeframe));
+          source = 'binance';
+        } catch (err) {
+          console.warn(`Binance history unavailable for ${binanceSymbol}; using the backend instead:`, err);
+        }
+        if (requestId !== requestIdRef.current) return;
       }
 
-      const formattedData: ChartCandle[] = (res.data as HistoryPoint[]).map((point) => {
-        const dateVal = point.timestamp || point.Date || point.date || point.index || point.Datetime;
-        const timeVal = dateVal ? new Date(dateVal).getTime() : NaN;
+      if (!history) {
+        const assetType: AssetType = symbol.includes('/') || symbol.includes('-') ? 'crypto' : 'stock';
+        const res = await axios.post(`${BACKEND_URL}/api/market/history`, {
+          symbol,
+          asset_type: assetType,
+          interval: timeframe === '1D' ? '1d' : timeframe,
+          limit: getHistoryLimit(timeframe),
+        });
+        if (requestId !== requestIdRef.current) return;
 
-        return {
-          time: Math.floor(timeVal / 1000) as UTCTimestamp,
-          open: Number(point.open || point.Open || 0),
-          high: Number(point.high || point.High || 0),
-          low: Number(point.low || point.Low || 0),
-          close: Number(point.close || point.Close || 0),
-        };
-      })
-        .filter((point) => !Number.isNaN(Number(point.time)))
-        .sort((a, b) => Number(a.time) - Number(b.time));
+        if (!res.data || !Array.isArray(res.data)) {
+          console.warn('Invalid data format for', symbol);
+          if (background) setRefreshFailed(true);
+          else setDataError('The data provider returned an invalid response.');
+          return;
+        }
+        history = normalizeBackendHistory(res.data as HistoryPoint[]);
+      }
 
-      const uniqueData = formattedData.filter((point, index, values) => index === 0 || point.time !== values[index - 1].time);
+      const uniqueData = toChartCandles(history);
 
       if (uniqueData.length > 0 && seriesRef.current) {
         seriesRef.current.setData(uniqueData);
-        setCandleData(uniqueData as CandlePoint[]);
+        setCandleData(history);
+        setDataSource(source);
+        historyKeyRef.current = source === 'binance' ? `${binanceSymbol}:${binanceInterval}` : null;
         // Colour the price by the direction of the last live move. A fresh load
         // (new symbol/timeframe) starts neutral rather than comparing against
         // another market's price.
@@ -130,7 +183,7 @@ export default function ChartPanel({
         } else if (direction !== 'flat') {
           setPriceDirection(direction);
           setPriceFlash(direction);
-          flashTimerRef.current = window.setTimeout(() => setPriceFlash('flat'), 700);
+          flashTimerRef.current = window.setTimeout(() => setPriceFlash('flat'), PRICE_FLASH_MS);
         }
         if (!background) {
           // Open on the recent candles rather than squeezing the whole history
@@ -283,7 +336,84 @@ export default function ChartPanel({
     };
   }, [fetchChartData]);
 
+  const showPriceMove = useCallback((price: number) => {
+    const direction = getPriceDirection(lastPriceRef.current, price);
+    lastPriceRef.current = price;
+    if (direction === 'flat') return;
+    window.clearTimeout(flashTimerRef.current);
+    setPriceDirection(direction);
+    setPriceFlash(direction);
+    flashTimerRef.current = window.setTimeout(() => setPriceFlash('flat'), PRICE_FLASH_MS);
+  }, []);
+
+  const applyLiveCandle = useCallback((key: string, candle: CandlePoint) => {
+    if (historyKeyRef.current !== key || !seriesRef.current) return;
+    try {
+      seriesRef.current.update({ ...candle, time: candle.time as UTCTimestamp });
+    } catch (err) {
+      // The chart rejects candles older than its last bar; nothing to apply.
+      console.warn('Ignored out-of-order live candle:', err);
+      return;
+    }
+    setCandleData((current) => mergeLiveCandle(current, candle, MAX_LIVE_CANDLES));
+    setLastUpdated(new Date());
+    setRefreshFailed(false);
+  }, []);
+
+  const applyTicker = useCallback((key: string, ticker: LiveTicker) => {
+    setTickerState({ key, ticker });
+    showPriceMove(ticker.price);
+  }, [showPriceMove]);
+
+  // Live Binance stream: the forming candle (~every 2 s) and the 24h ticker
+  // (~every 1 s). Reconnects with increasing delays, and refetches history after
+  // a reconnect to fill the gap.
   useEffect(() => {
+    const binanceSymbol = toBinanceSymbol(symbol);
+    const interval = toBinanceInterval(timeframe);
+    if (dataSource !== 'binance' || !binanceSymbol || !interval) return;
+    const key = `${binanceSymbol}:${interval}`;
+    let socket: WebSocket | null = null;
+    let disposed = false;
+    let attempt = 0;
+    let retryTimer: number | undefined;
+
+    const connect = () => {
+      const current = new WebSocket(binanceStreamUrl(binanceSymbol, interval));
+      socket = current;
+      current.onopen = () => {
+        if (disposed) return;
+        const recovering = attempt > 0;
+        attempt = 0;
+        setStreamState({ key, status: 'live' });
+        if (recovering) void fetchChartData({ background: true });
+      };
+      current.onmessage = (event: MessageEvent) => {
+        if (disposed) return;
+        const message = parseStreamMessage(String(event.data));
+        if (message?.kind === 'kline') applyLiveCandle(key, message.candle);
+        else if (message?.kind === 'ticker') applyTicker(key, message.ticker);
+      };
+      current.onclose = () => {
+        if (disposed) return;
+        setStreamState({ key, status: 'reconnecting' });
+        const delay = RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)];
+        attempt += 1;
+        retryTimer = window.setTimeout(connect, delay);
+      };
+    };
+
+    connect();
+    return () => {
+      disposed = true;
+      window.clearTimeout(retryTimer);
+      socket?.close();
+    };
+  }, [dataSource, symbol, timeframe, fetchChartData, applyLiveCandle, applyTicker]);
+
+  useEffect(() => {
+    // Streamed markets update themselves; only backend-sourced charts poll.
+    if (dataSource === 'binance') return;
     const refresh = () => {
       if (document.visibilityState === 'visible') void fetchChartData({ background: true });
     };
@@ -294,7 +424,7 @@ export default function ChartPanel({
       window.clearInterval(intervalId);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, [fetchChartData, timeframe]);
+  }, [dataSource, fetchChartData, timeframe]);
 
   useEffect(() => {
     const smaSeries = overlaySeriesRef.current.sma20;
@@ -383,8 +513,24 @@ export default function ChartPanel({
   const macdData = calculateMACD(candleData);
   const latestRsi = rsiData[rsiData.length - 1]?.value ?? null;
   const latestMacd: MacdPoint | null = macdData[macdData.length - 1] ?? null;
-  const latestPrice = candleData[candleData.length - 1]?.close ?? null;
-  const dayChange = get24hChange(candleData);
+  const binanceSymbol = toBinanceSymbol(symbol);
+  const binanceInterval = toBinanceInterval(timeframe);
+  const streamKey = binanceSymbol && binanceInterval ? `${binanceSymbol}:${binanceInterval}` : null;
+  const streaming = dataSource === 'binance' && streamKey !== null;
+  const streamStatus: StreamStatus | null = streaming
+    ? (streamState?.key === streamKey ? streamState.status : 'connecting')
+    : null;
+  const liveTicker = streaming && tickerState?.key === streamKey ? tickerState.ticker : null;
+  // The ticker carries the exchange's own last price and 24h change; without it
+  // fall back to the loaded candles.
+  const latestPrice = liveTicker?.price ?? candleData[candleData.length - 1]?.close ?? null;
+  const dayChange = liveTicker ? { change: liveTicker.change, percent: liveTicker.percent } : get24hChange(candleData);
+  const statusDot = streaming
+    ? (streamStatus === 'live' ? 'bg-green-500 animate-pulse' : streamStatus === 'reconnecting' ? 'bg-amber-500' : 'bg-gray-600')
+    : (refreshFailed ? 'bg-amber-500' : lastUpdated ? 'bg-green-500 animate-pulse' : 'bg-gray-600');
+  const sourceTitle = streaming
+    ? `Streaming ${binanceSymbol} live from Binance (data-stream.binance.vision); the price updates about every second.`
+    : `Refreshes every ${getRefreshIntervalMs(timeframe) / 1000}s from Yahoo Finance via the backend; prices can lag the exchange.`;
   const timeframes = ['1m', '5m', '15m', '1h', '4h', '1D'];
 
   const toggleIndicator = (key: IndicatorKey) => {
@@ -398,18 +544,15 @@ export default function ChartPanel({
     <div className="w-full h-full flex flex-col bg-[#121216] pt-3">
       <div className="flex items-center justify-between pb-3 border-b border-[#2a2a35] flex-shrink-0">
         <div className="flex flex-wrap items-center gap-4">
-          <div
-            className="flex items-center gap-2"
-            title={`Refreshes every ${getRefreshIntervalMs(timeframe) / 1000}s from Yahoo Finance via the backend; prices can lag the exchange.`}
-          >
-            <div className={`w-2 h-2 rounded-full ${refreshFailed ? 'bg-amber-500' : lastUpdated ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`}></div>
+          <div className="flex items-center gap-2" title={sourceTitle}>
+            <div className={`w-2 h-2 rounded-full ${statusDot}`}></div>
             <h2 className="text-lg font-bold text-white tracking-widest uppercase">{symbol}</h2>
             {latestPrice !== null && (
               <div className="flex items-baseline gap-2">
                 <span
                   data-testid="last-price"
                   data-direction={priceDirection}
-                  className={`text-lg font-bold tabular-nums px-1.5 rounded transition-colors duration-700 ${
+                  className={`text-lg font-bold tabular-nums px-1.5 rounded transition-colors duration-500 ${
                     priceDirection === 'up' ? 'text-green-400' : priceDirection === 'down' ? 'text-red-400' : 'text-white'
                   } ${priceFlash === 'up' ? 'bg-green-500/25' : priceFlash === 'down' ? 'bg-red-500/25' : 'bg-transparent'}`}
                 >
@@ -428,7 +571,11 @@ export default function ChartPanel({
                 )}
               </div>
             )}
-            {lastUpdated && (
+            {streaming ? (
+              <span data-testid="live-status" className={`text-[10px] ${streamStatus === 'reconnecting' ? 'text-amber-400' : 'text-gray-500'}`}>
+                {streamStatus === 'live' ? 'Live · Binance' : streamStatus === 'reconnecting' ? 'Reconnecting to Binance…' : 'Connecting to Binance…'}
+              </span>
+            ) : lastUpdated && (
               <span data-testid="live-status" className={`text-[10px] ${refreshFailed ? 'text-amber-400' : 'text-gray-500'}`}>
                 {refreshFailed ? 'Update failed · last' : 'Live · updated'} {lastUpdated.toLocaleTimeString()}
               </span>

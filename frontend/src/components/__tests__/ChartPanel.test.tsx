@@ -4,8 +4,44 @@ import axios from 'axios';
 import ChartPanel from '../ChartPanel';
 import { getRefreshIntervalMs } from '../../lib/liveRefresh';
 import { formatPrice, get24hChange, getPriceDirection } from '../../lib/priceTicker';
+import { mergeLiveCandle, parseStreamMessage, toBinanceSymbol } from '../../lib/binanceMarket';
 
-type MockSeries = { kind: string; setData: ReturnType<typeof vi.fn> };
+type MockSeries = { kind: string; setData: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
+
+// Stands in for the browser WebSocket; tests drive open/messages/drops by hand.
+class FakeWebSocket {
+  static instances: FakeWebSocket[] = [];
+  url: string;
+  closed = false;
+  onopen: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onclose: ((event: CloseEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  constructor(url: string) {
+    this.url = url;
+    FakeWebSocket.instances.push(this);
+  }
+  close() { this.closed = true; }
+  open() { this.onopen?.(new Event('open')); }
+  emit(data: unknown) { this.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ stream: 'test', data }) })); }
+  drop() { this.onclose?.(new CloseEvent('close')); }
+}
+
+// No test may reach the real network: Binance history is offline unless a test
+// provides it, and live connections are fakes.
+const fetchMock = vi.fn<(url: string) => Promise<unknown>>();
+beforeEach(() => {
+  FakeWebSocket.instances = [];
+  fetchMock.mockReset();
+  fetchMock.mockRejectedValue(new Error('offline'));
+  vi.stubGlobal('fetch', fetchMock);
+  vi.stubGlobal('WebSocket', FakeWebSocket);
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 type MockChart = {
   series: MockSeries[];
   fitContent: ReturnType<typeof vi.fn>;
@@ -31,7 +67,7 @@ vi.mock('lightweight-charts', () => ({
     charts.push(chart);
     return {
       addSeries: (kind: string) => {
-        const series = { kind, setData: vi.fn() };
+        const series = { kind, setData: vi.fn(), update: vi.fn() };
         chart.series.push(series);
         return series;
       },
@@ -58,7 +94,12 @@ const candles = (close: number) => [
 ];
 
 const candleSeries = (chart: MockChart) => chart.series.find((series) => series.kind === 'Candlestick')!;
-const flush = () => act(async () => { await vi.advanceTimersByTimeAsync(0); });
+// Runs due timers, then drains chained promises (history fallbacks take a few hops).
+const advance = (ms: number) => act(async () => {
+  await vi.advanceTimersByTimeAsync(ms);
+  for (let i = 0; i < 5; i += 1) await vi.advanceTimersByTimeAsync(0);
+});
+const flush = () => advance(0);
 const setVisibility = (state: 'visible' | 'hidden') =>
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
 
@@ -83,7 +124,7 @@ describe('ChartPanel live refresh', () => {
 
   it('refreshes in the background without the loading overlay or a view reset', async () => {
     post.mockResolvedValueOnce({ data: candles(105) }).mockResolvedValue({ data: candles(108) });
-    render(<ChartPanel symbol="BTC/USDT" />);
+    render(<ChartPanel symbol="AAPL" />);
     await flush();
 
     expect(post).toHaveBeenCalledTimes(1);
@@ -105,7 +146,7 @@ describe('ChartPanel live refresh', () => {
   it('keeps the last good chart when a background refresh fails', async () => {
     post.mockResolvedValueOnce({ data: candles(105) }).mockRejectedValue(new Error('network down'));
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    render(<ChartPanel symbol="BTC/USDT" />);
+    render(<ChartPanel symbol="AAPL" />);
     await flush();
 
     await act(async () => { await vi.advanceTimersByTimeAsync(getRefreshIntervalMs('1h')); });
@@ -117,7 +158,7 @@ describe('ChartPanel live refresh', () => {
 
   it('skips refreshes while the tab is hidden and catches up when shown', async () => {
     post.mockResolvedValue({ data: candles(105) });
-    render(<ChartPanel symbol="BTC/USDT" />);
+    render(<ChartPanel symbol="AAPL" />);
     await flush();
 
     setVisibility('hidden');
@@ -137,7 +178,7 @@ describe('ChartPanel live refresh', () => {
     post
       .mockImplementationOnce(() => new Promise((resolve) => { resolveStale = resolve; }))
       .mockResolvedValue({ data: candles(200) });
-    render(<ChartPanel symbol="BTC/USDT" />);
+    render(<ChartPanel symbol="AAPL" />);
     await flush();
 
     fireEvent.click(screen.getByText('1m'));
@@ -200,7 +241,7 @@ describe('ChartPanel live price', () => {
 
   it('shows the latest price neutrally on first load', async () => {
     post.mockResolvedValue({ data: candles(105) });
-    render(<ChartPanel symbol="BTC/USDT" />);
+    render(<ChartPanel symbol="AAPL" />);
     await flush();
 
     const price = screen.getByTestId('last-price');
@@ -211,7 +252,7 @@ describe('ChartPanel live price', () => {
 
   it('turns green and flashes when a live refresh moves the price up', async () => {
     post.mockResolvedValueOnce({ data: candles(105) }).mockResolvedValue({ data: candles(108.5) });
-    render(<ChartPanel symbol="BTC/USDT" />);
+    render(<ChartPanel symbol="AAPL" />);
     await flush();
     await refresh();
 
@@ -229,7 +270,7 @@ describe('ChartPanel live price', () => {
       .mockResolvedValueOnce({ data: candles(105) })
       .mockResolvedValueOnce({ data: candles(101) })
       .mockResolvedValue({ data: candles(101) });
-    render(<ChartPanel symbol="BTC/USDT" />);
+    render(<ChartPanel symbol="AAPL" />);
     await flush();
     await refresh();
 
@@ -247,7 +288,7 @@ describe('ChartPanel live price', () => {
       .mockResolvedValueOnce({ data: candles(105) })
       .mockResolvedValueOnce({ data: candles(120) })
       .mockResolvedValue({ data: candles(90) });
-    render(<ChartPanel symbol="BTC/USDT" />);
+    render(<ChartPanel symbol="AAPL" />);
     await flush();
     await refresh();
     expect(screen.getByTestId('last-price')).toHaveAttribute('data-direction', 'up');
@@ -264,7 +305,7 @@ describe('ChartPanel live price', () => {
       { timestamp: '2026-10-23T11:00:00Z', open: 100, high: 100, low: 100, close: 190 },
     ];
     post.mockResolvedValue({ data: day });
-    render(<ChartPanel symbol="BTC/USDT" />);
+    render(<ChartPanel symbol="AAPL" />);
     await flush();
 
     const change = screen.getByTestId('day-change');
@@ -274,7 +315,7 @@ describe('ChartPanel live price', () => {
 
   it('hides the 24h change when history is shorter than a day', async () => {
     post.mockResolvedValue({ data: candles(105) });
-    render(<ChartPanel symbol="BTC/USDT" />);
+    render(<ChartPanel symbol="AAPL" />);
     await flush();
     expect(screen.queryByTestId('day-change')).not.toBeInTheDocument();
   });
@@ -288,7 +329,7 @@ describe('ChartPanel mouse wheel', () => {
   });
 
   it('leaves a plain wheel to scroll the page instead of zooming the chart', () => {
-    render(<ChartPanel symbol="BTC/USDT" />);
+    render(<ChartPanel symbol="AAPL" />);
     const wheel = new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true });
     charts[0].surface.dispatchEvent(wheel);
 
@@ -297,7 +338,7 @@ describe('ChartPanel mouse wheel', () => {
   });
 
   it('passes Ctrl + wheel and Cmd + wheel to the chart for zooming', () => {
-    render(<ChartPanel symbol="BTC/USDT" />);
+    render(<ChartPanel symbol="AAPL" />);
     fireEvent.wheel(charts[0].surface, { deltaY: -120, ctrlKey: true });
     fireEvent.wheel(charts[0].surface, { deltaY: -120, metaKey: true });
 
@@ -323,7 +364,7 @@ describe('ChartPanel history window', () => {
 
   it('requests a day of candles on 1m and the default elsewhere', async () => {
     post.mockResolvedValue({ data: candles(105) });
-    render(<ChartPanel symbol="BTC/USDT" />);
+    render(<ChartPanel symbol="AAPL" />);
     await flush();
     expect(post).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ interval: '1h', limit: 500 }));
 
@@ -334,10 +375,201 @@ describe('ChartPanel history window', () => {
 
   it('opens on the most recent candles instead of squeezing the whole history into view', async () => {
     post.mockResolvedValue({ data: manyCandles(1_000) });
-    render(<ChartPanel symbol="BTC/USDT" />);
+    render(<ChartPanel symbol="AAPL" />);
     await flush();
 
     expect(charts[0].fitContent).not.toHaveBeenCalled();
     expect(charts[0].setVisibleLogicalRange).toHaveBeenCalledWith({ from: 850, to: 1_002 });
+  });
+});
+
+describe('Binance market helpers', () => {
+  it('maps crypto pairs to Binance symbols and leaves stocks alone', () => {
+    expect(toBinanceSymbol('BTC/USDT')).toBe('BTCUSDT');
+    expect(toBinanceSymbol('eth/usdt')).toBe('ETHUSDT');
+    expect(toBinanceSymbol('SOL-USD')).toBe('SOLUSDT');
+    expect(toBinanceSymbol('AAPL')).toBeNull();
+    expect(toBinanceSymbol('BTC/EUR')).toBeNull();
+  });
+
+  it('parses kline and ticker messages and rejects anything malformed', () => {
+    expect(parseStreamMessage(JSON.stringify({ data: { e: 'kline', k: { t: 60_000, o: '1', h: '2', l: '0.5', c: '1.5' } } })))
+      .toEqual({ kind: 'kline', candle: { time: 60, open: 1, high: 2, low: 0.5, close: 1.5 } });
+    expect(parseStreamMessage(JSON.stringify({ data: { e: '24hrTicker', c: '101.5', p: '-2', P: '-1.93' } })))
+      .toEqual({ kind: 'ticker', ticker: { price: 101.5, change: -2, percent: -1.93 } });
+    expect(parseStreamMessage('not json')).toBeNull();
+    expect(parseStreamMessage(JSON.stringify({ data: { e: 'kline', k: { t: 1, o: 'x', h: '1', l: '1', c: '1' } } }))).toBeNull();
+    expect(parseStreamMessage(JSON.stringify({ data: { e: '24hrTicker', c: '0', p: '0', P: '0' } }))).toBeNull();
+    expect(parseStreamMessage(JSON.stringify({ data: { e: 'trade' } }))).toBeNull();
+  });
+
+  it('merges live candles by replacing, appending, capping and ignoring stale ones', () => {
+    const at = (time: number, close: number) => ({ time, open: 1, high: 1, low: 1, close });
+    const base = [at(1, 10), at(2, 20)];
+    expect(mergeLiveCandle(base, at(2, 25), 10)).toEqual([at(1, 10), at(2, 25)]);
+    expect(mergeLiveCandle(base, at(3, 30), 10)).toEqual([at(1, 10), at(2, 20), at(3, 30)]);
+    expect(mergeLiveCandle(base, at(3, 30), 2)).toEqual([at(2, 20), at(3, 30)]);
+    expect(mergeLiveCandle(base, at(1, 99), 10)).toBe(base);
+  });
+});
+
+describe('ChartPanel Binance live stream', () => {
+  const HOUR_MS = 3_600_000;
+  const START_MS = Date.UTC(2026, 9, 23, 10);
+  // Binance kline rows: [openTime ms, open, high, low, close, volume, closeTime].
+  const klineRows = (closes: number[]) =>
+    closes.map((close, i) => [START_MS + i * HOUR_MS, '100', '130', '90', String(close), '1', 0]);
+  const binanceHistory = (closes: number[]) =>
+    fetchMock.mockResolvedValue({ ok: true, json: () => Promise.resolve(klineRows(closes)) });
+  const socket = (index = FakeWebSocket.instances.length - 1) => FakeWebSocket.instances[index];
+  const status = () => screen.getByTestId('live-status');
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    charts.length = 0;
+    post.mockReset();
+    post.mockResolvedValue({ data: candles(105) });
+    setVisibility('visible');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('loads crypto history from Binance and opens a live stream for it', async () => {
+    binanceHistory([110, 120]);
+    render(<ChartPanel symbol="BTC/USDT" />);
+    await flush();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const url = fetchMock.mock.calls[0][0];
+    expect(url).toContain('data-api.binance.vision/api/v3/klines');
+    expect(url).toContain('symbol=BTCUSDT');
+    expect(url).toContain('interval=1h');
+    expect(url).toContain('limit=500');
+    expect(post).not.toHaveBeenCalled();
+    expect(candleSeries(charts[0]).setData).toHaveBeenCalledWith([
+      { time: START_MS / 1000, open: 100, high: 130, low: 90, close: 110 },
+      { time: START_MS / 1000 + 3_600, open: 100, high: 130, low: 90, close: 120 },
+    ]);
+
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(socket().url).toBe('wss://data-stream.binance.vision/stream?streams=btcusdt@kline_1h/btcusdt@ticker');
+    expect(status()).toHaveTextContent('Connecting to Binance');
+
+    act(() => socket().open());
+    expect(status()).toHaveTextContent('Live · Binance');
+  });
+
+  it('updates the forming candle and the price from the stream', async () => {
+    binanceHistory([110, 120]);
+    render(<ChartPanel symbol="BTC/USDT" />);
+    await flush();
+    act(() => socket().open());
+
+    act(() => socket().emit({ e: 'kline', k: { t: START_MS + HOUR_MS, o: '100', h: '135', l: '90', c: '125' } }));
+    expect(candleSeries(charts[0]).update).toHaveBeenLastCalledWith(
+      { time: START_MS / 1000 + 3_600, open: 100, high: 135, low: 90, close: 125 },
+    );
+
+    act(() => socket().emit({ e: '24hrTicker', c: '126.5', p: '-3.5', P: '-2.69' }));
+    const price = screen.getByTestId('last-price');
+    expect(price).toHaveTextContent('126.50');
+    expect(price).toHaveAttribute('data-direction', 'up');
+    expect(price).toHaveClass('text-green-400', 'bg-green-500/25');
+    expect(screen.getByTestId('day-change')).toHaveTextContent('-3.50 (-2.69%) 24h');
+    expect(screen.getByTestId('day-change')).toHaveClass('text-red-400');
+
+    act(() => socket().emit({ e: '24hrTicker', c: '126.1', p: '-3.9', P: '-3.00' }));
+    expect(price).toHaveTextContent('126.10');
+    expect(price).toHaveAttribute('data-direction', 'down');
+    expect(price).toHaveClass('text-red-400', 'bg-red-500/25');
+  });
+
+  it('does not poll for history while streaming', async () => {
+    binanceHistory([110, 120]);
+    render(<ChartPanel symbol="BTC/USDT" />);
+    await flush();
+    act(() => socket().open());
+
+    await advance(10 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('reconnects after the stream drops and refills the missed history', async () => {
+    binanceHistory([110, 120]);
+    render(<ChartPanel symbol="BTC/USDT" />);
+    await flush();
+    act(() => socket().open());
+
+    act(() => socket().drop());
+    expect(status()).toHaveTextContent('Reconnecting to Binance');
+
+    await advance(999);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    await advance(1);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+
+    act(() => socket().open());
+    await flush();
+    expect(status()).toHaveTextContent('Live · Binance');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('waits longer between repeated reconnect attempts', async () => {
+    binanceHistory([110, 120]);
+    render(<ChartPanel symbol="BTC/USDT" />);
+    await flush();
+
+    act(() => socket().drop());
+    await advance(1_000);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+
+    act(() => socket().drop());
+    await advance(1_999);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    await advance(1);
+    expect(FakeWebSocket.instances).toHaveLength(3);
+  });
+
+  it('falls back to the backend and polling when Binance is unreachable', async () => {
+    render(<ChartPanel symbol="BTC/USDT" />);
+    await flush();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ symbol: 'BTC/USDT', asset_type: 'crypto' }));
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(status()).toHaveTextContent('Live · updated');
+
+    await advance(getRefreshIntervalMs('1h'));
+    expect(post).toHaveBeenCalledTimes(2);
+  });
+
+  it('never contacts Binance for stocks', async () => {
+    render(<ChartPanel symbol="AAPL" />);
+    await flush();
+    await advance(getRefreshIntervalMs('1h'));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(post).toHaveBeenCalledTimes(2);
+  });
+
+  it('closes the old stream and ignores its candles after switching timeframe', async () => {
+    binanceHistory([110, 120]);
+    render(<ChartPanel symbol="BTC/USDT" />);
+    await flush();
+    const first = socket();
+    act(() => first.open());
+
+    fireEvent.click(screen.getByText('1m'));
+    await flush();
+
+    expect(first.closed).toBe(true);
+    expect(socket().url).toContain('btcusdt@kline_1m');
+    act(() => first.emit({ e: 'kline', k: { t: START_MS + HOUR_MS, o: '1', h: '1', l: '1', c: '999' } }));
+    expect(candleSeries(charts[charts.length - 1]).update).not.toHaveBeenCalled();
   });
 });
