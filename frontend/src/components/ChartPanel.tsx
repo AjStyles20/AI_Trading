@@ -241,6 +241,17 @@ export default function ChartPanel({
 
     fetchChartData();
 
+    // The chart zooms on every mouse wheel event, which traps the page: with the
+    // pointer over the chart the user cannot scroll back up. Let the plain wheel
+    // scroll the page and keep chart zoom on Ctrl/Cmd + wheel (also what a
+    // touchpad pinch sends). Stopping the event while it travels down to the
+    // chart leaves the browser's default page scroll intact.
+    const container = chartContainerRef.current;
+    const passWheelToPage = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) event.stopPropagation();
+    };
+    container.addEventListener('wheel', passWheelToPage, { capture: true });
+
     const handleResize = () => {
       if (chartContainerRef.current && chart) {
         chart.applyOptions({
@@ -254,6 +265,7 @@ export default function ChartPanel({
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      container.removeEventListener('wheel', passWheelToPage, { capture: true });
       // Invalidate any in-flight fetch so it cannot write to the removed chart.
       requestIdRef.current += 1;
       inFlightRef.current = false;
@@ -374,7 +386,7 @@ export default function ChartPanel({
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-[#121216]">
+    <div className="w-full h-full flex flex-col bg-[#121216] pt-3">
       <div className="flex items-center justify-between pb-3 border-b border-[#2a2a35] flex-shrink-0">
         <div className="flex flex-wrap items-center gap-4">
           <div
@@ -463,6 +475,9 @@ export default function ChartPanel({
           ref={chartContainerRef}
           className="absolute inset-0 bg-[#0a0a0c] rounded-xl border border-[#2a2a35] overflow-hidden"
         />
+        <div className="pointer-events-none absolute top-2 left-3 z-10 text-[10px] text-gray-600">
+          Ctrl + scroll to zoom · drag to pan
+        </div>
         {isLoading && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/40 backdrop-blur-[2px] rounded-xl">
             <div className="flex flex-col items-center gap-2">

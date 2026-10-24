@@ -1812,7 +1812,7 @@ export default function BottomPanel({
         ))}
       </div>
 
-      <div className="flex-1 w-full overflow-y-auto font-mono text-xs mt-2 p-3 bg-[#0a0a0c] rounded border border-[#2a2a35]">
+      <div className="flex-1 w-full min-h-[420px] max-h-[75vh] overflow-y-auto font-mono text-xs mt-2 p-3 bg-[#0a0a0c] rounded border border-[#2a2a35]">
         {activeTab === 'code' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">

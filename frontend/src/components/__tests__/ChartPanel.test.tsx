@@ -1,12 +1,19 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import axios from 'axios';
 import ChartPanel from '../ChartPanel';
 import { getRefreshIntervalMs } from '../../lib/liveRefresh';
 import { formatPrice, get24hChange, getPriceDirection } from '../../lib/priceTicker';
 
 type MockSeries = { kind: string; setData: ReturnType<typeof vi.fn> };
-type MockChart = { series: MockSeries[]; fitContent: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> };
+type MockChart = {
+  series: MockSeries[];
+  fitContent: ReturnType<typeof vi.fn>;
+  remove: ReturnType<typeof vi.fn>;
+  // Stands in for the real chart's own wheel (zoom) handler on its drawing surface.
+  wheel: Mock<(event: Event) => void>;
+  surface: HTMLElement;
+};
 
 const charts: MockChart[] = [];
 
@@ -15,8 +22,11 @@ vi.mock('lightweight-charts', () => ({
   CandlestickSeries: 'Candlestick',
   LineSeries: 'Line',
   createSeriesMarkers: () => ({ setMarkers: vi.fn() }),
-  createChart: () => {
-    const chart: MockChart = { series: [], fitContent: vi.fn(), remove: vi.fn() };
+  createChart: (container: HTMLElement) => {
+    const surface = document.createElement('div');
+    container.appendChild(surface);
+    const chart: MockChart = { series: [], fitContent: vi.fn(), remove: vi.fn(), wheel: vi.fn<(event: Event) => void>(), surface };
+    surface.addEventListener('wheel', (event) => chart.wheel(event));
     charts.push(chart);
     return {
       addSeries: (kind: string) => {
@@ -266,5 +276,30 @@ describe('ChartPanel live price', () => {
     render(<ChartPanel symbol="BTC/USDT" />);
     await flush();
     expect(screen.queryByTestId('day-change')).not.toBeInTheDocument();
+  });
+});
+
+describe('ChartPanel mouse wheel', () => {
+  beforeEach(() => {
+    charts.length = 0;
+    post.mockReset();
+    post.mockResolvedValue({ data: candles(105) });
+  });
+
+  it('leaves a plain wheel to scroll the page instead of zooming the chart', () => {
+    render(<ChartPanel symbol="BTC/USDT" />);
+    const wheel = new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true });
+    charts[0].surface.dispatchEvent(wheel);
+
+    expect(charts[0].wheel).not.toHaveBeenCalled();
+    expect(wheel.defaultPrevented).toBe(false);
+  });
+
+  it('passes Ctrl + wheel and Cmd + wheel to the chart for zooming', () => {
+    render(<ChartPanel symbol="BTC/USDT" />);
+    fireEvent.wheel(charts[0].surface, { deltaY: -120, ctrlKey: true });
+    fireEvent.wheel(charts[0].surface, { deltaY: -120, metaKey: true });
+
+    expect(charts[0].wheel).toHaveBeenCalledTimes(2);
   });
 });

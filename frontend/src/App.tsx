@@ -42,8 +42,11 @@ function App() {
 
       {/* Main Content Area */}
       <div className="flex flex-col flex-1 overflow-y-auto overscroll-contain scroll-smooth">
-        {/* Top/Center Panel - Charts & Indicators / Strategy Builder */}
-        <div className="bg-[#121216] border-b border-[#2a2a35] p-0 flex flex-col relative w-full min-h-[450px]">
+        {/* Top/Center Panel - Charts & Indicators / Strategy Builder.
+            shrink-0 with a definite height: as flex items of the scroll
+            container, both panels would otherwise be squeezed to their minimum
+            heights, starving the chart and clipping the bottom panel. */}
+        <div className="bg-[#121216] border-b border-[#2a2a35] p-0 flex flex-col relative w-full shrink-0 h-[max(480px,85vh)]">
           {activeView === 'chart' ? (
             <ChartPanel
               symbol={symbol}
@@ -59,7 +62,7 @@ function App() {
         </div>
 
         {/* Bottom Panel - Strategy Code & Backtest Results */}
-        <div className="bg-[#0f0f13] p-4 flex flex-col min-h-[350px]">
+        <div className="bg-[#0f0f13] p-4 flex flex-col shrink-0 min-h-[350px]">
           <BottomPanel 
             symbol={symbol}
             assetType={assetType}
