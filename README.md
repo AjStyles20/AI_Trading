@@ -124,6 +124,10 @@ the same model name and save. Ollama runs separately; the installer does not
 include a model or start its server. OpenAI and Groq prompts leave your
 computer for their respective providers; Ollama prompts go to localhost.
 
+See [docs/AI_GUIDE.md](docs/AI_GUIDE.md) for the full AI guide: choosing a
+provider, setup, privacy, safe use of generated strategies, and
+troubleshooting.
+
 ## Development
 
 Backend:
