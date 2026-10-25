@@ -3,7 +3,6 @@ import axios from 'axios';
 
 import { BACKEND_URL } from '../lib/api';
 import ChatMessage from './ChatMessage';
-import { transcriptToHtml, wordDocument } from '../lib/chatDocument';
 import {
   copyRich,
   downloadTextFile,
@@ -276,6 +275,8 @@ export default function Sidebar({
   }, [chatExpanded]);
 
   const copyTranscript = async () => {
+    // The HTML converter is loaded on demand, only when copying or saving.
+    const { transcriptToHtml } = await import('../lib/chatDocument');
     if (await copyRich(transcriptToHtml(messages), toMarkdownTranscript(messages))) {
       setTranscriptCopied(true);
       window.setTimeout(() => setTranscriptCopied(false), 1_500);
@@ -284,9 +285,10 @@ export default function Sidebar({
 
   const exportTranscript = () => downloadTextFile(transcriptFilename(), toMarkdownTranscript(messages));
   // Word opens this HTML-based .doc directly, tables and formatting included.
-  const exportWord = () => downloadTextFile(
-    transcriptFilename(new Date(), 'doc'), wordDocument(transcriptToHtml(messages)), 'application/msword',
-  );
+  const exportWord = async () => {
+    const { transcriptToHtml, wordDocument } = await import('../lib/chatDocument');
+    downloadTextFile(transcriptFilename(new Date(), 'doc'), wordDocument(transcriptToHtml(messages)), 'application/msword');
+  };
 
   // Starts a fresh conversation. The previous one stays saved; the AI's
   // long-term memory is not cleared.
@@ -789,7 +791,7 @@ export default function Sidebar({
             <button type="button" onClick={startNewConversation} disabled={isLoading} title="Start a new conversation (the current one stays saved)" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors disabled:opacity-40">New</button>
             <button type="button" onClick={() => void copyTranscript()} title="Copy the whole conversation (pastes formatted into Word or Docs)" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors">{transcriptCopied ? 'Copied' : 'Copy all'}</button>
             <button type="button" onClick={exportTranscript} title="Save the conversation as a Markdown file" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors">.md</button>
-            <button type="button" onClick={exportWord} title="Save the conversation as a Word document" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors">Word</button>
+            <button type="button" onClick={() => void exportWord()} title="Save the conversation as a Word document" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors">Word</button>
             <button
               type="button"
               onClick={() => setChatExpanded((expanded) => !expanded)}

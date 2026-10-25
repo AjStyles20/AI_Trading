@@ -2,7 +2,6 @@ import { useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from 
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { copyRich, copyText, type ChatMessage as ChatMessageData } from '../lib/chatTranscript';
-import { messageToHtml } from '../lib/chatDocument';
 
 const useCopied = () => {
   const [copied, setCopied] = useState(false);
@@ -94,7 +93,11 @@ export default function ChatMessage({ message, footer }: { message: ChatMessageD
           <button
             type="button"
             // Formatted for Word/Docs, with plain text for plain editors.
-            onClick={() => void copy(() => copyRich(messageToHtml(message), message.text))}
+            onClick={() => void copy(async () => {
+              // Loaded on demand: the HTML converter is only needed when copying.
+              const { messageToHtml } = await import('../lib/chatDocument');
+              return copyRich(messageToHtml(message), message.text);
+            })}
             aria-label="Copy message"
             className="opacity-60 hover:opacity-100 underline-offset-2 hover:underline"
           >

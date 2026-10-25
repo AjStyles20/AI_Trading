@@ -377,7 +377,7 @@ describe('Sidebar chat: Word-friendly copy and export', () => {
     });
     await renderChat();
 
-    fireEvent.click(screen.getByText('Word'));
+    await act(async () => { fireEvent.click(screen.getByText('Word')); });
 
     expect(filename).toMatch(/^astral-chat-\d{4}-\d{2}-\d{2}-\d{4}\.doc$/);
     expect(saved!.type).toBe('application/msword;charset=utf-8');
