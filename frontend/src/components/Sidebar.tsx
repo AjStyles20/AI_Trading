@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 
 import { BACKEND_URL } from '../lib/api';
@@ -27,6 +28,8 @@ import {
 const CONVERSATION_KEY = 'astral.chat.conversationId';
 const DEFAULT_CONVERSATION_ID = 'main_session';
 const HISTORY_LIMIT = 500;
+// The backend may still be starting when the page opens; keep trying.
+const SETTINGS_RETRY_MS = 5_000;
 
 const readConversationId = (): string => {
   try {
@@ -134,11 +137,14 @@ export default function Sidebar({
     ? Boolean(aiModel.trim())
     : aiProvider === 'groq' ? Boolean(groqKey) : Boolean(openaiKey && openaiKey !== 'mock-key');
  
-  // Fetch settings on load
+  // Fetch settings on load, retrying until the backend answers.
   useEffect(() => {
+    let cancelled = false;
+    let retryTimer: number | undefined;
     const fetchSettings = async () => {
       try {
         const res = await axios.get(`${BACKEND_URL}/api/settings`);
+        if (cancelled) return;
         setBackendOnline(true);
         const provider = ['openai', 'groq', 'ollama'].includes(res.data.ai_provider)
           ? res.data.ai_provider as 'openai' | 'groq' | 'ollama' : 'openai';
@@ -192,10 +198,16 @@ export default function Sidebar({
         setAlpacaPaperSecret(storedKey('alpaca_paper_secret'));
         setTempAlpacaPaperSecret(storedKey('alpaca_paper_secret'));
       } catch {
+        if (cancelled) return;
         setBackendOnline(false);
+        retryTimer = window.setTimeout(() => void fetchSettings(), SETTINGS_RETRY_MS);
       }
     };
-    fetchSettings();
+    void fetchSettings();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(retryTimer);
+    };
   }, []);
 
   const saveSettings = async () => {
@@ -273,8 +285,10 @@ export default function Sidebar({
     messageEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, chatExpanded]);
 
-  // Reload the saved conversation so the chat survives a page reload.
+  // Reload the saved conversation so the chat survives a page reload. Waits
+  // until the backend is reachable, so a slow backend start still loads it.
   useEffect(() => {
+    if (!backendOnline) return;
     let cancelled = false;
     axios.get(`${BACKEND_URL}/api/chat/history`, { params: { conversation_id: conversationId, limit: HISTORY_LIMIT } })
       .then((res) => {
@@ -283,7 +297,7 @@ export default function Sidebar({
       })
       .catch(() => { /* Backend offline: start with an empty conversation. */ });
     return () => { cancelled = true; };
-  }, [conversationId]);
+  }, [conversationId, backendOnline]);
 
   useEffect(() => {
     if (!chatExpanded) return;
@@ -445,6 +459,140 @@ export default function Sidebar({
       setIsSearching(false);
     }
   };
+
+  // Docked in the sidebar, or expanded into a large overlay (Esc closes). The
+  // expanded overlay is rendered into <body> so it always sits above the chart.
+  const chatPanel = (
+    <div
+      className={chatExpanded ? 'fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4' : 'flex-1 min-h-0 flex flex-col'}
+      onClick={chatExpanded ? (event) => { if (event.target === event.currentTarget) setChatExpanded(false); } : undefined}
+    >
+      <div
+        role={chatExpanded ? 'dialog' : undefined}
+        aria-label={chatExpanded ? 'Astral AI chat' : undefined}
+        className={chatExpanded
+          ? 'w-[min(1100px,96vw)] h-[92vh] flex flex-col bg-[#111115] border border-[#2a2a35] rounded-xl shadow-2xl overflow-hidden'
+          : 'flex-1 min-h-0 flex flex-col'}
+      >
+        <div className="flex items-center gap-0.5 px-3 py-1.5 border-b border-[#2a2a35] text-[10px] text-gray-400 flex-shrink-0">
+          <span className="mr-auto font-semibold uppercase tracking-widest text-gray-500">Chat</span>
+          <button type="button" onClick={startNewConversation} disabled={isLoading} title="Start a new conversation (the current one stays saved)" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors disabled:opacity-40">New</button>
+          <button type="button" onClick={() => void copyTranscript()} title="Copy the whole conversation (pastes formatted into Word or Docs)" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors">{transcriptCopied ? 'Copied' : 'Copy all'}</button>
+          <button type="button" onClick={exportTranscript} title="Save the conversation as a Markdown file" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors">.md</button>
+          <button type="button" onClick={() => void exportWord()} title="Save the conversation as a Word document" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors">Word</button>
+          <button
+            type="button"
+            onClick={() => setChatExpanded((expanded) => !expanded)}
+            title={chatExpanded ? 'Close the expanded view (Esc)' : 'Expand the chat'}
+            aria-label={chatExpanded ? 'Close expanded chat' : 'Expand chat'}
+            className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors text-[#a55eea]"
+          >
+            {chatExpanded ? '✕ Close' : '⤢ Expand'}
+          </button>
+        </div>
+
+        {/* Messages */}
+        <div className={`flex-1 overflow-y-auto space-y-3 ${chatExpanded ? 'p-6' : 'p-3'}`}>
+          {messages.map((msg) => <ChatMessage key={msg.id} message={msg} />)}
+
+          {/* Typing indicator */}
+          {isLoading && (
+            <div className="flex justify-start">
+              <div className="bg-[#1c1c26] border border-[#2a2a35] rounded-xl rounded-bl-sm px-4 py-3">
+                <div className="flex gap-1.5 items-center">
+                  {[0, 1, 2].map(i => (
+                    <div key={i} className="w-1.5 h-1.5 bg-[#a55eea] rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }}></div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={messageEndRef} />
+        </div>
+
+        {/* Quick Suggestions */}
+        {messages.length < 2 && !isLoading && (
+          <div className="px-3 pb-2 space-y-1.5 flex-shrink-0">
+            {SUGGESTIONS.map((s) => (
+              <button
+                key={s}
+                onClick={() => sendMessage(s)}
+                className="w-full text-left text-xs text-gray-400 px-3 py-2 rounded-lg border border-[#2a2a35] bg-[#1a1a22] hover:border-[#a55eea] hover:text-[#a55eea] transition-all"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Input */}
+        <div className="p-3 border-t border-[#2a2a35] bg-[#0d0d12] flex-shrink-0">
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-2" data-testid="attachment-previews">
+              {attachments.map((attachment) => (
+                <div key={attachment.id} className="relative">
+                  <img src={attachment.dataUrl} alt={attachment.name} className="w-14 h-14 object-cover rounded-md border border-[#2a2a35]" />
+                  <button
+                    type="button"
+                    onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
+                    aria-label={`Remove ${attachment.name}`}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[#2a2a35] text-[9px] text-white hover:bg-red-500"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {attachError && <p role="alert" className="text-[10px] text-amber-400 mb-2">{attachError}</p>}
+          <div className="relative flex items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={[...ACCEPTED_IMAGE_TYPES, ...ACCEPTED_VIDEO_TYPES].join(',')}
+              multiple
+              hidden
+              data-testid="image-file-input"
+              onChange={(e) => {
+                void addImageFiles(Array.from(e.target.files ?? []));
+                e.target.value = '';
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isLoading || attachments.length >= MAX_ATTACHMENTS}
+              title="Attach images or a video (or paste a screenshot)"
+              aria-label="Attach images"
+              className="w-9 h-9 rounded-lg border border-[#2a2a35] text-gray-400 flex items-center justify-center hover:text-white hover:border-[#a55eea] transition-colors disabled:opacity-40 flex-shrink-0"
+            >
+              📎
+            </button>
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              disabled={isLoading}
+              placeholder={aiConfigured ? "Ask AI to analyze..." : "Configure an AI provider in Settings ⚙️"}
+              className="flex-1 bg-[#1c1c24] text-sm text-white rounded-lg border border-[#2a2a35] focus:border-[#a55eea] focus:ring-1 focus:ring-[#a55eea] outline-none py-2.5 pl-3 pr-3 transition-all disabled:opacity-50"
+            />
+            <button
+              onClick={() => sendMessage(input)}
+              disabled={isLoading || (!input.trim() && attachments.length === 0) || !aiConfigured}
+              className="w-9 h-9 rounded-lg bg-[#a55eea] flex items-center justify-center text-white hover:bg-[#b87ef7] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="m22 2-7 20-4-9-9-4Z"/>
+                <path d="M22 2 11 13"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="w-80 h-full bg-[#111115] border-r border-[#2a2a35] flex flex-col shadow-2xl z-20 relative">
@@ -847,136 +995,7 @@ export default function Sidebar({
         </div>
       )}
 
-      {/* Chat: docked in the sidebar, or expanded into a large overlay (Esc closes) */}
-      <div
-        className={chatExpanded ? 'fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4' : 'flex-1 min-h-0 flex flex-col'}
-        onClick={chatExpanded ? (event) => { if (event.target === event.currentTarget) setChatExpanded(false); } : undefined}
-      >
-        <div
-          role={chatExpanded ? 'dialog' : undefined}
-          aria-label={chatExpanded ? 'Astral AI chat' : undefined}
-          className={chatExpanded
-            ? 'w-[min(1100px,96vw)] h-[92vh] flex flex-col bg-[#111115] border border-[#2a2a35] rounded-xl shadow-2xl overflow-hidden'
-            : 'flex-1 min-h-0 flex flex-col'}
-        >
-          <div className="flex items-center gap-0.5 px-3 py-1.5 border-b border-[#2a2a35] text-[10px] text-gray-400 flex-shrink-0">
-            <span className="mr-auto font-semibold uppercase tracking-widest text-gray-500">Chat</span>
-            <button type="button" onClick={startNewConversation} disabled={isLoading} title="Start a new conversation (the current one stays saved)" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors disabled:opacity-40">New</button>
-            <button type="button" onClick={() => void copyTranscript()} title="Copy the whole conversation (pastes formatted into Word or Docs)" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors">{transcriptCopied ? 'Copied' : 'Copy all'}</button>
-            <button type="button" onClick={exportTranscript} title="Save the conversation as a Markdown file" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors">.md</button>
-            <button type="button" onClick={() => void exportWord()} title="Save the conversation as a Word document" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors">Word</button>
-            <button
-              type="button"
-              onClick={() => setChatExpanded((expanded) => !expanded)}
-              title={chatExpanded ? 'Close the expanded view (Esc)' : 'Expand the chat'}
-              aria-label={chatExpanded ? 'Close expanded chat' : 'Expand chat'}
-              className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors text-[#a55eea]"
-            >
-              {chatExpanded ? '✕ Close' : '⤢ Expand'}
-            </button>
-          </div>
-
-          {/* Messages */}
-          <div className={`flex-1 overflow-y-auto space-y-3 ${chatExpanded ? 'p-6' : 'p-3'}`}>
-            {messages.map((msg) => <ChatMessage key={msg.id} message={msg} />)}
-
-            {/* Typing indicator */}
-            {isLoading && (
-              <div className="flex justify-start">
-                <div className="bg-[#1c1c26] border border-[#2a2a35] rounded-xl rounded-bl-sm px-4 py-3">
-                  <div className="flex gap-1.5 items-center">
-                    {[0, 1, 2].map(i => (
-                      <div key={i} className="w-1.5 h-1.5 bg-[#a55eea] rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }}></div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-            <div ref={messageEndRef} />
-          </div>
-
-          {/* Quick Suggestions */}
-          {messages.length < 2 && !isLoading && (
-            <div className="px-3 pb-2 space-y-1.5 flex-shrink-0">
-              {SUGGESTIONS.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => sendMessage(s)}
-                  className="w-full text-left text-xs text-gray-400 px-3 py-2 rounded-lg border border-[#2a2a35] bg-[#1a1a22] hover:border-[#a55eea] hover:text-[#a55eea] transition-all"
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Input */}
-          <div className="p-3 border-t border-[#2a2a35] bg-[#0d0d12] flex-shrink-0">
-            {attachments.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-2" data-testid="attachment-previews">
-                {attachments.map((attachment) => (
-                  <div key={attachment.id} className="relative">
-                    <img src={attachment.dataUrl} alt={attachment.name} className="w-14 h-14 object-cover rounded-md border border-[#2a2a35]" />
-                    <button
-                      type="button"
-                      onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
-                      aria-label={`Remove ${attachment.name}`}
-                      className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[#2a2a35] text-[9px] text-white hover:bg-red-500"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            {attachError && <p role="alert" className="text-[10px] text-amber-400 mb-2">{attachError}</p>}
-            <div className="relative flex items-center gap-2">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept={[...ACCEPTED_IMAGE_TYPES, ...ACCEPTED_VIDEO_TYPES].join(',')}
-                multiple
-                hidden
-                data-testid="image-file-input"
-                onChange={(e) => {
-                  void addImageFiles(Array.from(e.target.files ?? []));
-                  e.target.value = '';
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isLoading || attachments.length >= MAX_ATTACHMENTS}
-                title="Attach images or a video (or paste a screenshot)"
-                aria-label="Attach images"
-                className="w-9 h-9 rounded-lg border border-[#2a2a35] text-gray-400 flex items-center justify-center hover:text-white hover:border-[#a55eea] transition-colors disabled:opacity-40 flex-shrink-0"
-              >
-                📎
-              </button>
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-                disabled={isLoading}
-                placeholder={aiConfigured ? "Ask AI to analyze..." : "Configure an AI provider in Settings ⚙️"}
-                className="flex-1 bg-[#1c1c24] text-sm text-white rounded-lg border border-[#2a2a35] focus:border-[#a55eea] focus:ring-1 focus:ring-[#a55eea] outline-none py-2.5 pl-3 pr-3 transition-all disabled:opacity-50"
-              />
-              <button
-                onClick={() => sendMessage(input)}
-                disabled={isLoading || (!input.trim() && attachments.length === 0) || !aiConfigured}
-                className="w-9 h-9 rounded-lg bg-[#a55eea] flex items-center justify-center text-white hover:bg-[#b87ef7] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="m22 2-7 20-4-9-9-4Z"/>
-                  <path d="M22 2 11 13"/>
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+      {chatExpanded ? createPortal(chatPanel, document.body) : chatPanel}
     </div>
   );
 }

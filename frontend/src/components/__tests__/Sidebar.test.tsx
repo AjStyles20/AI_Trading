@@ -623,3 +623,58 @@ describe('Sidebar chat: video attachments', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('The video could not be read in this app.');
   });
 });
+
+describe('Sidebar startup and expanded chat', () => {
+  const configured = { ...savedSettings, ai_provider: 'groq', credential_presence: { groq: true } };
+
+  beforeEach(() => {
+    get.mockReset();
+    post.mockReset();
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('keeps retrying settings until a slow-starting backend answers, then loads the chat', async () => {
+    vi.useFakeTimers();
+    let settingsCalls = 0;
+    get.mockImplementation((url: string) => {
+      if (String(url).endsWith('/api/chat/history')) {
+        return Promise.resolve({ data: { messages: [{ role: 'user', content: 'Saved question', created_at: '2026-10-25 10:00:00' }] } });
+      }
+      settingsCalls += 1;
+      return settingsCalls < 3 ? Promise.reject(new Error('backend starting')) : Promise.resolve({ data: configured });
+    });
+    render(<Sidebar activeView="chart" onViewChange={vi.fn()} currentSymbol="BTC/USDT" onSymbolChange={vi.fn()} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByPlaceholderText(/Configure an AI provider/)).toBeInTheDocument();
+    expect(get).not.toHaveBeenCalledWith(expect.stringContaining('/api/chat/history'), expect.anything());
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+
+    expect(settingsCalls).toBe(3);
+    expect(screen.getByPlaceholderText('Ask AI to analyze...')).toBeInTheDocument();
+    expect(screen.getByText('Saved question')).toBeInTheDocument();
+  });
+
+  it('renders the expanded chat at the top of the page, above everything else', async () => {
+    get.mockImplementation((url: string) => Promise.resolve(
+      String(url).endsWith('/api/chat/history') ? { data: { messages: [] } } : { data: configured },
+    ));
+    const { container } = render(<Sidebar activeView="chart" onViewChange={vi.fn()} currentSymbol="BTC/USDT" onSymbolChange={vi.fn()} />);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByLabelText('Expand chat'));
+    const dialog = document.querySelector('[role=dialog]')!;
+
+    expect(container.contains(dialog)).toBe(false);
+    expect(dialog.parentElement!.parentElement).toBe(document.body);
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(document.querySelector('[role=dialog]')).toBeNull();
+    expect(container.contains(screen.getByPlaceholderText('Ask AI to analyze...'))).toBe(true);
+  });
+});
