@@ -36,9 +36,9 @@ export const toMarkdownTranscript = (messages: ChatMessage[], exportedAt: Date =
   return `${parts.join('\n').trimEnd()}\n`;
 };
 
-export const transcriptFilename = (date: Date = new Date()): string => {
+export const transcriptFilename = (date: Date = new Date(), extension = 'md'): string => {
   const pad = (value: number) => String(value).padStart(2, '0');
-  return `astral-chat-${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}.md`;
+  return `astral-chat-${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}.${extension}`;
 };
 
 export const downloadTextFile = (filename: string, text: string, type = 'text/markdown') => {
@@ -59,4 +59,24 @@ export const copyText = async (text: string): Promise<boolean> => {
   } catch {
     return false;
   }
+};
+
+// Puts formatted HTML and plain text on the clipboard together, so pasting into
+// Word or Google Docs keeps tables and headings while plain editors get text.
+// Falls back to plain text where rich clipboard writes are unavailable.
+export const copyRich = async (html: string, plain: string): Promise<boolean> => {
+  try {
+    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([plain], { type: 'text/plain' }),
+        }),
+      ]);
+      return true;
+    }
+  } catch {
+    // Fall back to plain text below.
+  }
+  return copyText(plain);
 };

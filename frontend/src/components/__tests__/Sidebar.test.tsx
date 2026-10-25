@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import Sidebar from '../Sidebar';
 import { fromStoredMessages, toMarkdownTranscript, transcriptFilename } from '../../lib/chatTranscript';
+import { markdownToHtml, messageToHtml, transcriptToHtml, wordDocument } from '../../lib/chatDocument';
 
 vi.mock('axios', () => ({
   default: {
@@ -250,7 +251,7 @@ describe('Sidebar chat', () => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
     await renderChat();
 
-    fireEvent.click(screen.getByText('Export'));
+    fireEvent.click(screen.getByText('.md'));
 
     expect(click).toHaveBeenCalled();
     const text = await exported!.text();
@@ -273,5 +274,113 @@ describe('Sidebar chat', () => {
     await send('second');
     expect(post).toHaveBeenLastCalledWith(expect.stringContaining('/api/chat'),
       { query: 'second', conversation_id: newId }, expect.anything());
+  });
+});
+
+describe('chat document (Word) helpers', () => {
+  it('renders Markdown tables with visible borders for word processors', () => {
+    const html = markdownToHtml('| Rule | Value |\n|---|---|\n| Stop | 2% |');
+    expect(html).toContain('<table border="1"');
+    expect(html).toContain('<td>2%</td>');
+  });
+
+  it('escapes HTML from messages instead of passing it through', () => {
+    const html = markdownToHtml('Look <img src="x" onerror="alert(1)"> <script>alert(2)</script>');
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('<script');
+  });
+
+  it('keeps the user\'s own text literal, with line breaks', () => {
+    const html = messageToHtml({ id: '1', role: 'user', text: '## not a heading\nnext line', timestamp: '' });
+    expect(html).not.toContain('<h2');
+    expect(html).toContain('## not a heading<br/>next line');
+  });
+
+  it('wraps a transcript in a Word-compatible document', () => {
+    const body = transcriptToHtml([
+      { id: '1', role: 'user', text: 'Explain RSI', timestamp: '4:19 PM' },
+      { id: '2', role: 'assistant', text: '**RSI** measures momentum.', timestamp: '4:20 PM' },
+    ]);
+    const doc = wordDocument(body);
+    expect(doc).toContain('xmlns:w="urn:schemas-microsoft-com:office:word"');
+    expect(doc).toContain('<strong>You</strong> · 4:19 PM');
+    expect(doc).toContain('<strong>RSI</strong> measures momentum.');
+    expect(doc.indexOf('Explain RSI')).toBeLessThan(doc.indexOf('measures momentum'));
+  });
+});
+
+describe('Sidebar chat: Word-friendly copy and export', () => {
+  const configured = { ...savedSettings, ai_provider: 'groq', credential_presence: { groq: true } };
+  const history = [
+    { role: 'user', content: 'Show rules', created_at: '2026-10-25 14:19:34' },
+    { role: 'assistant', content: '| Rule | Value |\n|---|---|\n| Stop | 2% |', created_at: '2026-10-25 14:19:46' },
+  ];
+  let written: Record<string, Blob>[];
+
+  beforeEach(() => {
+    get.mockReset();
+    get.mockImplementation((url: string) => Promise.resolve(
+      String(url).endsWith('/api/chat/history') ? { data: { messages: history } } : { data: configured },
+    ));
+    Element.prototype.scrollIntoView = vi.fn();
+    written = [];
+    class FakeClipboardItem {
+      items: Record<string, Blob>;
+      constructor(items: Record<string, Blob>) { this.items = items; }
+    }
+    vi.stubGlobal('ClipboardItem', FakeClipboardItem);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        write: vi.fn(async (items: FakeClipboardItem[]) => { written.push(items[0].items); }),
+        writeText: vi.fn(async () => {}),
+      },
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const renderChat = async () => {
+    render(<Sidebar activeView="chart" onViewChange={vi.fn()} currentSymbol="BTC/USDT" onSymbolChange={vi.fn()} />);
+    await act(async () => {});
+  };
+
+  it('copies a single reply as formatted HTML plus plain text', async () => {
+    await renderChat();
+    const copyButtons = screen.getAllByLabelText('Copy message');
+    await act(async () => { fireEvent.click(copyButtons[copyButtons.length - 1]); });
+
+    expect(written).toHaveLength(1);
+    expect(await written[0]['text/html'].text()).toContain('<table border="1"');
+    expect(await written[0]['text/plain'].text()).toContain('| Stop | 2% |');
+  });
+
+  it('copies the whole conversation formatted', async () => {
+    await renderChat();
+    await act(async () => { fireEvent.click(screen.getByText('Copy all')); });
+
+    const html = await written[0]['text/html'].text();
+    expect(html).toContain('Show rules');
+    expect(html).toContain('<td>2%</td>');
+  });
+
+  it('saves the conversation as a Word document', async () => {
+    let saved: Blob | undefined;
+    URL.createObjectURL = vi.fn((blob: Blob) => { saved = blob; return 'blob:word'; });
+    URL.revokeObjectURL = vi.fn();
+    let filename = '';
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      filename = this.download;
+    });
+    await renderChat();
+
+    fireEvent.click(screen.getByText('Word'));
+
+    expect(filename).toMatch(/^astral-chat-\d{4}-\d{2}-\d{2}-\d{4}\.doc$/);
+    expect(saved!.type).toBe('application/msword;charset=utf-8');
+    expect(await saved!.text()).toContain('<td>2%</td>');
   });
 });

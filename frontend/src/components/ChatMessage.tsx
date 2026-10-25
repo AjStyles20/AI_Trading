@@ -1,12 +1,13 @@
 import { useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { copyText, type ChatMessage as ChatMessageData } from '../lib/chatTranscript';
+import { copyRich, copyText, type ChatMessage as ChatMessageData } from '../lib/chatTranscript';
+import { messageToHtml } from '../lib/chatDocument';
 
 const useCopied = () => {
   const [copied, setCopied] = useState(false);
-  const copy = async (text: string) => {
-    if (await copyText(text)) {
+  const copy = async (write: () => Promise<boolean>) => {
+    if (await write()) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1_500);
     }
@@ -21,7 +22,7 @@ function CodeBlock({ children, ...props }: ComponentPropsWithoutRef<'pre'>) {
     <div className="relative group/code my-2">
       <button
         type="button"
-        onClick={() => void copy(preRef.current?.textContent ?? '')}
+        onClick={() => void copy(() => copyText(preRef.current?.textContent ?? ''))}
         className="absolute top-1.5 right-1.5 text-[10px] px-2 py-0.5 rounded bg-[#2a2a35] text-gray-300 hover:text-white hover:bg-[#3a3a48]"
       >
         {copied ? 'Copied' : 'Copy'}
@@ -92,7 +93,8 @@ export default function ChatMessage({ message, footer }: { message: ChatMessageD
           <span>{message.timestamp}</span>
           <button
             type="button"
-            onClick={() => void copy(message.text)}
+            // Formatted for Word/Docs, with plain text for plain editors.
+            onClick={() => void copy(() => copyRich(messageToHtml(message), message.text))}
             aria-label="Copy message"
             className="opacity-60 hover:opacity-100 underline-offset-2 hover:underline"
           >
