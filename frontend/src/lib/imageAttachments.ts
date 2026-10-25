@@ -1,7 +1,9 @@
 // Images attached to chat messages. They are read in the browser, scaled down
 // so uploads stay small, and sent as data URLs; the backend re-validates them.
 
-export type ImageAttachment = { id: string; name: string; dataUrl: string };
+// `caption` describes where an image came from, e.g. a video frame's timestamp;
+// it is added to the message so the model knows what it is looking at.
+export type ImageAttachment = { id: string; name: string; dataUrl: string; caption?: string };
 
 export const MAX_ATTACHMENTS = 4;
 export const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
@@ -58,4 +60,85 @@ export const prepareImageAttachment = async (file: File): Promise<ImageAttachmen
     dataUrl = canvas.toDataURL('image/jpeg', 0.85);
   }
   return { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, name: file.name || 'image', dataUrl };
+};
+
+// Videos: no common chat model watches video, so a few evenly spaced frames are
+// taken in the browser and sent as images. The video itself never leaves the
+// computer, and its sound is not analysed.
+export const ACCEPTED_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'];
+export const MAX_VIDEO_BYTES = 500 * 1024 * 1024;
+export const VIDEO_FRAME_COUNT = 4;
+
+export const checkVideoFile = (file: File): string | null => {
+  if (!ACCEPTED_VIDEO_TYPES.includes(file.type)) return `${file.name}: only MP4, WebM or MOV videos can be attached.`;
+  if (file.size > MAX_VIDEO_BYTES) return `${file.name}: larger than ${MAX_VIDEO_BYTES / (1024 * 1024)} MB.`;
+  return null;
+};
+
+export const formatClipTime = (seconds: number): string => {
+  const whole = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+};
+
+// Frame times centred in equal slices of the clip, e.g. 4 frames of a 40 s
+// clip at 5, 15, 25 and 35 s.
+export const frameTimes = (duration: number, count = VIDEO_FRAME_COUNT): number[] =>
+  Number.isFinite(duration) && duration > 0
+    ? Array.from({ length: count }, (_, i) => (duration * (i + 0.5)) / count)
+    : [0];
+
+const once = (target: HTMLVideoElement, event: string) => new Promise<void>((resolve, reject) => {
+  const done = () => { cleanup(); resolve(); };
+  const fail = () => {
+    cleanup();
+    const reason = target.error?.message;
+    reject(new Error(`The video could not be read in this app${reason ? ` (${reason})` : ''}.`));
+  };
+  const cleanup = () => { target.removeEventListener(event, done); target.removeEventListener('error', fail); };
+  target.addEventListener(event, done);
+  target.addEventListener('error', fail);
+});
+
+export const prepareVideoFrames = async (file: File, count = VIDEO_FRAME_COUNT): Promise<ImageAttachment[]> => {
+  const problem = checkVideoFile(file);
+  if (problem) throw new Error(problem);
+  const url = URL.createObjectURL(file);
+  try {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.preload = 'auto';
+    const loaded = once(video, 'loadeddata');
+    video.src = url;
+    await loaded;
+    const { width, height } = scaledSize(video.videoWidth, video.videoHeight);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('This browser cannot read video frames.');
+    const frames: ImageAttachment[] = [];
+    for (const time of frameTimes(video.duration, count)) {
+      const seeked = once(video, 'seeked');
+      video.currentTime = time;
+      await seeked;
+      context.drawImage(video, 0, 0, width, height);
+      frames.push({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        name: `${file.name} @ ${formatClipTime(time)}`,
+        dataUrl: canvas.toDataURL('image/jpeg', 0.8),
+        caption: `Frame from video "${file.name}" at ${formatClipTime(time)}`,
+      });
+    }
+    return frames;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+};
+
+// Text added to a message so the model knows which images are video frames.
+export const attachmentCaptionText = (attachments: ImageAttachment[]): string => {
+  const captions = attachments.map((attachment, index) => attachment.caption && `Image ${index + 1}: ${attachment.caption}`).filter(Boolean);
+  return captions.length > 0
+    ? `${captions.join('\n')}\n(These are still frames from a video; its sound was not included.)`
+    : '';
 };

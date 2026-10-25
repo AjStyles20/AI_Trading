@@ -3,7 +3,15 @@ import axios from 'axios';
 
 import { BACKEND_URL } from '../lib/api';
 import ChatMessage from './ChatMessage';
-import { ACCEPTED_IMAGE_TYPES, MAX_ATTACHMENTS, prepareImageAttachment, type ImageAttachment } from '../lib/imageAttachments';
+import {
+  ACCEPTED_IMAGE_TYPES,
+  ACCEPTED_VIDEO_TYPES,
+  attachmentCaptionText,
+  MAX_ATTACHMENTS,
+  prepareImageAttachment,
+  prepareVideoFrames,
+  type ImageAttachment,
+} from '../lib/imageAttachments';
 import {
   copyRich,
   downloadTextFile,
@@ -335,7 +343,7 @@ export default function Sidebar({
 
     try {
       const res = await axios.post(`${BACKEND_URL}/api/chat`, {
-        query,
+        query: [query, attachmentCaptionText(attachments)].filter(Boolean).join('\n\n'),
         images,
         conversation_id: conversationId,
       }, {
@@ -386,20 +394,31 @@ export default function Sidebar({
     }
     const prepared: ImageAttachment[] = [];
     const problems: string[] = [];
-    for (const file of files.slice(0, room)) {
+    let skipped = 0;
+    for (const file of files) {
+      const slots = room - prepared.length;
+      if (slots <= 0) {
+        skipped += 1;
+        continue;
+      }
       try {
-        prepared.push(await prepareImageAttachment(file));
+        if (file.type.startsWith('video/')) {
+          // A video is sent as still frames, using the remaining slots.
+          prepared.push(...await prepareVideoFrames(file, slots));
+        } else {
+          prepared.push(await prepareImageAttachment(file));
+        }
       } catch (error) {
         problems.push(error instanceof Error ? error.message : `${file.name}: could not be attached.`);
       }
     }
-    if (files.length > room) problems.push(`Only ${MAX_ATTACHMENTS} images can be attached per message.`);
+    if (skipped > 0) problems.push(`Only ${MAX_ATTACHMENTS} images can be attached per message.`);
     setAttachments((current) => [...current, ...prepared].slice(0, MAX_ATTACHMENTS));
     setAttachError(problems.join(' '));
   };
 
   const handlePaste = (event: React.ClipboardEvent<HTMLInputElement>) => {
-    const images = Array.from(event.clipboardData?.files ?? []).filter((file) => file.type.startsWith('image/'));
+    const images = Array.from(event.clipboardData?.files ?? []).filter((file) => file.type.startsWith('image/') || file.type.startsWith('video/'));
     if (images.length === 0) return;
     event.preventDefault();
     void addImageFiles(images);
@@ -915,7 +934,7 @@ export default function Sidebar({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept={ACCEPTED_IMAGE_TYPES.join(',')}
+                accept={[...ACCEPTED_IMAGE_TYPES, ...ACCEPTED_VIDEO_TYPES].join(',')}
                 multiple
                 hidden
                 data-testid="image-file-input"
@@ -928,7 +947,7 @@ export default function Sidebar({
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isLoading || attachments.length >= MAX_ATTACHMENTS}
-                title="Attach images (or paste a screenshot)"
+                title="Attach images or a video (or paste a screenshot)"
                 aria-label="Attach images"
                 className="w-9 h-9 rounded-lg border border-[#2a2a35] text-gray-400 flex items-center justify-center hover:text-white hover:border-[#a55eea] transition-colors disabled:opacity-40 flex-shrink-0"
               >

@@ -4,12 +4,22 @@ import axios from 'axios';
 import Sidebar from '../Sidebar';
 import { fromStoredMessages, toMarkdownTranscript, transcriptFilename } from '../../lib/chatTranscript';
 import { markdownToHtml, messageToHtml, transcriptToHtml, wordDocument } from '../../lib/chatDocument';
-import { checkImageFile, prepareImageAttachment, scaledSize } from '../../lib/imageAttachments';
+import {
+  attachmentCaptionText,
+  checkImageFile,
+  checkVideoFile,
+  formatClipTime,
+  frameTimes,
+  prepareImageAttachment,
+  prepareVideoFrames,
+  scaledSize,
+} from '../../lib/imageAttachments';
 
 // Image decoding and resizing need a real browser; tests stand in for it.
 vi.mock('../../lib/imageAttachments', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../lib/imageAttachments')>()),
   prepareImageAttachment: vi.fn(),
+  prepareVideoFrames: vi.fn(),
 }));
 
 vi.mock('axios', () => ({
@@ -511,5 +521,105 @@ describe('Sidebar chat: image attachments', () => {
 
     const [, payload] = post.mock.calls.find(([url]) => String(url).endsWith('/api/settings'))!;
     expect(payload).toMatchObject({ ai_vision_model: 'vision-y' });
+  });
+});
+
+describe('video frame rules', () => {
+  it('accepts MP4, WebM and MOV videos only', () => {
+    expect(checkVideoFile(new File(['x'], 'clip.mp4', { type: 'video/mp4' }))).toBeNull();
+    expect(checkVideoFile(new File(['x'], 'clip.mov', { type: 'video/quicktime' }))).toBeNull();
+    expect(checkVideoFile(new File(['x'], 'clip.avi', { type: 'video/x-msvideo' }))).toContain('only MP4, WebM or MOV');
+  });
+
+  it('spreads frames evenly through the clip', () => {
+    expect(frameTimes(40, 4)).toEqual([5, 15, 25, 35]);
+    expect(frameTimes(10, 2)).toEqual([2.5, 7.5]);
+    expect(frameTimes(Number.NaN, 4)).toEqual([0]);
+  });
+
+  it('formats clip times and captions frames for the AI', () => {
+    expect(formatClipTime(65.7)).toBe('1:05');
+    const text = attachmentCaptionText([
+      { id: '1', name: 'chart.png', dataUrl: 'a' },
+      { id: '2', name: 'clip.mp4 @ 0:05', dataUrl: 'b', caption: 'Frame from video "clip.mp4" at 0:05' },
+    ]);
+    expect(text).toContain('Image 2: Frame from video "clip.mp4" at 0:05');
+    expect(text).toContain('sound was not included');
+    expect(text).not.toContain('Image 1');
+    expect(attachmentCaptionText([{ id: '1', name: 'chart.png', dataUrl: 'a' }])).toBe('');
+  });
+});
+
+describe('Sidebar chat: video attachments', () => {
+  const configured = { ...savedSettings, ai_provider: 'groq', ai_vision_model: 'vision-x', credential_presence: { groq: true } };
+  const frames = (name: string, count: number) => Array.from({ length: count }, (_, i) => ({
+    id: `${name}-${i}`, name: `${name} @ 0:0${i}`, dataUrl: `data:image/jpeg;base64,${btoa(`${name}${i}`)}`,
+    caption: `Frame from video "${name}" at 0:0${i}`,
+  }));
+
+  beforeEach(() => {
+    get.mockReset();
+    post.mockReset();
+    get.mockImplementation((url: string) => Promise.resolve(
+      String(url).endsWith('/api/chat/history') ? { data: { messages: [] } } : { data: configured },
+    ));
+    post.mockResolvedValue({ data: { response: 'Price broke out.', status: 'success' } });
+    Element.prototype.scrollIntoView = vi.fn();
+    vi.mocked(prepareImageAttachment).mockReset();
+    vi.mocked(prepareImageAttachment).mockImplementation(async (file: File) => ({
+      id: file.name, name: file.name, dataUrl: `data:image/png;base64,${btoa(file.name)}`,
+    }));
+    vi.mocked(prepareVideoFrames).mockReset();
+    vi.mocked(prepareVideoFrames).mockImplementation(async (file: File, count = 4) => frames(file.name, count));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const renderChat = async () => {
+    render(<Sidebar activeView="chart" onViewChange={vi.fn()} currentSymbol="BTC/USDT" onSymbolChange={vi.fn()} />);
+    await act(async () => {});
+  };
+  const attach = async (...files: File[]) => {
+    await act(async () => { fireEvent.change(screen.getByTestId('image-file-input'), { target: { files } }); });
+  };
+  const video = (name = 'clip.mp4') => new File([new Uint8Array(8)], name, { type: 'video/mp4' });
+  const chatInput = () => screen.getByPlaceholderText('Ask AI to analyze...');
+
+  it('turns a video into frames and tells the AI what they are', async () => {
+    await renderChat();
+    await attach(video());
+    expect(prepareVideoFrames).toHaveBeenCalledWith(expect.any(File), 4);
+    expect(screen.getAllByAltText(/^clip\.mp4 @/)).toHaveLength(4);
+
+    fireEvent.change(chatInput(), { target: { value: 'What happens in this clip?' } });
+    await act(async () => { fireEvent.keyDown(chatInput(), { key: 'Enter' }); });
+
+    const [, payload] = post.mock.calls.find(([url]) => String(url).endsWith('/api/chat'))!;
+    const { query, images } = payload as { query: string; images: string[] };
+    expect(images).toHaveLength(4);
+    expect(query.startsWith('What happens in this clip?')).toBe(true);
+    expect(query).toContain('Image 1: Frame from video "clip.mp4" at 0:00');
+    expect(query).toContain('sound was not included');
+    // The chat shows what you typed; the captions are for the AI.
+    expect(screen.getByText('What happens in this clip?')).toBeInTheDocument();
+  });
+
+  it('gives a video only the slots that are left', async () => {
+    await renderChat();
+    await attach(new File(['x'], 'a.png', { type: 'image/png' }), new File(['x'], 'b.png', { type: 'image/png' }));
+    await attach(video());
+
+    expect(prepareVideoFrames).toHaveBeenCalledWith(expect.any(File), 2);
+    expect(screen.getByTestId('attachment-previews').querySelectorAll('img')).toHaveLength(4);
+  });
+
+  it('reports a video that cannot be read', async () => {
+    vi.mocked(prepareVideoFrames).mockRejectedValueOnce(new Error('The video could not be read in this app.'));
+    await renderChat();
+    await attach(video());
+
+    expect(screen.getByRole('alert')).toHaveTextContent('The video could not be read in this app.');
   });
 });
