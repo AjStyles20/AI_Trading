@@ -195,6 +195,8 @@ const normalizeTags = (tags: string[]): string[] => {
   return Array.from(new Set(normalized));
 };
 
+const TRADING_REFRESH_MS = 5_000;
+
 export default function BottomPanel({
   symbol,
   assetType,
@@ -289,8 +291,13 @@ export default function BottomPanel({
       const res = await axios.get(`${BACKEND_URL}/api/trading/status`);
       setIsLiveTrading(res.data.is_active);
       setTradingLogs(res.data.logs);
-      setSelectedBrokerId(res.data.config?.broker_id || 'paper');
-      setExecutionMode(res.data.config?.execution_mode || 'paper');
+      // Mirror the broker and mode only while the trading loop is running. When
+      // it is stopped its config is just the last one used, and applying it every
+      // poll would reset the user's own Broker / Execution mode choice.
+      if (res.data.is_active && res.data.config) {
+        setSelectedBrokerId(res.data.config.broker_id || 'paper');
+        setExecutionMode(res.data.config.execution_mode || 'paper');
+      }
     } catch (err) {
       console.error('Failed to fetch trading status:', err);
     }
@@ -389,20 +396,34 @@ export default function BottomPanel({
     }
   }, [assetType, executionMode, selectedBrokerId]);
 
+  // Trading status, history, orders and positions refresh every 5 s. With a
+  // real broker most of these reach the broker's API, so hidden tabs pause
+  // (and catch up when shown) and a refresh never overlaps the previous one.
   useEffect(() => {
-    void fetchTradingStatus();
-    void fetchTradeHistory();
-    void fetchOpenOrders();
-    void fetchBrokerPositions();
-    void fetchBrokerPortfolioSnapshot();
-    const timer = setInterval(() => {
-      void fetchTradingStatus();
-      void fetchTradeHistory(executionMode === 'live');
-      void fetchOpenOrders();
-      void fetchBrokerPositions();
-      void fetchBrokerPortfolioSnapshot();
-    }, 5000);
-    return () => clearInterval(timer);
+    let inFlight = false;
+    const refresh = async (refreshStatuses: boolean) => {
+      if (inFlight || document.visibilityState !== 'visible') return;
+      inFlight = true;
+      try {
+        await Promise.all([
+          fetchTradingStatus(),
+          fetchTradeHistory(refreshStatuses),
+          fetchOpenOrders(),
+          fetchBrokerPositions(),
+          fetchBrokerPortfolioSnapshot(),
+        ]);
+      } finally {
+        inFlight = false;
+      }
+    };
+    void refresh(false);
+    const timer = setInterval(() => void refresh(executionMode === 'live'), TRADING_REFRESH_MS);
+    const onVisibilityChange = () => void refresh(executionMode === 'live');
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [executionMode, fetchBrokerPortfolioSnapshot, fetchBrokerPositions, fetchOpenOrders, fetchTradeHistory]);
 
   const fetchSettings = useCallback(async () => {
