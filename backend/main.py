@@ -1,7 +1,7 @@
 import sys
 import os
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -15,7 +15,7 @@ if ROOT_DIR not in sys.path:
 
 from ai_engine.assistant import ai_assistant
 from ai_engine.strategy_generator import StrategyGenerator
-from database.sqlite_manager import init_db
+from database.sqlite_manager import get_recent_chat_messages, init_db
 from indicators_api import router as indicators_router
 from data_api import router as data_router
 from research_api import router as research_router
@@ -94,6 +94,11 @@ async def chat_endpoint(request: ChatRequest):
         return {"response": response, "status": "success"}
     except Exception as e:
         return {"response": f"Error: {str(e)}", "status": "error"}
+
+@app.get("/api/chat/history")
+def chat_history(conversation_id: str = "default", limit: int = Query(200, ge=1, le=1000)):
+    """Saved messages of one conversation, oldest first, so the chat survives a reload."""
+    return {"conversation_id": conversation_id, "messages": get_recent_chat_messages(conversation_id, limit=limit)}
 
 class StrategyRequest(BaseModel):
     prompt: str
