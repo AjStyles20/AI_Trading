@@ -2,13 +2,47 @@ import { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 
 import { BACKEND_URL } from '../lib/api';
+import ChatMessage from './ChatMessage';
+import {
+  copyText,
+  downloadTextFile,
+  fromStoredMessages,
+  toMarkdownTranscript,
+  transcriptFilename,
+  type ChatMessage as Message,
+  type StoredChatMessage,
+} from '../lib/chatTranscript';
 
-type Message = {
-  id: string;
-  role: 'user' | 'assistant';
-  text: string;
-  timestamp: string;
+// The conversation the chat continues across reloads. Kept per browser profile;
+// 'main_session' is the id earlier versions always used, so old history loads.
+const CONVERSATION_KEY = 'astral.chat.conversationId';
+const DEFAULT_CONVERSATION_ID = 'main_session';
+const HISTORY_LIMIT = 500;
+
+const readConversationId = (): string => {
+  try {
+    return window.localStorage.getItem(CONVERSATION_KEY) || DEFAULT_CONVERSATION_ID;
+  } catch {
+    return DEFAULT_CONVERSATION_ID;
+  }
 };
+
+const storeConversationId = (id: string) => {
+  try {
+    window.localStorage.setItem(CONVERSATION_KEY, id);
+  } catch {
+    // Storage unavailable (private window); the id still applies for this session.
+  }
+};
+
+const WELCOME_TEXT = "Hello! I'm Astral AI, your intelligent trading companion. I can analyse markets, generate strategies, run backtests, and more. How can I help you today?";
+
+const welcomeMessage = (): Message => ({
+  id: 'welcome',
+  role: 'assistant',
+  text: WELCOME_TEXT,
+  timestamp: new Date().toLocaleTimeString(),
+});
 
 const SUGGESTIONS = [
   "Analyze AAPL trend",
@@ -30,14 +64,10 @@ export default function Sidebar({
   currentSymbol, 
   onSymbolChange 
 }: SidebarProps) {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '0',
-      role: 'assistant',
-      text: "Hello! I'm Astral AI, your intelligent trading companion. I can analyse markets, generate strategies, run backtests, and more. How can I help you today?",
-      timestamp: new Date().toLocaleTimeString(),
-    }
-  ]);
+  const [messages, setMessages] = useState<Message[]>(() => [welcomeMessage()]);
+  const [conversationId, setConversationId] = useState(readConversationId);
+  const [chatExpanded, setChatExpanded] = useState(false);
+  const [transcriptCopied, setTranscriptCopied] = useState(false);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [backendOnline, setBackendOnline] = useState(false);
@@ -223,7 +253,45 @@ export default function Sidebar({
   // Auto-scroll to bottom on new messages
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, chatExpanded]);
+
+  // Reload the saved conversation so the chat survives a page reload.
+  useEffect(() => {
+    let cancelled = false;
+    axios.get(`${BACKEND_URL}/api/chat/history`, { params: { conversation_id: conversationId, limit: HISTORY_LIMIT } })
+      .then((res) => {
+        const stored = (res.data?.messages ?? []) as StoredChatMessage[];
+        if (!cancelled && stored.length > 0) setMessages([welcomeMessage(), ...fromStoredMessages(stored)]);
+      })
+      .catch(() => { /* Backend offline: start with an empty conversation. */ });
+    return () => { cancelled = true; };
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (!chatExpanded) return;
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') setChatExpanded(false); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [chatExpanded]);
+
+  const copyTranscript = async () => {
+    if (await copyText(toMarkdownTranscript(messages))) {
+      setTranscriptCopied(true);
+      window.setTimeout(() => setTranscriptCopied(false), 1_500);
+    }
+  };
+
+  const exportTranscript = () => downloadTextFile(transcriptFilename(), toMarkdownTranscript(messages));
+
+  // Starts a fresh conversation. The previous one stays saved; the AI's
+  // long-term memory is not cleared.
+  const startNewConversation = () => {
+    if (isLoading) return;
+    const id = `chat-${Date.now()}`;
+    storeConversationId(id);
+    setConversationId(id);
+    setMessages([welcomeMessage()]);
+  };
 
   const sendMessage = async (query: string) => {
     if (!query.trim() || isLoading) return;
@@ -247,7 +315,7 @@ export default function Sidebar({
     try {
       const res = await axios.post(`${BACKEND_URL}/api/chat`, {
         query,
-        conversation_id: 'main_session',
+        conversation_id: conversationId,
       }, {
         timeout: 180000 // 180s timeout for model downloads/API calls
       });
@@ -692,81 +760,99 @@ export default function Sidebar({
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
-        {messages.map((msg) => (
-          <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[90%] rounded-xl px-3 py-2 text-sm leading-relaxed shadow-md ${
-              msg.role === 'user' 
-                ? 'bg-[#a55eea] text-white rounded-br-sm'
-                : 'bg-[#1c1c26] text-gray-200 border border-[#2a2a35] rounded-bl-sm'
-            }`}>
-              {msg.role === 'assistant' && (
-                <div className="flex items-center gap-1.5 mb-1.5">
-                  <div className="w-3.5 h-3.5 rounded-full bg-[#a55eea] flex items-center justify-center">
-                    <span className="text-[7px] text-white font-bold">A</span>
-                  </div>
-                  <span className="text-[10px] text-[#a55eea] font-semibold">Astral AI</span>
-                </div>
-              )}
-              <span className="whitespace-pre-wrap">{msg.text}</span>
-              <div className={`text-[9px] mt-1 ${msg.role === 'user' ? 'text-purple-200' : 'text-gray-500'}`}>{msg.timestamp}</div>
-            </div>
-          </div>
-        ))}
-
-        {/* Typing indicator */}
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-[#1c1c26] border border-[#2a2a35] rounded-xl rounded-bl-sm px-4 py-3">
-              <div className="flex gap-1.5 items-center">
-                {[0, 1, 2].map(i => (
-                  <div key={i} className="w-1.5 h-1.5 bg-[#a55eea] rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }}></div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-        <div ref={messageEndRef} />
-      </div>
-
-      {/* Quick Suggestions */}
-      {messages.length < 2 && !isLoading && (
-        <div className="px-3 pb-2 space-y-1.5 flex-shrink-0">
-          {SUGGESTIONS.map((s) => (
-            <button
-              key={s}
-              onClick={() => sendMessage(s)}
-              className="w-full text-left text-xs text-gray-400 px-3 py-2 rounded-lg border border-[#2a2a35] bg-[#1a1a22] hover:border-[#a55eea] hover:text-[#a55eea] transition-all"
-            >
-              {s}
-            </button>
-          ))}
+      {chatExpanded && (
+        <div className="flex-1 flex flex-col items-center justify-center gap-2 p-4 text-center text-xs text-gray-500">
+          The chat is open in the expanded view.
+          <button type="button" onClick={() => setChatExpanded(false)} className="text-[#a55eea] hover:underline">Dock it here</button>
         </div>
       )}
 
-      {/* Input */}
-      <div className="p-3 border-t border-[#2a2a35] bg-[#0d0d12] flex-shrink-0">
-        <div className="relative flex items-center gap-2">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isLoading}
-            placeholder={aiConfigured ? "Ask AI to analyze..." : "Configure an AI provider in Settings ⚙️"}
-            className="flex-1 bg-[#1c1c24] text-sm text-white rounded-lg border border-[#2a2a35] focus:border-[#a55eea] focus:ring-1 focus:ring-[#a55eea] outline-none py-2.5 pl-3 pr-3 transition-all disabled:opacity-50"
-          />
-          <button
-            onClick={() => sendMessage(input)}
-            disabled={isLoading || !input.trim() || !aiConfigured}
-            className="w-9 h-9 rounded-lg bg-[#a55eea] flex items-center justify-center text-white hover:bg-[#b87ef7] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="m22 2-7 20-4-9-9-4Z"/>
-              <path d="M22 2 11 13"/>
-            </svg>
-          </button>
+      {/* Chat: docked in the sidebar, or expanded into a large overlay (Esc closes) */}
+      <div
+        className={chatExpanded ? 'fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4' : 'flex-1 min-h-0 flex flex-col'}
+        onClick={chatExpanded ? (event) => { if (event.target === event.currentTarget) setChatExpanded(false); } : undefined}
+      >
+        <div
+          role={chatExpanded ? 'dialog' : undefined}
+          aria-label={chatExpanded ? 'Astral AI chat' : undefined}
+          className={chatExpanded
+            ? 'w-[min(1100px,96vw)] h-[92vh] flex flex-col bg-[#111115] border border-[#2a2a35] rounded-xl shadow-2xl overflow-hidden'
+            : 'flex-1 min-h-0 flex flex-col'}
+        >
+          <div className="flex items-center gap-0.5 px-3 py-1.5 border-b border-[#2a2a35] text-[10px] text-gray-400 flex-shrink-0">
+            <span className="mr-auto font-semibold uppercase tracking-widest text-gray-500">Chat</span>
+            <button type="button" onClick={startNewConversation} disabled={isLoading} title="Start a new conversation (the current one stays saved)" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors disabled:opacity-40">New</button>
+            <button type="button" onClick={() => void copyTranscript()} title="Copy the whole conversation as Markdown" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors">{transcriptCopied ? 'Copied' : 'Copy all'}</button>
+            <button type="button" onClick={exportTranscript} title="Save the conversation as a Markdown file" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors">Export</button>
+            <button
+              type="button"
+              onClick={() => setChatExpanded((expanded) => !expanded)}
+              title={chatExpanded ? 'Close the expanded view (Esc)' : 'Expand the chat'}
+              aria-label={chatExpanded ? 'Close expanded chat' : 'Expand chat'}
+              className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors text-[#a55eea]"
+            >
+              {chatExpanded ? '✕ Close' : '⤢ Expand'}
+            </button>
+          </div>
+
+          {/* Messages */}
+          <div className={`flex-1 overflow-y-auto space-y-3 ${chatExpanded ? 'p-6' : 'p-3'}`}>
+            {messages.map((msg) => <ChatMessage key={msg.id} message={msg} />)}
+
+            {/* Typing indicator */}
+            {isLoading && (
+              <div className="flex justify-start">
+                <div className="bg-[#1c1c26] border border-[#2a2a35] rounded-xl rounded-bl-sm px-4 py-3">
+                  <div className="flex gap-1.5 items-center">
+                    {[0, 1, 2].map(i => (
+                      <div key={i} className="w-1.5 h-1.5 bg-[#a55eea] rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }}></div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            <div ref={messageEndRef} />
+          </div>
+
+          {/* Quick Suggestions */}
+          {messages.length < 2 && !isLoading && (
+            <div className="px-3 pb-2 space-y-1.5 flex-shrink-0">
+              {SUGGESTIONS.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => sendMessage(s)}
+                  className="w-full text-left text-xs text-gray-400 px-3 py-2 rounded-lg border border-[#2a2a35] bg-[#1a1a22] hover:border-[#a55eea] hover:text-[#a55eea] transition-all"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Input */}
+          <div className="p-3 border-t border-[#2a2a35] bg-[#0d0d12] flex-shrink-0">
+            <div className="relative flex items-center gap-2">
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={isLoading}
+                placeholder={aiConfigured ? "Ask AI to analyze..." : "Configure an AI provider in Settings ⚙️"}
+                className="flex-1 bg-[#1c1c24] text-sm text-white rounded-lg border border-[#2a2a35] focus:border-[#a55eea] focus:ring-1 focus:ring-[#a55eea] outline-none py-2.5 pl-3 pr-3 transition-all disabled:opacity-50"
+              />
+              <button
+                onClick={() => sendMessage(input)}
+                disabled={isLoading || !input.trim() || !aiConfigured}
+                className="w-9 h-9 rounded-lg bg-[#a55eea] flex items-center justify-center text-white hover:bg-[#b87ef7] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m22 2-7 20-4-9-9-4Z"/>
+                  <path d="M22 2 11 13"/>
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
