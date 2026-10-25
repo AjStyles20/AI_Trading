@@ -123,6 +123,8 @@ export default function Sidebar({
   const [tempBitgetSecret, setTempBitgetSecret] = useState('');
   const [tempBitgetPassphrase, setTempBitgetPassphrase] = useState('');
   const [tempBitgetDemoEnabled, setTempBitgetDemoEnabled] = useState(false);
+  const [bitgetAccountType, setBitgetAccountType] = useState<'classic' | 'unified'>('classic');
+  const [tempBitgetAccountType, setTempBitgetAccountType] = useState<'classic' | 'unified'>('classic');
   const [tempBitgetDemoKey, setTempBitgetDemoKey] = useState('');
   const [tempBitgetDemoSecret, setTempBitgetDemoSecret] = useState('');
   const [tempBitgetDemoPassphrase, setTempBitgetDemoPassphrase] = useState('');
@@ -184,6 +186,9 @@ export default function Sidebar({
         const bitgetDemoEnabled = res.data.bitget_environment === 'demo';
         setBitgetDemoEnabled(bitgetDemoEnabled);
         setTempBitgetDemoEnabled(bitgetDemoEnabled);
+        const accountType = res.data.bitget_account_type === 'unified' ? 'unified' : 'classic';
+        setBitgetAccountType(accountType);
+        setTempBitgetAccountType(accountType);
         setBitgetDemoKey(storedKey('bitget_demo_key'));
         setTempBitgetDemoKey(storedKey('bitget_demo_key'));
         setBitgetDemoSecret(storedKey('bitget_demo_secret'));
@@ -219,6 +224,7 @@ export default function Sidebar({
         ai_vision_model: tempAiVisionModel,
         binance_environment: tempBinanceTestnetEnabled ? 'testnet' : 'live',
         bitget_environment: tempBitgetDemoEnabled ? 'demo' : 'live',
+        bitget_account_type: tempBitgetAccountType,
         api_keys: {
           openai: tempKey,
           groq: tempGroqKey,
@@ -252,6 +258,7 @@ export default function Sidebar({
       setBitgetSecret(tempBitgetSecret);
       setBitgetPassphrase(tempBitgetPassphrase);
       setBitgetDemoEnabled(tempBitgetDemoEnabled);
+      setBitgetAccountType(tempBitgetAccountType);
       setBitgetDemoKey(tempBitgetDemoKey);
       setBitgetDemoSecret(tempBitgetDemoSecret);
       setBitgetDemoPassphrase(tempBitgetDemoPassphrase);
@@ -755,6 +762,21 @@ export default function Sidebar({
                     </p>
                   </div>
 
+                  <div>
+                    <label className="block text-gray-400 mb-1.5 font-medium">Bitget account type</label>
+                    <select
+                      value={tempBitgetAccountType}
+                      onChange={(e) => setTempBitgetAccountType(e.target.value === 'unified' ? 'unified' : 'classic')}
+                      className="w-full bg-[#0a0a0c] border border-[#2a2a35] rounded-lg py-2 px-3 text-white"
+                    >
+                      <option value="unified">Unified account (UTA)</option>
+                      <option value="classic">Classic account</option>
+                    </select>
+                    <p className="text-[10px] text-gray-500 mt-2 leading-relaxed">
+                      Bitget shows &quot;Unified account&quot; under Assets when yours is unified. Unified accounts are read-only in Astral for now: balances, positions and open orders work; orders are refused until unified-account trading is verified.
+                    </p>
+                  </div>
+
                   <label className="flex items-center justify-between rounded-lg border border-[#2a2a35] bg-[#14141b] px-3 py-2 text-gray-300">
                     <span className="text-[11px] font-medium">Use Bitget Demo Trading</span>
                     <input
@@ -897,6 +919,7 @@ export default function Sidebar({
                setTempBitgetSecret(bitgetSecret);
                setTempBitgetPassphrase(bitgetPassphrase);
                setTempBitgetDemoEnabled(bitgetDemoEnabled);
+               setTempBitgetAccountType(bitgetAccountType);
                setTempBitgetDemoKey(bitgetDemoKey);
                setTempBitgetDemoSecret(bitgetDemoSecret);
                setTempBitgetDemoPassphrase(bitgetDemoPassphrase);

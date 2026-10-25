@@ -191,3 +191,24 @@ def test_endpoint_runs_checks_on_post_only(offline_world, monkeypatch):
     response = client.post("/api/diagnostics/connections")
     assert response.status_code == 200
     assert {check["id"] for check in response.json()["checks"]} >= {"backend", "binance", "yahoo", "ai", "broker_bitget"}
+
+
+def test_empty_classic_bitget_account_suggests_unified(offline_world):
+    offline_world["brokers"]["bitget"].account = {"environment": "demo", "account_type": "classic", "balances": []}
+    check = by_id(diagnostics_api.run_connection_checks(SETTINGS))["broker_bitget"]
+
+    assert check["status"] == "warning"
+    assert check["name"] == "Bitget (DEMO, classic)"
+    assert "Unified" in check["message"]
+
+
+def test_unified_account_label_and_balances(offline_world):
+    offline_world["brokers"]["bitget"].account = {
+        "environment": "demo", "account_type": "unified",
+        "balances": [{"asset": "USDT", "free": 49000.0}, {"asset": "BTC", "free": 59.37}],
+    }
+    check = by_id(diagnostics_api.run_connection_checks(SETTINGS))["broker_bitget"]
+
+    assert check["status"] == "ok"
+    assert check["name"] == "Bitget (DEMO, unified)"
+    assert "2 balances found" in check["message"]

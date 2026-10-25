@@ -24,6 +24,7 @@ class SettingsUpdate(BaseModel):
     ai_provider: Optional[str] = None
     ai_model: Optional[str] = None
     ai_vision_model: Optional[str] = None
+    bitget_account_type: Optional[str] = None
 
 @router.get("/api/settings")
 def get_current_settings():
@@ -81,6 +82,7 @@ def save_settings(update: SettingsUpdate):
             ai_provider=update.ai_provider,
             ai_model=update.ai_model,
             ai_vision_model=update.ai_vision_model,
+            bitget_account_type=update.bitget_account_type,
         )
         if success:
             # Trigger AI Assistant reload if API keys changed

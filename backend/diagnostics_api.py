@@ -155,9 +155,16 @@ def check_broker(broker_id: str, settings: dict) -> dict:
                            f"{name} says the environment is wrong: a demo key needs demo trading switched on (and a live key needs it off).")
         return _result(check_id, name, "error", f"{name} rejected the request: {text}")
     environment = str(account.get("environment") or mode).upper()
+    account_type = account.get("account_type")
+    label = f"{name} ({environment}{f', {account_type}' if account_type else ''})"
     balances = account.get("balances") or []
+    if not balances and account_type == "classic":
+        # A unified Bitget account answers classic balance requests with nothing.
+        return _result(check_id, label, "warning",
+                       "Keys accepted, but no balances found. If this is a Bitget Unified account, set "
+                       "Settings -> Bitget account type to Unified and test again.")
     holdings = f"{len(balances)} balance{'s' if len(balances) != 1 else ''} found" if balances else "keys accepted; the account holds no balances"
-    return _result(check_id, f"{name} ({environment})", "ok", f"Read-only balance check passed: {holdings}.")
+    return _result(check_id, label, "ok", f"Read-only balance check passed: {holdings}.")
 
 
 def run_connection_checks(settings: dict, timer: Callable[[], float] = time.monotonic) -> dict:

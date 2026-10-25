@@ -28,6 +28,48 @@ class BitgetBroker(BrokerClient):
     def _get_environment_label(self, settings: dict) -> str:
         return "demo" if self._use_demo(settings) else "live"
 
+    # Bitget has two account types with separate APIs: classic accounts use the
+    # v2 spot endpoints, Unified Trading Accounts (UTA) the v3 endpoints. A
+    # unified account answers v2 balance calls with nothing, so the type must be
+    # chosen to match the account. https://www.bitget.com/docs/classic/uta-api-upgrade-guide
+    def _use_unified(self, settings: dict) -> bool:
+        return settings.get("bitget_account_type", "classic") == "unified"
+
+    def _get_account_label(self, settings: dict) -> str:
+        return "unified" if self._use_unified(settings) else "classic"
+
+    def _holdings(self, settings: dict) -> list[tuple[str, float, float]]:
+        """Non-zero spot holdings as (coin, available, locked), for either account type."""
+        holdings: list[tuple[str, float, float]] = []
+        if self._use_unified(settings):
+            account = self._request("GET", "/api/v3/account/assets", settings)
+            items = account.get("assets", []) if isinstance(account, dict) else []
+            for item in items or []:
+                coin = str(item.get("coin") or "")
+                available = float(item.get("available", 0) or 0)
+                balance = float(item.get("balance", 0) or 0)
+                locked = float(item.get("locked", 0) or 0) or max(balance - available, 0.0)
+                holdings.append((coin, available, locked))
+        else:
+            assets = self._request("GET", "/api/v2/spot/account/assets", settings, params={"assetType": "hold_only"})
+            for item in assets or []:
+                coin = str(item.get("coin") or item.get("asset") or "")
+                available = float(item.get("available", 0) or item.get("free", 0) or 0)
+                locked = float(item.get("frozen", 0) or item.get("locked", 0) or 0)
+                holdings.append((coin, available, locked))
+        return [(coin, free, locked) for coin, free, locked in holdings if coin and free + locked > 0]
+
+    def _reject_unified_trading(self, settings: dict) -> None:
+        # Order placement on unified accounts uses different v3 requests and
+        # order fields; it is not enabled until it has been built and verified
+        # in demo trading. Refused here, at broker validation, so the guarded
+        # submission path never records an order intent or contacts Bitget.
+        if self._use_unified(settings):
+            raise ValueError(
+                "Bitget unified-account trading is not enabled in Astral yet. Balances, positions and "
+                "open orders work read-only; orders are refused until unified-account trading is verified."
+            )
+
     def _get_base_url(self) -> str:
         return "https://api.bitget.com"
 
@@ -133,6 +175,7 @@ class BitgetBroker(BrokerClient):
     def get_status(self, settings: dict) -> dict:
         status = super().get_status(settings)
         status["environment"] = self._get_environment_label(settings)
+        status["account_type"] = self._get_account_label(settings)
         return status
 
     def is_configured(self, settings: dict) -> bool:
@@ -193,23 +236,19 @@ class BitgetBroker(BrokerClient):
                 "warnings": ["Bitget paper mode uses simulated balances."],
             }
 
-        assets = self._request("GET", "/api/v2/spot/account/assets", settings, params={"assetType": "hold_only"})
-        balances: list[dict] = []
-        for item in assets or []:
-            asset = str(item.get("coin") or item.get("asset") or "")
-            free = float(item.get("available", 0) or item.get("free", 0) or 0)
-            locked = float(item.get("frozen", 0) or item.get("locked", 0) or 0)
-            if free <= 0 and locked <= 0:
-                continue
-            balances.append({"asset": asset, "free": free, "locked": locked})
+        balances = [
+            {"asset": coin, "free": free, "locked": locked}
+            for coin, free, locked in self._holdings(settings)
+        ]
 
         return {
             "broker_id": self.broker_id,
             "display_name": self.display_name,
             "execution_mode": execution_mode,
             "environment": self._get_environment_label(settings),
+            "account_type": self._get_account_label(settings),
             "configured": self.is_configured(settings),
-            "can_trade": self.is_configured(settings),
+            "can_trade": self.is_configured(settings) and not self._use_unified(settings),
             "balances": balances[:10],
             "warnings": ["Bitget demo mode is enabled."] if self._use_demo(settings) else [],
         }
@@ -218,6 +257,7 @@ class BitgetBroker(BrokerClient):
         if execution_mode == "paper":
             return super().validate_order(order, execution_mode, settings)
 
+        self._reject_unified_trading(settings)
         if order.qty <= 0:
             raise ValueError("Order quantity must be greater than 0.")
         if order.price <= 0:
@@ -244,6 +284,7 @@ class BitgetBroker(BrokerClient):
                 metadata=order.metadata,
             )
 
+        self._reject_unified_trading(settings)
         validation = self.validate_order(order, execution_mode, settings)
         payload = {
             "symbol": self._normalize_symbol(order.symbol),
@@ -290,6 +331,7 @@ class BitgetBroker(BrokerClient):
         client_order_id = (trade.get("metadata") or {}).get("client_order_id")
         if not broker_order_id and not client_order_id:
             return super().get_order_status(trade, settings)
+        self._reject_unified_trading(settings)
 
         response = self._request(
             "GET",
@@ -323,6 +365,8 @@ class BitgetBroker(BrokerClient):
     def list_open_orders(self, symbol: str, asset_type: str, settings: dict, execution_mode: str) -> list[dict]:
         if execution_mode == "paper":
             return []
+        if self._use_unified(settings):
+            return self._list_unified_open_orders(symbol, settings)
 
         end_time = int(time.time() * 1000)
         start_time = end_time - 24 * 60 * 60 * 1000
@@ -353,19 +397,35 @@ class BitgetBroker(BrokerClient):
             for order in orders
         ]
 
+    def _list_unified_open_orders(self, symbol: str, settings: dict) -> list[dict]:
+        params: dict[str, str] = {"category": "SPOT"}
+        if symbol:
+            params["symbol"] = self._normalize_symbol(symbol)
+        response = self._request("GET", "/api/v3/trade/unfilled-orders", settings, params=params)
+        orders = response.get("list", []) if isinstance(response, dict) else []
+        return [
+            {
+                "broker_order_id": order.get("orderId"),
+                "symbol": order.get("symbol", symbol),
+                "side": str(order.get("side", "")).upper(),
+                "status": str(order.get("orderStatus", "unknown")).lower(),
+                "type": str(order.get("orderType", "market")).lower(),
+                "orig_qty": float(order.get("qty", 0) or 0),
+                "executed_qty": float(order.get("cumExecQty", 0) or 0),
+                "price": float(order.get("price", 0) or 0),
+                "time": int(order.get("createdTime", 0) or 0),
+            }
+            for order in orders or []
+            if isinstance(order, dict)
+        ]
+
     def list_positions(self, symbol: str, asset_type: str, settings: dict, execution_mode: str) -> list[dict]:
         if execution_mode == "paper":
             return []
 
-        assets = self._request("GET", "/api/v2/spot/account/assets", settings, params={"assetType": "hold_only"})
         positions: list[dict] = []
-        for item in assets or []:
-            asset = str(item.get("coin") or item.get("asset") or "")
-            free = float(item.get("available", 0) or item.get("free", 0) or 0)
-            locked = float(item.get("frozen", 0) or item.get("locked", 0) or 0)
+        for asset, free, locked in self._holdings(settings):
             total = free + locked
-            if total <= 0:
-                continue
             if symbol:
                 normalized_symbol = self._normalize_symbol(symbol)
                 if normalized_symbol and not normalized_symbol.startswith(asset):
