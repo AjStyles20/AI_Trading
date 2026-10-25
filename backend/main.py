@@ -26,6 +26,7 @@ from strategy_store_api import router as strategy_store_router
 from validation_api import router as validation_router
 from settings_api import router as settings_router
 from trading_api import router as trading_router
+from diagnostics_api import router as diagnostics_router
 
 app = FastAPI(
     title="Astral AI Backend",
@@ -83,6 +84,7 @@ app.include_router(strategy_store_router)
 app.include_router(validation_router)
 app.include_router(settings_router)
 app.include_router(trading_router)
+app.include_router(diagnostics_router)
 
 class ChatRequest(BaseModel):
     query: str

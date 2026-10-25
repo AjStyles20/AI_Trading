@@ -678,3 +678,56 @@ describe('Sidebar startup and expanded chat', () => {
     expect(container.contains(screen.getByPlaceholderText('Ask AI to analyze...'))).toBe(true);
   });
 });
+
+describe('Settings: Test connections', () => {
+  const configured = { ...savedSettings, ai_provider: 'groq', credential_presence: { groq: true } };
+
+  beforeEach(() => {
+    get.mockReset();
+    post.mockReset();
+    get.mockImplementation((url: string) => Promise.resolve(
+      String(url).endsWith('/api/chat/history') ? { data: { messages: [] } } : { data: configured },
+    ));
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const openSettings = async () => {
+    render(<Sidebar activeView="chart" onViewChange={vi.fn()} currentSymbol="BTC/USDT" onSymbolChange={vi.fn()} />);
+    await act(async () => {});
+    fireEvent.click(screen.getByTitle('Settings'));
+  };
+
+  it('runs the checks only when asked and shows each result', async () => {
+    post.mockResolvedValue({ data: {
+      checked_at: '2026-10-25T12:00:00Z',
+      checks: [
+        { id: 'backend', name: 'Astral backend', status: 'ok', message: 'Running and answering.' },
+        { id: 'binance', name: 'Binance live prices', status: 'error', message: "Can't reach Binance from this computer: DNS." },
+        { id: 'broker_bitget', name: 'Bitget (DEMO)', status: 'ok', message: 'Read-only balance check passed: 2 balances found.' },
+        { id: 'broker_alpaca', name: 'Alpaca', status: 'skipped', message: 'No keys saved, so not checked.' },
+      ],
+    } });
+    await openSettings();
+    expect(post).not.toHaveBeenCalledWith(expect.stringContaining('/api/diagnostics/connections'), expect.anything(), expect.anything());
+
+    await act(async () => { fireEvent.click(screen.getByText('Test connections')); });
+
+    expect(post).toHaveBeenCalledWith(expect.stringContaining('/api/diagnostics/connections'), {}, { timeout: 90_000 });
+    expect(screen.getByTestId('check-broker_bitget')).toHaveAttribute('data-status', 'ok');
+    expect(screen.getByTestId('check-broker_bitget')).toHaveTextContent('Bitget (DEMO) — Read-only balance check passed: 2 balances found.');
+    expect(screen.getByTestId('check-binance')).toHaveAttribute('data-status', 'error');
+    expect(screen.getByTestId('check-broker_alpaca')).toHaveTextContent('No keys saved, so not checked.');
+  });
+
+  it('explains when the backend cannot be reached', async () => {
+    post.mockRejectedValue({ isAxiosError: true });
+    await openSettings();
+    await act(async () => { fireEvent.click(screen.getByText('Test connections')); });
+
+    expect(screen.getByTestId('connection-status')).toHaveTextContent('The Astral backend could not be reached');
+  });
+});

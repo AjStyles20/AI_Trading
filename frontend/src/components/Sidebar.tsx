@@ -4,6 +4,7 @@ import axios from 'axios';
 
 import { BACKEND_URL } from '../lib/api';
 import ChatMessage from './ChatMessage';
+import ConnectionStatus from './ConnectionStatus';
 import {
   ACCEPTED_IMAGE_TYPES,
   ACCEPTED_VIDEO_TYPES,
@@ -610,6 +611,7 @@ export default function Sidebar({
             </div>
             
             <div className="space-y-4 text-xs overflow-y-auto pr-2 min-h-0">
+              <ConnectionStatus />
               <div>
                 <label className="block text-gray-400 mb-1.5 font-medium">AI Provider</label>
                 <select value={tempAiProvider} onChange={(e) => { setTempAiProvider(e.target.value as 'openai' | 'groq' | 'ollama'); setTempAiModel(''); setTempAiVisionModel(''); }}
