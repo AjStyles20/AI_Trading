@@ -5,8 +5,11 @@ import sys, os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.data_service import MarketDataError, market_data
+from backend.history_cache import HistoryCache
 
 router = APIRouter()
+# Shared by all open copies of the app; see backend/history_cache.py.
+history_cache = HistoryCache()
 
 class DataRequest(BaseModel):
     symbol: str
@@ -30,11 +33,14 @@ def get_history(request: DataRequest):
     try:
         print(f"DEBUG: history request: {request}")
         if request.asset_type == "stock":
-            df = market_data.get_stock_data(request.symbol, request.interval, request.period)
+            fetch = lambda: market_data.get_stock_data(request.symbol, request.interval, request.period)  # noqa: E731
         elif request.asset_type == "crypto":
-            df = market_data.get_crypto_data(request.symbol, request.interval, request.limit)
+            fetch = lambda: market_data.get_crypto_data(request.symbol, request.interval, request.limit)  # noqa: E731
         else:
             raise ValueError("asset_type must be stock or crypto")
+        # The limit is applied below, per request, so it is not part of the key.
+        key = (request.asset_type, request.symbol.strip().upper(), request.interval, request.period)
+        df = history_cache.get_or_fetch(key, request.interval, fetch)
 
         # The provider returns a whole period (7 days of 1m candles is ~10k
         # rows, ~1.5 MB of JSON). Return only the most recent `limit` candles;

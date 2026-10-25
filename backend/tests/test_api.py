@@ -12,6 +12,14 @@ import data_api
 
 client = TestClient(app, base_url="http://127.0.0.1:8000")
 
+
+@pytest.fixture(autouse=True)
+def _fresh_history_cache():
+    # Chart history is cached between requests; each test supplies its own data.
+    data_api.history_cache.clear()
+    yield
+    data_api.history_cache.clear()
+
 def test_health_check():
     response = client.get("/health")
     assert response.status_code == 200
