@@ -6,7 +6,14 @@ import { getRefreshIntervalMs } from '../../lib/liveRefresh';
 import { formatPrice, get24hChange, getPriceDirection } from '../../lib/priceTicker';
 import { mergeLiveCandle, parseStreamMessage, toBinanceSymbol } from '../../lib/binanceMarket';
 
-type MockSeries = { kind: string; setData: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
+type MockSeries = {
+  kind: string;
+  paneIndex: number;
+  removed: boolean;
+  priceLines: number[];
+  setData: ReturnType<typeof vi.fn>;
+  update: ReturnType<typeof vi.fn>;
+};
 
 // Stands in for the browser WebSocket; tests drive open/messages/drops by hand.
 class FakeWebSocket {
@@ -58,6 +65,7 @@ vi.mock('lightweight-charts', () => ({
   ColorType: { Solid: 'solid' },
   CandlestickSeries: 'Candlestick',
   LineSeries: 'Line',
+  HistogramSeries: 'Histogram',
   createSeriesMarkers: () => ({ setMarkers: vi.fn() }),
   createChart: (container: HTMLElement) => {
     const surface = document.createElement('div');
@@ -65,12 +73,20 @@ vi.mock('lightweight-charts', () => ({
     const chart: MockChart = { series: [], fitContent: vi.fn(), setVisibleLogicalRange: vi.fn(), remove: vi.fn(), wheel: vi.fn<(event: Event) => void>(), surface };
     surface.addEventListener('wheel', (event) => chart.wheel(event));
     charts.push(chart);
+    // Panels exist while they hold a series, as in the real chart.
+    const livePanes = () => Math.max(0, ...chart.series.filter((s) => !s.removed).map((s) => s.paneIndex)) + 1;
     return {
-      addSeries: (kind: string) => {
-        const series = { kind, setData: vi.fn(), update: vi.fn() };
+      addSeries: (kind: string, _options?: unknown, paneIndex = 0) => {
+        const series: MockSeries = {
+          kind, paneIndex, removed: false, priceLines: [], setData: vi.fn(), update: vi.fn(),
+        };
         chart.series.push(series);
-        return series;
+        return { ...series, createPriceLine: (line: { price: number }) => series.priceLines.push(line.price),
+          setData: series.setData, update: series.update, _mock: series };
       },
+      removeSeries: (handle: { _mock: MockSeries }) => { handle._mock.removed = true; },
+      panes: () => Array.from({ length: livePanes() }, () => ({ setStretchFactor: vi.fn() })),
+      removePane: vi.fn(),
       timeScale: () => ({ fitContent: chart.fitContent, setVisibleLogicalRange: chart.setVisibleLogicalRange }),
       applyOptions: vi.fn(),
       remove: chart.remove,
@@ -571,5 +587,106 @@ describe('ChartPanel Binance live stream', () => {
     expect(socket().url).toContain('btcusdt@kline_1m');
     act(() => first.emit({ e: 'kline', k: { t: START_MS + HOUR_MS, o: '1', h: '1', l: '1', c: '999' } }));
     expect(candleSeries(charts[charts.length - 1]).update).not.toHaveBeenCalled();
+  });
+});
+
+describe('ChartPanel indicator panels', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    charts.length = 0;
+    post.mockReset();
+    setVisibility('visible');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Enough candles for RSI(14), MACD(12/26/9) and ATR(14) to produce values.
+  const longHistory = () => Array.from({ length: 60 }, (_, i) => ({
+    timestamp: new Date(Date.UTC(2026, 9, 23, 0, i)).toISOString(),
+    open: 100 + Math.sin(i / 3) * 5,
+    high: 108 + Math.sin(i / 3) * 5,
+    low: 95 + Math.sin(i / 3) * 5,
+    close: 102 + Math.sin(i / 3) * 5,
+  }));
+  const liveSeries = () => charts[charts.length - 1].series.filter((series) => !series.removed);
+  const inPane = (paneIndex: number) => liveSeries().filter((series) => series.paneIndex === paneIndex);
+  const toggle = async (label: string) => {
+    fireEvent.click(screen.getByRole('button', { name: label }));
+    await flush();
+  };
+
+  it('keeps the price panel free of oscillators', async () => {
+    post.mockResolvedValue({ data: longHistory() });
+    render(<ChartPanel symbol="AAPL" />);
+    await flush();
+    await toggle('ATR 14');
+
+    expect(inPane(1).map((series) => series.kind)).toEqual(['Line']);
+    expect(inPane(0).every((series) => series.kind === 'Candlestick' || series.kind === 'Line')).toBe(true);
+    expect(inPane(0)).toHaveLength(7);
+  });
+
+  it('draws RSI in its own panel with 70/30 guides and real values', async () => {
+    post.mockResolvedValue({ data: longHistory() });
+    render(<ChartPanel symbol="AAPL" />);
+    await flush();
+    await toggle('RSI 14');
+
+    const [rsi] = inPane(1);
+    expect(rsi.kind).toBe('Line');
+    expect(rsi.priceLines).toEqual([70, 30]);
+    const values = rsi.setData.mock.lastCall![0] as { value: number }[];
+    expect(values.length).toBeGreaterThan(0);
+    expect(values.every((point) => point.value >= 0 && point.value <= 100)).toBe(true);
+  });
+
+  it('draws MACD as line, signal and a coloured histogram in one panel', async () => {
+    post.mockResolvedValue({ data: longHistory() });
+    render(<ChartPanel symbol="AAPL" />);
+    await flush();
+    await toggle('MACD');
+
+    expect(inPane(1).map((series) => series.kind).sort()).toEqual(['Histogram', 'Line', 'Line']);
+    const histogram = inPane(1).find((series) => series.kind === 'Histogram')!;
+    const bars = histogram.setData.mock.lastCall![0] as { value: number; color: string }[];
+    expect(bars.length).toBeGreaterThan(0);
+    for (const bar of bars) {
+      expect(bar.color).toBe(bar.value >= 0 ? '#22c55e99' : '#ef444499');
+    }
+  });
+
+  it('stacks panels in a fixed order and closes the gap when one is turned off', async () => {
+    post.mockResolvedValue({ data: longHistory() });
+    render(<ChartPanel symbol="AAPL" />);
+    await flush();
+    await toggle('RSI 14');
+    await toggle('MACD');
+    await toggle('ATR 14');
+
+    expect(inPane(1)).toHaveLength(1);
+    expect(inPane(2)).toHaveLength(3);
+    expect(inPane(3)).toHaveLength(1);
+
+    await toggle('RSI 14');
+    expect(inPane(1).map((series) => series.kind).sort()).toEqual(['Histogram', 'Line', 'Line']);
+    expect(inPane(2)).toHaveLength(1);
+    expect(inPane(3)).toHaveLength(0);
+  });
+
+  it('rebuilds the panels on the new chart after a timeframe switch', async () => {
+    post.mockResolvedValue({ data: longHistory() });
+    render(<ChartPanel symbol="AAPL" />);
+    await flush();
+    await toggle('RSI 14');
+
+    fireEvent.click(screen.getByText('1m'));
+    await flush();
+
+    expect(charts.length).toBeGreaterThan(1);
+    const [rsi] = inPane(1);
+    expect(rsi.kind).toBe('Line');
+    expect(rsi.setData).toHaveBeenCalled();
   });
 });

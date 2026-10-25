@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import axios from 'axios';
-import { createChart, ColorType, CandlestickSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
-import type { CandlestickData, IChartApi, ISeriesApi, ISeriesMarkersPluginApi, LineData, SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
+import type { CandlestickData, IChartApi, ISeriesApi, ISeriesMarkersPluginApi, LineData, SeriesMarker, SeriesType, Time, UTCTimestamp } from 'lightweight-charts';
 import { calculateEMA, calculateMACD, calculateRSI, calculateSMA, calculateBollingerBands, calculateATR, type CandlePoint, type LinePoint, type MacdPoint } from '../lib/indicators';
 import type { BacktestResults } from './BottomPanel';
 import { BACKEND_URL } from '../lib/api';
@@ -44,6 +44,16 @@ type ChartMarker = SeriesMarker<Time>;
 // Where the chart's data comes from: Binance (history + live stream) for crypto
 // pairs it lists, otherwise the backend (Yahoo Finance) refreshed on a timer.
 type DataSource = 'binance' | 'backend';
+
+// Oscillators drawn in their own panels below the price chart.
+type IndicatorPanes = {
+  rsi?: ISeriesApi<'Line'>;
+  macd?: { line: ISeriesApi<'Line'>; signal: ISeriesApi<'Line'>; histogram: ISeriesApi<'Histogram'> };
+  atr?: ISeriesApi<'Line'>;
+};
+// Share of the chart height: price panel vs each indicator panel.
+const PRICE_PANE_STRETCH = 3;
+const INDICATOR_PANE_STRETCH = 1;
 type StreamStatus = 'connecting' | 'live' | 'reconnecting';
 
 const PRICE_FLASH_MS = 500;
@@ -82,6 +92,7 @@ export default function ChartPanel({
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const overlaySeriesRef = useRef<Record<string, ISeriesApi<'Line'>>>({});
+  const indicatorPanesRef = useRef<IndicatorPanes>({});
   // Each fetch takes a new id; a response is applied only if its id is still the
   // latest, so a slow reply for a previous symbol/timeframe or a disposed chart
   // is discarded.
@@ -227,6 +238,7 @@ export default function ChartPanel({
       layout: {
         background: { type: ColorType.Solid, color: '#0a0a0c' },
         textColor: '#9ca3af',
+        panes: { separatorColor: '#2a2a35', separatorHoverColor: '#3a3a48', enableResize: true },
       },
       grid: {
         vertLines: { color: '#2a2a35' },
@@ -284,13 +296,6 @@ export default function ChartPanel({
         lineStyle: 2,
         priceLineVisible: false,
         lastValueVisible: false,
-      }),
-      atr: chart.addSeries(LineSeries, {
-        color: '#fb923c',
-        lineWidth: 1,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        priceScaleId: 'left',
       }),
       equityCurve: chart.addSeries(LineSeries, {
         color: '#22c55e',
@@ -426,13 +431,62 @@ export default function ChartPanel({
     };
   }, [dataSource, fetchChartData, timeframe]);
 
+  // RSI, MACD and ATR each get a panel below the price chart, in that order.
+  // Toggling rebuilds them so the remaining panels close up. fetchChartData
+  // changes whenever the chart itself is rebuilt (new symbol or timeframe), so
+  // the panels are recreated on the new chart too.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const created: ISeriesApi<SeriesType>[] = [];
+    const panes: IndicatorPanes = {};
+    let paneIndex = 1;
+
+    if (enabledIndicators.rsi14) {
+      const rsi = chart.addSeries(LineSeries, { color: '#34d399', lineWidth: 2, priceLineVisible: false }, paneIndex);
+      // Conventional overbought / oversold guides.
+      rsi.createPriceLine({ price: 70, color: '#ef444480', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '' });
+      rsi.createPriceLine({ price: 30, color: '#22c55e80', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '' });
+      panes.rsi = rsi;
+      created.push(rsi);
+      paneIndex += 1;
+    }
+    if (enabledIndicators.macd) {
+      const histogram = chart.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false }, paneIndex);
+      const line = chart.addSeries(LineSeries, { color: '#e879f9', lineWidth: 2, priceLineVisible: false }, paneIndex);
+      const signal = chart.addSeries(LineSeries, { color: '#f59e0b', lineWidth: 1, priceLineVisible: false }, paneIndex);
+      panes.macd = { line, signal, histogram };
+      created.push(histogram, line, signal);
+      paneIndex += 1;
+    }
+    if (enabledIndicators.atr) {
+      const atr = chart.addSeries(LineSeries, { color: '#fb923c', lineWidth: 2, priceLineVisible: false }, paneIndex);
+      panes.atr = atr;
+      created.push(atr);
+    }
+
+    const allPanes = chart.panes();
+    allPanes[0]?.setStretchFactor(PRICE_PANE_STRETCH);
+    allPanes.slice(1).forEach((pane) => pane.setStretchFactor(INDICATOR_PANE_STRETCH));
+    indicatorPanesRef.current = panes;
+
+    return () => {
+      indicatorPanesRef.current = {};
+      try {
+        created.forEach((series) => chart.removeSeries(series));
+        while (chart.panes().length > 1) chart.removePane(chart.panes().length - 1);
+      } catch {
+        // The chart was already removed (symbol or timeframe switch).
+      }
+    };
+  }, [fetchChartData, enabledIndicators.rsi14, enabledIndicators.macd, enabledIndicators.atr]);
+
   useEffect(() => {
     const smaSeries = overlaySeriesRef.current.sma20;
     const emaSeries = overlaySeriesRef.current.ema21;
     const bbUpperSeries = overlaySeriesRef.current.bbUpper;
     const bbMidSeries = overlaySeriesRef.current.bbMid;
     const bbLowerSeries = overlaySeriesRef.current.bbLower;
-    const atrSeries = overlaySeriesRef.current.atr;
     const equityCurveSeries = overlaySeriesRef.current.equityCurve;
 
     const toChartLineData = (points: LinePoint[]): ChartLine[] =>
@@ -459,9 +513,19 @@ export default function ChartPanel({
         bbLowerSeries.setData([]);
       }
     }
-    if (atrSeries) {
-      atrSeries.setData(enabledIndicators.atr ? toChartLineData(calculateATR(candleData, 14)) : []);
+    const panes = indicatorPanesRef.current;
+    panes.rsi?.setData(toChartLineData(calculateRSI(candleData, 14)));
+    if (panes.macd) {
+      const macd = calculateMACD(candleData);
+      panes.macd.line.setData(macd.map((point) => ({ time: point.time as UTCTimestamp, value: point.macd })));
+      panes.macd.signal.setData(macd.map((point) => ({ time: point.time as UTCTimestamp, value: point.signal })));
+      panes.macd.histogram.setData(macd.map((point) => ({
+        time: point.time as UTCTimestamp,
+        value: point.histogram,
+        color: point.histogram >= 0 ? '#22c55e99' : '#ef444499',
+      })));
     }
+    panes.atr?.setData(toChartLineData(calculateATR(candleData, 14)));
 
     if (equityCurveSeries && backtestResults?.equity_curve && candleData.length > 0) {
       const eqData = backtestResults.equity_curve.slice(1);
