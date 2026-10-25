@@ -137,6 +137,16 @@ export default function ChartPanel({
     if (!background) {
       setIsLoading(true);
       setDataError('');
+      // A fresh load is for a new symbol or timeframe: drop the previous
+      // market's candles and price at once, so a failed load can never show
+      // them under the new symbol's name.
+      setCandleData([]);
+      setLastUpdated(null);
+      setRefreshFailed(false);
+      setPriceDirection('flat');
+      setPriceFlash('flat');
+      lastPriceRef.current = null;
+      historyKeyRef.current = null;
     }
     try {
       // Crypto pairs Binance lists come straight from Binance, matching the live

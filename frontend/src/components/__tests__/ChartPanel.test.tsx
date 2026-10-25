@@ -690,3 +690,31 @@ describe('ChartPanel indicator panels', () => {
     expect(rsi.setData).toHaveBeenCalled();
   });
 });
+
+describe('ChartPanel symbol switch', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    charts.length = 0;
+    post.mockReset();
+    setVisibility('visible');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("never shows the previous symbol's price when the new symbol fails to load", async () => {
+    post.mockResolvedValueOnce({ data: candles(2358.24) });
+    const { rerender } = render(<ChartPanel symbol="ETH/USDT" />);
+    await flush();
+    expect(screen.getByTestId('last-price')).toHaveTextContent('2,358.24');
+
+    post.mockRejectedValue(new Error('no data'));
+    rerender(<ChartPanel symbol="AAPL" />);
+    await flush();
+
+    expect(screen.queryByTestId('last-price')).toBeNull();
+    expect(screen.queryByTestId('day-change')).toBeNull();
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+  });
+});
