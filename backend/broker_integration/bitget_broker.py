@@ -79,6 +79,11 @@ class BitgetBroker(BrokerClient):
             "Content-Type": "application/json",
             "locale": "en-US",
         }
+        if demo:
+            # Bitget routes a request to demo trading only when this header is
+            # present; a demo key without it is sent to the live environment
+            # and rejected. https://www.bitget.com/docs/classic/demo-trading/rest-api
+            headers["paptrading"] = "1"
 
         url = f"{self._get_base_url()}{request_path}"
         data = body_payload.encode("utf-8") if body_payload else None
