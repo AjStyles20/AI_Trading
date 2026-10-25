@@ -5,6 +5,9 @@ export type ChatMessage = {
   role: ChatRole;
   text: string;
   timestamp: string;
+  // Images attached in this session (data URLs). Not saved: reloaded history
+  // shows the "[n images attached]" note instead.
+  images?: string[];
 };
 
 export type StoredChatMessage = { role: ChatRole; content: string; created_at?: string | null };

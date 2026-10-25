@@ -85,6 +85,13 @@ export default function ChatMessage({ message, footer }: { message: ChatMessageD
             <span className="text-[10px] text-[#a55eea] font-semibold">Astral AI</span>
           </div>
         )}
+        {message.images && message.images.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-1.5">
+            {message.images.map((src, index) => (
+              <img key={index} src={src} alt={`Attached image ${index + 1}`} className="max-h-40 max-w-full rounded-md border border-white/20" />
+            ))}
+          </div>
+        )}
         {isUser
           ? <span className="whitespace-pre-wrap break-words">{message.text}</span>
           : <div className="break-words"><MarkdownText>{message.text}</MarkdownText></div>}

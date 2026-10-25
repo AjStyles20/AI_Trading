@@ -4,6 +4,13 @@ import axios from 'axios';
 import Sidebar from '../Sidebar';
 import { fromStoredMessages, toMarkdownTranscript, transcriptFilename } from '../../lib/chatTranscript';
 import { markdownToHtml, messageToHtml, transcriptToHtml, wordDocument } from '../../lib/chatDocument';
+import { checkImageFile, prepareImageAttachment, scaledSize } from '../../lib/imageAttachments';
+
+// Image decoding and resizing need a real browser; tests stand in for it.
+vi.mock('../../lib/imageAttachments', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/imageAttachments')>()),
+  prepareImageAttachment: vi.fn(),
+}));
 
 vi.mock('axios', () => ({
   default: {
@@ -264,7 +271,7 @@ describe('Sidebar chat', () => {
     await renderChat();
     await send('first');
     expect(post).toHaveBeenLastCalledWith(expect.stringContaining('/api/chat'),
-      { query: 'first', conversation_id: 'main_session' }, expect.anything());
+      { query: 'first', images: [], conversation_id: 'main_session' }, expect.anything());
 
     fireEvent.click(screen.getByText('New'));
     expect(screen.queryByText('first')).toBeNull();
@@ -273,7 +280,7 @@ describe('Sidebar chat', () => {
 
     await send('second');
     expect(post).toHaveBeenLastCalledWith(expect.stringContaining('/api/chat'),
-      { query: 'second', conversation_id: newId }, expect.anything());
+      { query: 'second', images: [], conversation_id: newId }, expect.anything());
   });
 });
 
@@ -382,5 +389,127 @@ describe('Sidebar chat: Word-friendly copy and export', () => {
     expect(filename).toMatch(/^astral-chat-\d{4}-\d{2}-\d{2}-\d{4}\.doc$/);
     expect(saved!.type).toBe('application/msword;charset=utf-8');
     expect(await saved!.text()).toContain('<td>2%</td>');
+  });
+});
+
+describe('image attachment rules', () => {
+  const file = (name: string, type: string, size = 10) => new File([new Uint8Array(size)], name, { type });
+
+  it('accepts common image types and rejects everything else', () => {
+    expect(checkImageFile(file('chart.png', 'image/png'))).toBeNull();
+    expect(checkImageFile(file('photo.jpg', 'image/jpeg'))).toBeNull();
+    expect(checkImageFile(file('notes.pdf', 'application/pdf'))).toContain('only PNG, JPEG, WebP or GIF');
+    expect(checkImageFile(file('vector.svg', 'image/svg+xml'))).toContain('only PNG, JPEG, WebP or GIF');
+  });
+
+  it('rejects files above the source size limit', () => {
+    const huge = file('huge.png', 'image/png');
+    Object.defineProperty(huge, 'size', { value: 26 * 1024 * 1024 });
+    expect(checkImageFile(huge)).toContain('larger than 25 MB');
+  });
+
+  it('scales the longest side down to the limit and never enlarges', () => {
+    expect(scaledSize(4000, 3000)).toEqual({ width: 1600, height: 1200 });
+    expect(scaledSize(1000, 3200)).toEqual({ width: 500, height: 1600 });
+    expect(scaledSize(800, 600)).toEqual({ width: 800, height: 600 });
+  });
+});
+
+describe('Sidebar chat: image attachments', () => {
+  const configured = { ...savedSettings, ai_provider: 'groq', ai_vision_model: 'vision-x', credential_presence: { groq: true } };
+  const png = (name = 'chart.png') => new File([new Uint8Array(8)], name, { type: 'image/png' });
+
+  beforeEach(() => {
+    get.mockReset();
+    post.mockReset();
+    get.mockImplementation((url: string) => Promise.resolve(
+      String(url).endsWith('/api/chat/history') ? { data: { messages: [] } } : { data: configured },
+    ));
+    post.mockResolvedValue({ data: { response: 'A rising wedge.', status: 'success' } });
+    Element.prototype.scrollIntoView = vi.fn();
+    vi.mocked(prepareImageAttachment).mockReset();
+    vi.mocked(prepareImageAttachment).mockImplementation(async (file: File) => ({
+      id: file.name, name: file.name, dataUrl: `data:image/png;base64,${btoa(file.name)}`,
+    }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const renderChat = async () => {
+    render(<Sidebar activeView="chart" onViewChange={vi.fn()} currentSymbol="BTC/USDT" onSymbolChange={vi.fn()} />);
+    await act(async () => {});
+  };
+  const attach = async (...files: File[]) => {
+    await act(async () => { fireEvent.change(screen.getByTestId('image-file-input'), { target: { files } }); });
+  };
+  const chatInput = () => screen.getByPlaceholderText('Ask AI to analyze...');
+
+  it('previews attached images and sends them with the message', async () => {
+    await renderChat();
+    await attach(png('chart.png'));
+    expect(screen.getByAltText('chart.png')).toBeInTheDocument();
+
+    fireEvent.change(chatInput(), { target: { value: 'What pattern is this?' } });
+    await act(async () => { fireEvent.keyDown(chatInput(), { key: 'Enter' }); });
+
+    const [, payload] = post.mock.calls.find(([url]) => String(url).endsWith('/api/chat'))!;
+    expect(payload).toMatchObject({ query: 'What pattern is this?', images: [`data:image/png;base64,${btoa('chart.png')}`] });
+    expect(screen.queryByTestId('attachment-previews')).toBeNull();
+    expect(screen.getByAltText('Attached image 1')).toBeInTheDocument();
+    expect(screen.getByText('A rising wedge.')).toBeInTheDocument();
+  });
+
+  it('can send an image with no text', async () => {
+    await renderChat();
+    await attach(png());
+    await act(async () => { fireEvent.click(screen.getByLabelText('Attach images').parentElement!.querySelectorAll('button')[1]); });
+
+    const [, payload] = post.mock.calls.find(([url]) => String(url).endsWith('/api/chat'))!;
+    expect(payload).toMatchObject({ query: '', images: [expect.stringMatching(/^data:image\/png;base64,/)] });
+  });
+
+  it('removes an attachment before sending', async () => {
+    await renderChat();
+    await attach(png('a.png'), png('b.png'));
+    fireEvent.click(screen.getByLabelText('Remove a.png'));
+
+    expect(screen.queryByAltText('a.png')).toBeNull();
+    expect(screen.getByAltText('b.png')).toBeInTheDocument();
+  });
+
+  it('limits a message to four images and says why', async () => {
+    await renderChat();
+    await attach(png('1.png'), png('2.png'), png('3.png'), png('4.png'), png('5.png'));
+
+    expect(screen.getAllByAltText(/^\d\.png$/)).toHaveLength(4);
+    expect(screen.getByRole('alert')).toHaveTextContent('Only 4 images can be attached per message.');
+  });
+
+  it('reports files that cannot be attached', async () => {
+    vi.mocked(prepareImageAttachment).mockRejectedValueOnce(new Error('notes.pdf: only PNG, JPEG, WebP or GIF images can be attached.'));
+    await renderChat();
+    await attach(new File(['x'], 'notes.pdf', { type: 'application/pdf' }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent('notes.pdf: only PNG, JPEG, WebP or GIF');
+    expect(screen.queryByTestId('attachment-previews')).toBeNull();
+  });
+
+  it('attaches a pasted screenshot', async () => {
+    await renderChat();
+    await act(async () => { fireEvent.paste(chatInput(), { clipboardData: { files: [png('screenshot.png')] } }); });
+
+    expect(screen.getByAltText('screenshot.png')).toBeInTheDocument();
+  });
+
+  it('saves the vision model chosen in Settings', async () => {
+    await renderChat();
+    fireEvent.click(screen.getByTitle('Settings'));
+    fireEvent.change(screen.getByPlaceholderText('An image-capable Groq model'), { target: { value: 'vision-y' } });
+    await act(async () => { fireEvent.click(screen.getByText('Save Configuration')); });
+
+    const [, payload] = post.mock.calls.find(([url]) => String(url).endsWith('/api/settings'))!;
+    expect(payload).toMatchObject({ ai_vision_model: 'vision-y' });
   });
 });

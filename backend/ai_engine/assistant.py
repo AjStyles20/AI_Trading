@@ -3,6 +3,7 @@ from langchain_openai import ChatOpenAI
 from database.vector_manager import VectorMemoryManager
 from database.sqlite_manager import get_settings, record_chat_message, get_recent_chat_messages
 from core.credential_provider import resolve_api_keys
+from ai_engine.attachments import attachment_note
 import os
 
 
@@ -34,6 +35,8 @@ class AstralAIAssistant:
         self.memory_manager = VectorMemoryManager()
         self.llm = None
         self.model_name = None
+        self.vision_llm = None
+        self.vision_model_name = None
         self._initialized = False
 
     def _initialize_llm(self):
@@ -44,30 +47,37 @@ class AstralAIAssistant:
             raise ValueError("Unsupported AI provider")
         configured_model = (settings or {}).get("ai_model") or ""
         model_name = configured_model or (os.environ.get("OPENAI_MODEL", defaults[provider]) if provider == "openai" else defaults[provider])
+        # Images need a vision-capable model. OpenAI's chat models read images, so
+        # they default to the chat model; Groq and Ollama need one chosen in Settings.
+        vision_model = (settings or {}).get("ai_vision_model") or (model_name if provider == "openai" else "")
         self.provider = provider
         self.model_name = model_name
-        if provider == "ollama" and not model_name:
-            self.llm = None
-            self._initialized = True
-            return
+        self.vision_model_name = vision_model or None
+        self.llm = None
+        self.vision_llm = None
+        self._initialized = True
 
         api_key = "ollama" if provider == "ollama" else resolve_api_keys(settings).get(provider)
         if not api_key or api_key == "mock-key":
-            self.llm = None
-            self._initialized = True
             return
 
         base_urls = {"groq": "https://api.groq.com/openai/v1", "ollama": "http://127.0.0.1:11434/v1"}
-        options = dict(
-            temperature=0.4,
-            api_key=api_key,
-            model=model_name,
-            request_timeout=120.0,
-        )
-        if provider in base_urls:
-            options["base_url"] = base_urls[provider]
-        self.llm = ChatOpenAI(**options)
-        self._initialized = True
+
+        def client(model: str):
+            options = dict(temperature=0.4, api_key=api_key, model=model, request_timeout=120.0)
+            if provider in base_urls:
+                options["base_url"] = base_urls[provider]
+            return ChatOpenAI(**options)
+
+        if model_name:
+            self.llm = client(model_name)
+        if vision_model:
+            self.vision_llm = client(vision_model)
+
+    def get_vision_llm(self):
+        if not self._initialized:
+            self._initialize_llm()
+        return self.vision_llm
 
     def get_llm(self):
         """Initialize the LLM on first use, after application startup has initialized storage."""
@@ -81,8 +91,16 @@ class AstralAIAssistant:
         self._initialized = False
         self._initialize_llm()
 
-    def analyze_market_query(self, query: str, conversation_id: str) -> str:
-        """Processes a market or strategy query using the LLM and persistent memory."""
+    def analyze_market_query(self, query: str, conversation_id: str, images: list[str] | None = None) -> str:
+        """Processes a market or strategy query using the LLM and persistent memory.
+
+        `images` are validated base64 data URLs (see ai_engine.attachments). They
+        are sent to a vision-capable model and never stored; history and memory
+        keep only a short "[n images attached]" note.
+        """
+        images = images or []
+        note = attachment_note(len(images))
+        stored_query = f"{query}\n\n{note}" if note else query
         import time
         start_time = time.time()
 
@@ -120,11 +138,17 @@ class AstralAIAssistant:
         system_prompt = build_chat_system_prompt(context_str, history_str)
         messages = [
             SystemMessage(content=system_prompt),
-            HumanMessage(content=query)
+            HumanMessage(content=(
+                [{"type": "text", "text": query or "Describe this image."}]
+                + [{"type": "image_url", "image_url": {"url": url}} for url in images]
+            ) if images else query)
         ]
 
         # 3. Get response
-        llm = self.get_llm()
+        llm = self.get_vision_llm() if images else self.get_llm()
+        if llm is None and images:
+            return ("Reading images needs a vision-capable model. Choose one under Settings → Vision model "
+                    "(OpenAI's chat models work as they are; for Groq or Ollama enter an image-capable model).")
         if llm is None:
             return "Configure an AI provider in Settings. OpenAI and Groq need API keys; Ollama needs a local model and running server."
 
@@ -141,7 +165,7 @@ class AstralAIAssistant:
             return f"Error during generation: {err_msg}"
 
         # 4. Save this interaction to Long-Term Memory
-        interaction_text = f"User asked: {query}\nAI Responded: {response_text}"
+        interaction_text = f"User asked: {stored_query}\nAI Responded: {response_text}"
         import uuid
         self.memory_manager.remember_conversation(
             doc_id=str(uuid.uuid4()),
@@ -150,7 +174,7 @@ class AstralAIAssistant:
         )
 
         try:
-            record_chat_message(conversation_id, "user", query)
+            record_chat_message(conversation_id, "user", stored_query)
             record_chat_message(conversation_id, "assistant", response_text)
         except Exception as e:
             print(f"WARNING: Failed to persist chat history: {e}")

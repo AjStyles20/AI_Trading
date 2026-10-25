@@ -3,6 +3,7 @@ import axios from 'axios';
 
 import { BACKEND_URL } from '../lib/api';
 import ChatMessage from './ChatMessage';
+import { ACCEPTED_IMAGE_TYPES, MAX_ATTACHMENTS, prepareImageAttachment, type ImageAttachment } from '../lib/imageAttachments';
 import {
   copyRich,
   downloadTextFile,
@@ -78,6 +79,11 @@ export default function Sidebar({
   const [tempAiProvider, setTempAiProvider] = useState<'openai' | 'groq' | 'ollama'>('openai');
   const [aiModel, setAiModel] = useState('');
   const [tempAiModel, setTempAiModel] = useState('');
+  const [aiVisionModel, setAiVisionModel] = useState('');
+  const [tempAiVisionModel, setTempAiVisionModel] = useState('');
+  const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
+  const [attachError, setAttachError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [groqKey, setGroqKey] = useState('');
   const [tempGroqKey, setTempGroqKey] = useState('');
   const [binanceKey, setBinanceKey] = useState('');
@@ -132,6 +138,8 @@ export default function Sidebar({
         setTempAiProvider(provider);
         setAiModel(res.data.ai_model || '');
         setTempAiModel(res.data.ai_model || '');
+        setAiVisionModel(res.data.ai_vision_model || '');
+        setTempAiVisionModel(res.data.ai_vision_model || '');
         // Saved keys live in the OS credential store and the backend only reports
         // whether each one is present. Show a present key as the mask so saving
         // keeps it; an empty field means "remove this key".
@@ -187,6 +195,7 @@ export default function Sidebar({
       await axios.post(`${BACKEND_URL}/api/settings`, {
         ai_provider: tempAiProvider,
         ai_model: tempAiModel,
+        ai_vision_model: tempAiVisionModel,
         binance_environment: tempBinanceTestnetEnabled ? 'testnet' : 'live',
         bitget_environment: tempBitgetDemoEnabled ? 'demo' : 'live',
         api_keys: {
@@ -212,6 +221,7 @@ export default function Sidebar({
       setGroqKey(tempGroqKey);
       setAiProvider(tempAiProvider);
       setAiModel(tempAiModel);
+      setAiVisionModel(tempAiVisionModel);
       setBinanceKey(tempBinanceKey);
       setBinanceSecret(tempBinanceSecret);
       setBinanceTestnetEnabled(tempBinanceTestnetEnabled);
@@ -301,7 +311,8 @@ export default function Sidebar({
   };
 
   const sendMessage = async (query: string) => {
-    if (!query.trim() || isLoading) return;
+    const images = attachments.map((attachment) => attachment.dataUrl);
+    if ((!query.trim() && images.length === 0) || isLoading) return;
     if (!aiConfigured) {
       setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant',
         text: 'Choose and configure an AI provider in Settings before using chat. Backtesting and local graph export do not need an AI provider.',
@@ -313,15 +324,19 @@ export default function Sidebar({
       id: Date.now().toString(),
       role: 'user',
       text: query,
+      images: images.length > 0 ? images : undefined,
       timestamp: new Date().toLocaleTimeString(),
     };
     setMessages(prev => [...prev, userMessage]);
     setInput('');
+    setAttachments([]);
+    setAttachError('');
     setIsLoading(true);
 
     try {
       const res = await axios.post(`${BACKEND_URL}/api/chat`, {
         query,
+        images,
         conversation_id: conversationId,
       }, {
         timeout: 180000 // 180s timeout for model downloads/API calls
@@ -359,6 +374,35 @@ export default function Sidebar({
       setIsLoading(false);
     }
 
+  };
+
+  // Images picked with the paperclip, or pasted (e.g. a screenshot with Ctrl+V).
+  const addImageFiles = async (files: File[]) => {
+    const room = MAX_ATTACHMENTS - attachments.length;
+    if (files.length === 0) return;
+    if (room <= 0) {
+      setAttachError(`You can attach up to ${MAX_ATTACHMENTS} images per message.`);
+      return;
+    }
+    const prepared: ImageAttachment[] = [];
+    const problems: string[] = [];
+    for (const file of files.slice(0, room)) {
+      try {
+        prepared.push(await prepareImageAttachment(file));
+      } catch (error) {
+        problems.push(error instanceof Error ? error.message : `${file.name}: could not be attached.`);
+      }
+    }
+    if (files.length > room) problems.push(`Only ${MAX_ATTACHMENTS} images can be attached per message.`);
+    setAttachments((current) => [...current, ...prepared].slice(0, MAX_ATTACHMENTS));
+    setAttachError(problems.join(' '));
+  };
+
+  const handlePaste = (event: React.ClipboardEvent<HTMLInputElement>) => {
+    const images = Array.from(event.clipboardData?.files ?? []).filter((file) => file.type.startsWith('image/'));
+    if (images.length === 0) return;
+    event.preventDefault();
+    void addImageFiles(images);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -401,7 +445,7 @@ export default function Sidebar({
             <div className="space-y-4 text-xs overflow-y-auto pr-2 min-h-0">
               <div>
                 <label className="block text-gray-400 mb-1.5 font-medium">AI Provider</label>
-                <select value={tempAiProvider} onChange={(e) => { setTempAiProvider(e.target.value as 'openai' | 'groq' | 'ollama'); setTempAiModel(''); }}
+                <select value={tempAiProvider} onChange={(e) => { setTempAiProvider(e.target.value as 'openai' | 'groq' | 'ollama'); setTempAiModel(''); setTempAiVisionModel(''); }}
                   className="w-full bg-[#0a0a0c] border border-[#2a2a35] rounded-lg py-2 px-3 text-white">
                   <option value="openai">OpenAI (API key)</option>
                   <option value="groq">Groq (hosted, free tier subject to limits)</option>
@@ -414,6 +458,15 @@ export default function Sidebar({
                   placeholder={tempAiProvider === 'openai' ? 'gpt-4.1-mini (default)' : tempAiProvider === 'groq' ? 'openai/gpt-oss-20b (default)' : 'Enter a model installed with ollama pull'}
                   className="w-full bg-[#0a0a0c] border border-[#2a2a35] rounded-lg py-2 px-3 text-white" />
                 <p className="text-[10px] text-gray-500 mt-2">Ollama must be running on this computer at 127.0.0.1:11434. Local speed and memory needs depend on the model and computer.</p>
+              </div>
+              <div>
+                <label className="block text-gray-400 mb-1.5 font-medium">Vision model (for images)</label>
+                <input value={tempAiVisionModel} onChange={(e) => setTempAiVisionModel(e.target.value)}
+                  placeholder={tempAiProvider === 'openai' ? 'Uses the chat model (reads images)' : tempAiProvider === 'groq' ? 'An image-capable Groq model' : 'An image-capable local model'}
+                  className="w-full bg-[#0a0a0c] border border-[#2a2a35] rounded-lg py-2 px-3 text-white" />
+                <p className="text-[10px] text-gray-500 mt-2">
+                  Needed to attach images to the chat. OpenAI&apos;s chat models already read images. For Groq, pick a model listed with vision/image input in Groq&apos;s console; for Ollama, pull an image-capable model.
+                </p>
               </div>
               {tempAiProvider === 'groq' && <div>
                 <label className="block text-gray-400 mb-1.5 font-medium">Groq API Key</label>
@@ -665,6 +718,7 @@ export default function Sidebar({
                setTempGroqKey(groqKey);
                setTempAiProvider(aiProvider);
                setTempAiModel(aiModel);
+               setTempAiVisionModel(aiVisionModel);
                setTempBinanceKey(binanceKey);
                setTempBinanceSecret(binanceSecret);
                setTempBinanceTestnetEnabled(binanceTestnetEnabled);
@@ -839,19 +893,60 @@ export default function Sidebar({
 
           {/* Input */}
           <div className="p-3 border-t border-[#2a2a35] bg-[#0d0d12] flex-shrink-0">
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-2" data-testid="attachment-previews">
+                {attachments.map((attachment) => (
+                  <div key={attachment.id} className="relative">
+                    <img src={attachment.dataUrl} alt={attachment.name} className="w-14 h-14 object-cover rounded-md border border-[#2a2a35]" />
+                    <button
+                      type="button"
+                      onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
+                      aria-label={`Remove ${attachment.name}`}
+                      className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[#2a2a35] text-[9px] text-white hover:bg-red-500"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {attachError && <p role="alert" className="text-[10px] text-amber-400 mb-2">{attachError}</p>}
             <div className="relative flex items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPTED_IMAGE_TYPES.join(',')}
+                multiple
+                hidden
+                data-testid="image-file-input"
+                onChange={(e) => {
+                  void addImageFiles(Array.from(e.target.files ?? []));
+                  e.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isLoading || attachments.length >= MAX_ATTACHMENTS}
+                title="Attach images (or paste a screenshot)"
+                aria-label="Attach images"
+                className="w-9 h-9 rounded-lg border border-[#2a2a35] text-gray-400 flex items-center justify-center hover:text-white hover:border-[#a55eea] transition-colors disabled:opacity-40 flex-shrink-0"
+              >
+                📎
+              </button>
               <input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 disabled={isLoading}
                 placeholder={aiConfigured ? "Ask AI to analyze..." : "Configure an AI provider in Settings ⚙️"}
                 className="flex-1 bg-[#1c1c24] text-sm text-white rounded-lg border border-[#2a2a35] focus:border-[#a55eea] focus:ring-1 focus:ring-[#a55eea] outline-none py-2.5 pl-3 pr-3 transition-all disabled:opacity-50"
               />
               <button
                 onClick={() => sendMessage(input)}
-                disabled={isLoading || !input.trim() || !aiConfigured}
+                disabled={isLoading || (!input.trim() && attachments.length === 0) || !aiConfigured}
                 className="w-9 h-9 rounded-lg bg-[#a55eea] flex items-center justify-center text-white hover:bg-[#b87ef7] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

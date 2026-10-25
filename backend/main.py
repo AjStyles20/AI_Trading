@@ -15,6 +15,7 @@ if ROOT_DIR not in sys.path:
 
 from ai_engine.assistant import ai_assistant
 from ai_engine.strategy_generator import StrategyGenerator
+from ai_engine.attachments import validate_image_data_urls
 from database.sqlite_manager import get_recent_chat_messages, init_db
 from indicators_api import router as indicators_router
 from data_api import router as data_router
@@ -86,11 +87,17 @@ app.include_router(trading_router)
 class ChatRequest(BaseModel):
     query: str
     conversation_id: str = "default"
+    # Base64 data URLs of attached images; validated before use, never stored.
+    images: list[str] = []
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
     try:
-        response = ai_assistant.analyze_market_query(request.query, request.conversation_id)
+        images = validate_image_data_urls(request.images)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        response = ai_assistant.analyze_market_query(request.query, request.conversation_id, images)
         return {"response": response, "status": "success"}
     except Exception as e:
         return {"response": f"Error: {str(e)}", "status": "error"}
