@@ -102,82 +102,49 @@ export default function Sidebar({
         setTempAiProvider(provider);
         setAiModel(res.data.ai_model || '');
         setTempAiModel(res.data.ai_model || '');
-        const groqConfigured = res.data.api_keys?.groq || (res.data.credential_presence?.groq ? '********' : '');
-        setGroqKey(groqConfigured);
-        setTempGroqKey(groqConfigured);
-        if (res.data.api_keys?.openai) {
-          setOpenaiKey(res.data.api_keys.openai);
-          setTempKey(res.data.api_keys.openai);
-        } else if (res.data.credential_presence?.openai) {
-          setOpenaiKey('********');
-          setTempKey('********');
-        }
-        if (res.data.api_keys?.binance_key) {
-          setBinanceKey(res.data.api_keys.binance_key);
-          setTempBinanceKey(res.data.api_keys.binance_key);
-        }
-        if (res.data.api_keys?.binance_secret) {
-          setBinanceSecret(res.data.api_keys.binance_secret);
-          setTempBinanceSecret(res.data.api_keys.binance_secret);
-        }
-        const testnetEnabled = ['1', 'true', 'yes', 'on'].includes(
-          String(res.data.api_keys?.binance_testnet || '').trim().toLowerCase()
-        );
+        // Saved keys live in the OS credential store and the backend only reports
+        // whether each one is present. Show a present key as the mask so saving
+        // keeps it; an empty field means "remove this key".
+        const storedKey = (key: string): string =>
+          res.data.api_keys?.[key] || (res.data.credential_presence?.[key] ? '********' : '');
+        setGroqKey(storedKey('groq'));
+        setTempGroqKey(storedKey('groq'));
+        setOpenaiKey(storedKey('openai'));
+        setTempKey(storedKey('openai'));
+        setBinanceKey(storedKey('binance_key'));
+        setTempBinanceKey(storedKey('binance_key'));
+        setBinanceSecret(storedKey('binance_secret'));
+        setTempBinanceSecret(storedKey('binance_secret'));
+        const testnetEnabled = res.data.binance_environment === 'testnet';
         setBinanceTestnetEnabled(testnetEnabled);
         setTempBinanceTestnetEnabled(testnetEnabled);
-        if (res.data.api_keys?.binance_testnet_key) {
-          setBinanceTestnetKey(res.data.api_keys.binance_testnet_key);
-          setTempBinanceTestnetKey(res.data.api_keys.binance_testnet_key);
-        }
-        if (res.data.api_keys?.binance_testnet_secret) {
-          setBinanceTestnetSecret(res.data.api_keys.binance_testnet_secret);
-          setTempBinanceTestnetSecret(res.data.api_keys.binance_testnet_secret);
-        }
-        if (res.data.api_keys?.bitget_key) {
-          setBitgetKey(res.data.api_keys.bitget_key);
-          setTempBitgetKey(res.data.api_keys.bitget_key);
-        }
-        if (res.data.api_keys?.bitget_secret) {
-          setBitgetSecret(res.data.api_keys.bitget_secret);
-          setTempBitgetSecret(res.data.api_keys.bitget_secret);
-        }
-        if (res.data.api_keys?.bitget_passphrase) {
-          setBitgetPassphrase(res.data.api_keys.bitget_passphrase);
-          setTempBitgetPassphrase(res.data.api_keys.bitget_passphrase);
-        }
-        const bitgetDemoEnabled = ['1', 'true', 'yes', 'on'].includes(
-          String(res.data.api_keys?.bitget_demo || '').trim().toLowerCase()
-        );
+        setBinanceTestnetKey(storedKey('binance_testnet_key'));
+        setTempBinanceTestnetKey(storedKey('binance_testnet_key'));
+        setBinanceTestnetSecret(storedKey('binance_testnet_secret'));
+        setTempBinanceTestnetSecret(storedKey('binance_testnet_secret'));
+        setBitgetKey(storedKey('bitget_key'));
+        setTempBitgetKey(storedKey('bitget_key'));
+        setBitgetSecret(storedKey('bitget_secret'));
+        setTempBitgetSecret(storedKey('bitget_secret'));
+        setBitgetPassphrase(storedKey('bitget_passphrase'));
+        setTempBitgetPassphrase(storedKey('bitget_passphrase'));
+        const bitgetDemoEnabled = res.data.bitget_environment === 'demo';
         setBitgetDemoEnabled(bitgetDemoEnabled);
         setTempBitgetDemoEnabled(bitgetDemoEnabled);
-        if (res.data.api_keys?.bitget_demo_key) {
-          setBitgetDemoKey(res.data.api_keys.bitget_demo_key);
-          setTempBitgetDemoKey(res.data.api_keys.bitget_demo_key);
-        }
-        if (res.data.api_keys?.bitget_demo_secret) {
-          setBitgetDemoSecret(res.data.api_keys.bitget_demo_secret);
-          setTempBitgetDemoSecret(res.data.api_keys.bitget_demo_secret);
-        }
-        if (res.data.api_keys?.bitget_demo_passphrase) {
-          setBitgetDemoPassphrase(res.data.api_keys.bitget_demo_passphrase);
-          setTempBitgetDemoPassphrase(res.data.api_keys.bitget_demo_passphrase);
-        }
-        if (res.data.api_keys?.alpaca_key) {
-          setAlpacaKey(res.data.api_keys.alpaca_key);
-          setTempAlpacaKey(res.data.api_keys.alpaca_key);
-        }
-        if (res.data.api_keys?.alpaca_secret) {
-          setAlpacaSecret(res.data.api_keys.alpaca_secret);
-          setTempAlpacaSecret(res.data.api_keys.alpaca_secret);
-        }
-        if (res.data.api_keys?.alpaca_paper_key) {
-          setAlpacaPaperKey(res.data.api_keys.alpaca_paper_key);
-          setTempAlpacaPaperKey(res.data.api_keys.alpaca_paper_key);
-        }
-        if (res.data.api_keys?.alpaca_paper_secret) {
-          setAlpacaPaperSecret(res.data.api_keys.alpaca_paper_secret);
-          setTempAlpacaPaperSecret(res.data.api_keys.alpaca_paper_secret);
-        }
+        setBitgetDemoKey(storedKey('bitget_demo_key'));
+        setTempBitgetDemoKey(storedKey('bitget_demo_key'));
+        setBitgetDemoSecret(storedKey('bitget_demo_secret'));
+        setTempBitgetDemoSecret(storedKey('bitget_demo_secret'));
+        setBitgetDemoPassphrase(storedKey('bitget_demo_passphrase'));
+        setTempBitgetDemoPassphrase(storedKey('bitget_demo_passphrase'));
+        setAlpacaKey(storedKey('alpaca_key'));
+        setTempAlpacaKey(storedKey('alpaca_key'));
+        setAlpacaSecret(storedKey('alpaca_secret'));
+        setTempAlpacaSecret(storedKey('alpaca_secret'));
+        setAlpacaPaperKey(storedKey('alpaca_paper_key'));
+        setTempAlpacaPaperKey(storedKey('alpaca_paper_key'));
+        setAlpacaPaperSecret(storedKey('alpaca_paper_secret'));
+        setTempAlpacaPaperSecret(storedKey('alpaca_paper_secret'));
       } catch {
         setBackendOnline(false);
       }
@@ -190,18 +157,18 @@ export default function Sidebar({
       await axios.post(`${BACKEND_URL}/api/settings`, {
         ai_provider: tempAiProvider,
         ai_model: tempAiModel,
+        binance_environment: tempBinanceTestnetEnabled ? 'testnet' : 'live',
+        bitget_environment: tempBitgetDemoEnabled ? 'demo' : 'live',
         api_keys: {
           openai: tempKey,
           groq: tempGroqKey,
           binance_key: tempBinanceKey,
           binance_secret: tempBinanceSecret,
-          binance_testnet: tempBinanceTestnetEnabled ? 'true' : 'false',
           binance_testnet_key: tempBinanceTestnetKey,
           binance_testnet_secret: tempBinanceTestnetSecret,
           bitget_key: tempBitgetKey,
           bitget_secret: tempBitgetSecret,
           bitget_passphrase: tempBitgetPassphrase,
-          bitget_demo: tempBitgetDemoEnabled ? 'true' : 'false',
           bitget_demo_key: tempBitgetDemoKey,
           bitget_demo_secret: tempBitgetDemoSecret,
           bitget_demo_passphrase: tempBitgetDemoPassphrase,
@@ -241,8 +208,15 @@ export default function Sidebar({
         timestamp: new Date().toLocaleTimeString(),
       };
       setMessages(prev => [...prev, successMsg]);
-    } catch {
-      alert("Failed to save settings. Ensure the backend is running.");
+    } catch (err) {
+      // Only blame the connection when the backend could not be reached; when it
+      // answered, show its reason (e.g. a rejected value or credential store error).
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined;
+      if (axios.isAxiosError(err) && !err.response) {
+        alert('Failed to save settings: the backend could not be reached. Make sure it is running.');
+      } else {
+        alert(`Failed to save settings: ${typeof detail === 'string' ? detail : 'the backend rejected the request.'}`);
+      }
     }
   };
 
