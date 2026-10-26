@@ -8,9 +8,19 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from decimal import ROUND_DOWN, ROUND_UP, Decimal
 
 from .base import BrokerClient, BrokerExecutionResult, BrokerOrder, BrokerQuote
 from core.credential_provider import resolve_api_keys
+
+
+# Buys are sent as marketable limit orders, immediate-or-cancel, sized in the
+# base coin. A plain market buy is sized in the quote coin on Bitget, so its fill
+# could exceed the approved base quantity when the price moves; a limit buy can
+# never fill more than its quantity, and the cap bounds slippage. The cap must
+# stay below Bitget's buyLimitPriceRatio (2% for BTCUSDT).
+BUY_PRICE_CAP = Decimal("0.005")
+SYMBOL_RULES_TTL_SECONDS = 3600
 
 
 class BitgetBroker(BrokerClient):
@@ -84,16 +94,52 @@ class BitgetBroker(BrokerClient):
         equity = account.get("accountEquity")
         return balances, (float(equity) if equity not in (None, "") else None)
 
+    def _unified_live_blocked(self, settings: dict) -> bool:
+        return self._use_unified(settings) and not self._use_demo(settings)
+
     def _reject_unified_trading(self, settings: dict) -> None:
-        # Order placement on unified accounts uses different v3 requests and
-        # order fields; it is not enabled until it has been built and verified
-        # in demo trading. Refused here, at broker validation, so the guarded
-        # submission path never records an order intent or contacts Bitget.
-        if self._use_unified(settings):
+        # Unified-account orders use the v3 API. They run in demo trading only
+        # until that path has been verified there; real-money unified orders are
+        # refused here, at broker validation, so the guarded submission path
+        # never records an order intent or contacts Bitget.
+        if self._unified_live_blocked(settings):
             raise ValueError(
-                "Bitget unified-account trading is not enabled in Astral yet. Balances, positions and "
-                "open orders work read-only; orders are refused until unified-account trading is verified."
+                "Bitget unified-account trading is enabled in demo only until it has been verified there. "
+                "Switch on Bitget demo trading to place unified-account orders."
             )
+
+    def _symbol_rules(self, symbol: str, settings: dict) -> dict:
+        """Precision, minimum value and status for a spot symbol (public data, cached)."""
+        unified = self._use_unified(settings)
+        key = ("unified" if unified else "classic", symbol)
+        cache = self.__dict__.setdefault("_rules_cache", {})
+        cached = cache.get(key)
+        if cached and time.monotonic() - cached[0] < SYMBOL_RULES_TTL_SECONDS:
+            return cached[1]
+        if unified:
+            payload = self._public_request("/api/v3/market/instruments", params={"category": "SPOT", "symbol": symbol})
+        else:
+            payload = self._public_request("/api/v2/spot/public/symbols", params={"symbol": symbol})
+        item = payload[0] if isinstance(payload, list) and payload else payload
+        if not isinstance(item, dict) or str(item.get("symbol", "")).upper() != symbol:
+            raise ValueError(f"Bitget has no spot symbol rules for {symbol}.")
+        rules = {
+            "status": str(item.get("status", "")).lower(),
+            "quantity_decimals": int(item.get("quantityPrecision")),
+            "price_decimals": int(item.get("pricePrecision")),
+            "min_order_value": Decimal(str(item.get("minOrderAmount" if unified else "minTradeUSDT") or "0")),
+            "buy_limit_ratio": Decimal(str(item.get("buyLimitPriceRatio") or "0")),
+        }
+        cache[key] = (time.monotonic(), rules)
+        return rules
+
+    @staticmethod
+    def _quantize(value: Decimal, decimals: int, rounding: str) -> Decimal:
+        return value.quantize(Decimal(1).scaleb(-decimals), rounding=rounding)
+
+    @staticmethod
+    def _decimal_text(value: Decimal) -> str:
+        return format(value, "f")
 
     def _get_base_url(self) -> str:
         return "https://api.bitget.com"
@@ -277,7 +323,7 @@ class BitgetBroker(BrokerClient):
             "environment": self._get_environment_label(settings),
             "account_type": self._get_account_label(settings),
             "configured": self.is_configured(settings),
-            "can_trade": self.is_configured(settings) and not self._use_unified(settings),
+            "can_trade": self.is_configured(settings) and not self._unified_live_blocked(settings),
             "balances": balances,
             "total_equity_usd": total_equity_usd,
             "warnings": ["Bitget demo mode is enabled."] if self._use_demo(settings) else [],
@@ -292,15 +338,46 @@ class BitgetBroker(BrokerClient):
             raise ValueError("Order quantity must be greater than 0.")
         if order.price <= 0:
             raise ValueError("Order price must be greater than 0.")
+        side = order.side.upper()
+        if side not in {"BUY", "SELL"}:
+            raise ValueError(f"Unsupported order side: {order.side}.")
 
         self._get_credentials(settings, self._use_demo(settings))
-        return {
+        symbol = self._normalize_symbol(order.symbol)
+        rules = self._symbol_rules(symbol, settings)
+        if rules["status"] != "online":
+            raise ValueError(f"Bitget is not trading {symbol} (status: {rules['status'] or 'unknown'}).")
+
+        # Round down so the order never exceeds the quantity risk approved.
+        qty = self._quantize(Decimal(str(order.qty)), rules["quantity_decimals"], ROUND_DOWN)
+        if qty <= 0:
+            raise ValueError(f"Order quantity rounds to zero at Bitget's {rules['quantity_decimals']} decimal places.")
+        reference = Decimal(str(order.price))
+        notional = qty * reference
+        if notional < rules["min_order_value"]:
+            raise ValueError(
+                f"Order value {self._decimal_text(notional)} is below Bitget's minimum of "
+                f"{self._decimal_text(rules['min_order_value'])} USDT for {symbol}."
+            )
+
+        validation = {
             "ok": True,
             "warnings": [],
-            "normalized_qty": order.qty,
+            "normalized_qty": float(qty),
             "original_qty": order.qty,
-            "estimated_notional": order.qty * order.price,
+            "estimated_notional": float(notional),
+            "order_type": "market",
         }
+        if side == "BUY":
+            limit_price = self._quantize(reference * (1 + BUY_PRICE_CAP), rules["price_decimals"], ROUND_UP)
+            if rules["buy_limit_ratio"] > 0 and limit_price > reference * (1 + rules["buy_limit_ratio"]):
+                raise ValueError(f"Buy price cap exceeds Bitget's allowed range for {symbol}.")
+            validation.update(
+                order_type="limit_ioc",
+                limit_price=float(limit_price),
+                max_notional=float(qty * limit_price),
+            )
+        return validation
 
     def execute_order(self, order: BrokerOrder, execution_mode: str, settings: dict) -> BrokerExecutionResult:
         if execution_mode == "paper":
@@ -316,14 +393,34 @@ class BitgetBroker(BrokerClient):
 
         self._reject_unified_trading(settings)
         validation = self.validate_order(order, execution_mode, settings)
-        payload = {
-            "symbol": self._normalize_symbol(order.symbol),
-            "side": order.side.lower(),
-            "orderType": "market",
-            "size": str(validation.get("normalized_qty", order.qty)),
-            "clientOid": order.metadata.get("client_order_id") or str(int(time.time() * 1000)),
-        }
-        response = self._request("POST", "/api/v2/spot/trade/place-order", settings, body=payload)
+        symbol = self._normalize_symbol(order.symbol)
+        rules = self._symbol_rules(symbol, settings)
+        qty_text = self._decimal_text(
+            self._quantize(Decimal(str(validation["normalized_qty"])), rules["quantity_decimals"], ROUND_DOWN)
+        )
+        client_oid = order.metadata.get("client_order_id") or str(int(time.time() * 1000))
+        is_buy = order.side.upper() == "BUY"
+        price_text = (
+            self._decimal_text(self._quantize(Decimal(str(validation["limit_price"])), rules["price_decimals"], ROUND_UP))
+            if is_buy else None
+        )
+        if self._use_unified(settings):
+            payload = {"category": "SPOT", "symbol": symbol, "side": "buy" if is_buy else "sell", "qty": qty_text, "clientOid": client_oid}
+            if is_buy:
+                payload.update(orderType="limit", price=price_text, timeInForce="ioc")
+            else:
+                payload["orderType"] = "market"
+            path = "/api/v3/trade/place-order"
+        else:
+            # Classic spot: `size` is the base quantity for limit orders and
+            # market sells. The IOC flag is `force` on the v2 spot API.
+            payload = {"symbol": symbol, "side": "buy" if is_buy else "sell", "size": qty_text, "clientOid": client_oid}
+            if is_buy:
+                payload.update(orderType="limit", price=price_text, force="ioc")
+            else:
+                payload["orderType"] = "market"
+            path = "/api/v2/spot/trade/place-order"
+        response = self._request("POST", path, settings, body=payload)
         broker_order_id = None
         if isinstance(response, dict):
             broker_order_id = response.get("orderId") or response.get("order_id")
@@ -341,6 +438,9 @@ class BitgetBroker(BrokerClient):
                 "order_status": "submitted",
                 "requested_qty": order.qty,
                 "normalized_qty": validation.get("normalized_qty", order.qty),
+                "order_type": validation.get("order_type"),
+                "limit_price": validation.get("limit_price"),
+                "account_type": self._get_account_label(settings),
             },
         )
 
@@ -362,6 +462,8 @@ class BitgetBroker(BrokerClient):
         if not broker_order_id and not client_order_id:
             return super().get_order_status(trade, settings)
         self._reject_unified_trading(settings)
+        if self._use_unified(settings):
+            return self._unified_order_status(trade, settings, broker_order_id, client_order_id)
 
         response = self._request(
             "GET",
@@ -389,8 +491,52 @@ class BitgetBroker(BrokerClient):
             },
         }
 
+    def _unified_order_status(self, trade: dict, settings: dict, broker_order_id, client_order_id) -> dict:
+        response = self._request(
+            "GET",
+            "/api/v3/trade/order-info",
+            settings,
+            params={"orderId": broker_order_id} if broker_order_id else {"clientOid": client_order_id},
+        )
+        if not isinstance(response, dict) or not response.get("orderStatus"):
+            raise ValueError("Bitget returned no order status; the order stays unresolved.")
+        order_status = str(response["orderStatus"]).lower()
+        executed_qty = float(response.get("cumExecQty", 0) or 0)
+        orig_qty = float(response.get("qty", trade.get("qty", 0)) or 0)
+        filled_price = float(response.get("avgPrice", 0) or 0) if executed_qty > 0 else 0.0
+        return {
+            "order_status": order_status,
+            "broker_order_id": response.get("orderId") or broker_order_id,
+            "filled_qty": executed_qty,
+            "filled_price": filled_price,
+            "metadata": {
+                **response,
+                "orig_qty": orig_qty,
+                "executed_qty": executed_qty,
+                "fill_progress_pct": (executed_qty / orig_qty * 100) if orig_qty > 0 else 0,
+                "broker_reason": response.get("orderStatus"),
+            },
+        }
+
     def cancel_order(self, trade: dict, settings: dict) -> dict:
-        raise ValueError("Bitget order cancellation is not wired yet in this build.")
+        if not self._use_unified(settings):
+            raise ValueError("Bitget order cancellation is not wired yet for classic accounts.")
+        self._reject_unified_trading(settings)
+        broker_order_id = trade.get("broker_order_id")
+        client_order_id = (trade.get("metadata") or {}).get("client_order_id")
+        if not broker_order_id and not client_order_id:
+            raise ValueError("This trade has no Bitget order id or client order id.")
+        body = {"category": "SPOT", **({"orderId": broker_order_id} if broker_order_id else {"clientOid": client_order_id})}
+        self._request("POST", "/api/v3/trade/cancel-order", settings, body=body)
+        # Acceptance of a cancel is not a final state; reconciliation confirms it.
+        return {
+            "order_status": "cancel_requested",
+            "broker_order_id": broker_order_id,
+            "metadata": {
+                "broker_reason": "cancel_requested",
+                "executed_qty": float(trade.get("filled_qty", 0) or 0),
+            },
+        }
 
     def list_open_orders(self, symbol: str, asset_type: str, settings: dict, execution_mode: str) -> list[dict]:
         if execution_mode == "paper":

@@ -773,7 +773,7 @@ export default function Sidebar({
                       <option value="classic">Classic account</option>
                     </select>
                     <p className="text-[10px] text-gray-500 mt-2 leading-relaxed">
-                      Bitget shows &quot;Unified account&quot; under Assets when yours is unified. Unified accounts are read-only in Astral for now: balances, positions and open orders work; orders are refused until unified-account trading is verified.
+                      Bitget shows &quot;Unified account&quot; under Assets when yours is unified. Unified accounts can place orders in demo trading only; with real money they stay read-only (balances, positions and open orders) until unified-account trading has been verified in demo.
                     </p>
                   </div>
 

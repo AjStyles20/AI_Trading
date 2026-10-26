@@ -1,4 +1,4 @@
-"""Bitget Unified Trading Account (UTA) support: read-only for now."""
+"""Bitget Unified Trading Account (UTA) support: reads everywhere, orders in demo only."""
 import io
 import json
 from types import SimpleNamespace
@@ -17,6 +17,15 @@ KEYS = {
 }
 UNIFIED_DEMO = {"bitget_environment": "demo", "bitget_account_type": "unified", "api_keys": KEYS}
 CLASSIC_DEMO = {"bitget_environment": "demo", "bitget_account_type": "classic", "api_keys": KEYS}
+UNIFIED_LIVE = {**UNIFIED_DEMO, "bitget_environment": "live"}
+CLASSIC_LIVE = {**CLASSIC_DEMO, "bitget_environment": "live"}
+
+UTA_INSTRUMENT = {"symbol": "BTCUSDT", "status": "online", "quantityPrecision": "6", "pricePrecision": "2",
+                  "minOrderAmount": "1", "buyLimitPriceRatio": "0.02"}
+CLASSIC_SYMBOL = {"symbol": "BTCUSDT", "status": "online", "quantityPrecision": "6", "pricePrecision": "2",
+                  "minTradeUSDT": "1", "buyLimitPriceRatio": "0.02"}
+UTA_ORDER_INFO = {"orderId": "222", "clientOid": "astral-1", "symbol": "BTCUSDT", "side": "buy", "orderType": "limit",
+                  "orderStatus": "filled", "qty": "0.001", "cumExecQty": "0.001", "avgPrice": "80100.5"}
 
 UTA_ASSETS = {
     "accountEquity": "4762170.08",
@@ -43,6 +52,12 @@ def bitget_api(monkeypatch):
         "/api/v3/account/assets": UTA_ASSETS,
         "/api/v3/trade/unfilled-orders": UTA_OPEN_ORDERS,
         "/api/v2/spot/account/assets": [{"coin": "USDT", "available": "10", "frozen": "0"}],
+        "/api/v3/market/instruments": [UTA_INSTRUMENT],
+        "/api/v2/spot/public/symbols": [CLASSIC_SYMBOL],
+        "/api/v3/trade/place-order": {"orderId": "222", "clientOid": "astral-1"},
+        "/api/v2/spot/trade/place-order": {"orderId": "333", "clientOid": "astral-1"},
+        "/api/v3/trade/order-info": UTA_ORDER_INFO,
+        "/api/v3/trade/cancel-order": {"orderId": "222", "clientOid": "astral-1"},
     }
 
     def fake_urlopen(request, timeout=None):
@@ -74,8 +89,9 @@ def test_unified_balances_come_from_the_v3_account_endpoint(bitget_api):
         {"asset": "USDT", "free": 49000.0, "locked": 1000.0, "usd_value": 50000.0},
     ]
     assert summary["total_equity_usd"] == 4762170.08
-    # Read-only until unified-account trading is verified.
-    assert summary["can_trade"] is False
+    # Unified-account orders are allowed in demo; real-money unified stays read-only.
+    assert summary["can_trade"] is True
+    assert BitgetBroker().get_account_summary(UNIFIED_LIVE, "live")["can_trade"] is False
 
 
 def test_classic_accounts_still_use_the_v2_spot_endpoint(bitget_api):
@@ -124,26 +140,29 @@ def buy():
                        metadata={"client_order_id": "astral-1"})
 
 
-def test_unified_orders_are_refused_before_anything_is_sent(bitget_api):
+def test_real_money_unified_orders_are_refused_before_anything_is_sent(bitget_api):
     broker = BitgetBroker()
-    with pytest.raises(ValueError, match="unified-account trading is not enabled"):
-        broker.validate_order(buy(), "live", UNIFIED_DEMO)
-    with pytest.raises(ValueError, match="unified-account trading is not enabled"):
-        broker.execute_order(buy(), "live", UNIFIED_DEMO)
-    with pytest.raises(ValueError, match="unified-account trading is not enabled"):
-        broker.get_order_status({"broker_order_id": "111", "metadata": {}}, UNIFIED_DEMO)
+    trade = {"broker_order_id": "111", "metadata": {}}
+    with pytest.raises(ValueError, match="enabled in demo only"):
+        broker.validate_order(buy(), "live", UNIFIED_LIVE)
+    with pytest.raises(ValueError, match="enabled in demo only"):
+        broker.execute_order(buy(), "live", UNIFIED_LIVE)
+    with pytest.raises(ValueError, match="enabled in demo only"):
+        broker.get_order_status(trade, UNIFIED_LIVE)
+    with pytest.raises(ValueError, match="enabled in demo only"):
+        broker.cancel_order(trade, UNIFIED_LIVE)
     assert bitget_api == []
 
 
-def test_guarded_submission_records_no_intent_for_unified_accounts(bitget_api, monkeypatch):
+def test_guarded_submission_records_no_intent_for_real_money_unified_accounts(bitget_api, monkeypatch):
     monkeypatch.setattr(trading_api, "get_settings", lambda: {"autonomy_kill_switch": False})
     monkeypatch.setattr(trading_api.risk_engine, "evaluate_order", lambda **kwargs: SimpleNamespace(approved=True, reasons=[]))
     monkeypatch.setattr(trading_api, "record_trade",
                         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not record an order intent")))
 
-    with pytest.raises(ValueError, match="unified-account trading is not enabled"):
+    with pytest.raises(ValueError, match="enabled in demo only"):
         trading_api.submit_guarded_order(
-            broker=BitgetBroker(), order=buy(), settings=UNIFIED_DEMO, execution_mode="live",
+            broker=BitgetBroker(), order=buy(), settings=UNIFIED_LIVE, execution_mode="live",
             broker_id="bitget", account_equity=100_000.0, current_position_qty=0.0,
             day_start_equity=100_000.0, peak_equity=100_000.0,
         )

@@ -14,6 +14,8 @@ DEMO_SETTINGS = {
     },
 }
 LIVE_SETTINGS = {**DEMO_SETTINGS, "bitget_environment": "live"}
+SYMBOL_RULES = {"symbol": "BTCUSDT", "status": "online", "quantityPrecision": "6", "pricePrecision": "2",
+                "minTradeUSDT": "1", "buyLimitPriceRatio": "0.02"}
 
 
 @pytest.fixture
@@ -22,6 +24,9 @@ def captured(monkeypatch):
     requests = []
 
     def fake_urlopen(request, timeout=None):
+        if "/public/symbols" in request.full_url:
+            # Public symbol rules carry no keys; they are not an order request.
+            return io.BytesIO(json.dumps({"code": "00000", "data": [SYMBOL_RULES]}).encode())
         requests.append(request)
         return io.BytesIO(json.dumps({"code": "00000", "data": []}).encode())
 
