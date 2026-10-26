@@ -42,9 +42,8 @@ class BitgetBroker(BrokerClient):
         """Non-zero spot holdings as (coin, available, locked), for either account type."""
         holdings: list[tuple[str, float, float]] = []
         if self._use_unified(settings):
-            account = self._request("GET", "/api/v3/account/assets", settings)
-            items = account.get("assets", []) if isinstance(account, dict) else []
-            for item in items or []:
+            items = self._unified_account(settings).get("assets") or []
+            for item in items:
                 coin = str(item.get("coin") or "")
                 available = float(item.get("available", 0) or 0)
                 balance = float(item.get("balance", 0) or 0)
@@ -58,6 +57,32 @@ class BitgetBroker(BrokerClient):
                 locked = float(item.get("frozen", 0) or item.get("locked", 0) or 0)
                 holdings.append((coin, available, locked))
         return [(coin, free, locked) for coin, free, locked in holdings if coin and free + locked > 0]
+
+    def _unified_account(self, settings: dict) -> dict:
+        account = self._request("GET", "/api/v3/account/assets", settings)
+        return account if isinstance(account, dict) else {}
+
+    def _unified_summary_balances(self, settings: dict) -> tuple[list[dict], float | None]:
+        """Unified-account balances with each coin's USD value, plus total equity."""
+        account = self._unified_account(settings)
+        balances = []
+        for item in account.get("assets") or []:
+            coin = str(item.get("coin") or "")
+            available = float(item.get("available", 0) or 0)
+            balance = float(item.get("balance", 0) or 0)
+            locked = float(item.get("locked", 0) or 0) or max(balance - available, 0.0)
+            if not coin or available + locked <= 0:
+                continue
+            usd_value = item.get("usdValue")
+            balances.append({
+                "asset": coin,
+                "free": available,
+                "locked": locked,
+                "usd_value": float(usd_value) if usd_value not in (None, "") else None,
+            })
+        balances.sort(key=lambda entry: entry["usd_value"] or 0.0, reverse=True)
+        equity = account.get("accountEquity")
+        return balances, (float(equity) if equity not in (None, "") else None)
 
     def _reject_unified_trading(self, settings: dict) -> None:
         # Order placement on unified accounts uses different v3 requests and
@@ -236,10 +261,14 @@ class BitgetBroker(BrokerClient):
                 "warnings": ["Bitget paper mode uses simulated balances."],
             }
 
-        balances = [
-            {"asset": coin, "free": free, "locked": locked}
-            for coin, free, locked in self._holdings(settings)
-        ]
+        total_equity_usd = None
+        if self._use_unified(settings):
+            balances, total_equity_usd = self._unified_summary_balances(settings)
+        else:
+            balances = [
+                {"asset": coin, "free": free, "locked": locked}
+                for coin, free, locked in self._holdings(settings)
+            ]
 
         return {
             "broker_id": self.broker_id,
@@ -249,7 +278,8 @@ class BitgetBroker(BrokerClient):
             "account_type": self._get_account_label(settings),
             "configured": self.is_configured(settings),
             "can_trade": self.is_configured(settings) and not self._use_unified(settings),
-            "balances": balances[:10],
+            "balances": balances,
+            "total_equity_usd": total_equity_usd,
             "warnings": ["Bitget demo mode is enabled."] if self._use_demo(settings) else [],
         }
 

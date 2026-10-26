@@ -68,10 +68,12 @@ def test_unified_balances_come_from_the_v3_account_endpoint(bitget_api):
     assert header(request, "ACCESS-KEY") == "demo-key"
     assert summary["account_type"] == "unified"
     assert summary["environment"] == "demo"
+    # Every non-zero coin with its USD value, largest first; zero balances dropped.
     assert summary["balances"] == [
-        {"asset": "USDT", "free": 49000.0, "locked": 1000.0},
-        {"asset": "BTC", "free": 59.37, "locked": 0.0},
+        {"asset": "BTC", "free": 59.37, "locked": 0.0, "usd_value": 4700000.0},
+        {"asset": "USDT", "free": 49000.0, "locked": 1000.0, "usd_value": 50000.0},
     ]
+    assert summary["total_equity_usd"] == 4762170.08
     # Read-only until unified-account trading is verified.
     assert summary["can_trade"] is False
 
@@ -158,3 +160,19 @@ def test_account_type_setting_is_stored_and_validated(tmp_path, monkeypatch):
     assert sqlite_manager.get_public_settings()["bitget_account_type"] == "unified"
     with pytest.raises(ValueError, match="bitget_account_type"):
         sqlite_manager.update_settings(bitget_account_type="portfolio")
+
+
+def test_unified_summary_lists_every_coin_without_a_cap(bitget_api, monkeypatch):
+    many = {"accountEquity": "1", "assets": [
+        {"coin": f"C{i}", "balance": "1", "available": "1", "locked": "0", "usdValue": str(i)} for i in range(15)
+    ]}
+    monkeypatch.setattr(BitgetBroker, "_unified_account", lambda self, settings: many)
+    summary = BitgetBroker().get_account_summary(UNIFIED_DEMO, "live")
+    assert len(summary["balances"]) == 15
+    assert summary["balances"][0]["asset"] == "C14"
+
+
+def test_classic_summary_has_no_usd_values(bitget_api):
+    summary = BitgetBroker().get_account_summary(CLASSIC_DEMO, "live")
+    assert summary["total_equity_usd"] is None
+    assert "usd_value" not in summary["balances"][0]

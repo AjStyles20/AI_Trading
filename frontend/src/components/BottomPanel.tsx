@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import AccountOverview from './AccountOverview';
+import type { AccountSummary } from '../lib/accountSummary';
 import axios from 'axios';
 
 import { BACKEND_URL } from '../lib/api';
@@ -90,20 +92,7 @@ type BrokerDescriptor = {
   environment?: string;
 };
 
-type BrokerAccountSummary = {
-  broker_id: string;
-  display_name: string;
-  execution_mode: string;
-  environment?: string;
-  configured: boolean;
-  can_trade: boolean;
-  balances: Array<{
-    asset: string;
-    free: number;
-    locked: number;
-  }>;
-  warnings: string[];
-};
+type BrokerAccountSummary = AccountSummary;
 
 type TradingPreflightResponse = {
   broker: BrokerDescriptor;
@@ -243,6 +232,9 @@ export default function BottomPanel({
   const [isSummarizingStrategy, setIsSummarizingStrategy] = useState(false);
   const [isSummarizingBacktest, setIsSummarizingBacktest] = useState(false);
   const [brokerAccountSummary, setBrokerAccountSummary] = useState<BrokerAccountSummary | null>(null);
+  const [accountUpdatedAt, setAccountUpdatedAt] = useState<Date | null>(null);
+  const [isRefreshingAccount, setIsRefreshingAccount] = useState(false);
+  const [accountError, setAccountError] = useState('');
   const [isTestingOrder, setIsTestingOrder] = useState(false);
   const [optimizationResults, setOptimizationResults] = useState<OptimizationRun | null>(null);
   const [optimizationHistory, setOptimizationHistory] = useState<OptimizationRun[]>([]);
@@ -454,14 +446,23 @@ export default function BottomPanel({
   }, [fetchBrokers]);
 
   const fetchBrokerAccount = useCallback(async () => {
+    setIsRefreshingAccount(true);
     try {
       const res = await axios.get(`${BACKEND_URL}/api/trading/account/${selectedBrokerId}`, {
         params: { execution_mode: executionMode },
       });
       setBrokerAccountSummary(res.data);
+      setAccountUpdatedAt(new Date());
+      setAccountError('');
     } catch (err) {
       console.error('Failed to fetch broker account summary:', err);
+      // Never keep showing a previous account's balances after a failure.
       setBrokerAccountSummary(null);
+      setAccountUpdatedAt(null);
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined;
+      setAccountError(`Could not load the account: ${typeof detail === 'string' ? detail : 'the backend did not answer.'}`);
+    } finally {
+      setIsRefreshingAccount(false);
     }
   }, [executionMode, selectedBrokerId]);
 
@@ -1782,40 +1783,14 @@ export default function BottomPanel({
         </label>
       </div>
 
-      {brokerAccountSummary && (
-        <div className="border-b border-[#2a2a35] py-3">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            <div className="bg-[#16161e] border border-[#2a2a35] rounded-lg p-3">
-              <div className="text-[10px] uppercase tracking-widest text-gray-500">Broker Status</div>
-              <div className={`text-sm font-bold mt-1 ${brokerAccountSummary.configured ? 'text-emerald-300' : 'text-amber-300'}`}>
-                {brokerAccountSummary.display_name}
-                {brokerAccountSummary.environment ? ` [${brokerAccountSummary.environment}]` : ''}
-                {' | '}
-                {brokerAccountSummary.configured ? 'Configured' : 'Missing Keys'}
-              </div>
-            </div>
-            <div className="bg-[#16161e] border border-[#2a2a35] rounded-lg p-3">
-              <div className="text-[10px] uppercase tracking-widest text-gray-500">Trade Access</div>
-              <div className={`text-sm font-bold mt-1 ${brokerAccountSummary.can_trade ? 'text-emerald-300' : 'text-red-300'}`}>
-                {brokerAccountSummary.can_trade ? 'Enabled' : 'Blocked'}
-              </div>
-            </div>
-            <div className="bg-[#16161e] border border-[#2a2a35] rounded-lg p-3">
-              <div className="text-[10px] uppercase tracking-widest text-gray-500">Balances</div>
-              <div className="text-xs text-white mt-1">
-                {brokerAccountSummary.balances.length > 0
-                  ? brokerAccountSummary.balances.slice(0, 3).map((balance) => `${balance.asset}: ${balance.free}`).join(' | ')
-                  : 'No balances available'}
-              </div>
-            </div>
-          </div>
-          {brokerAccountSummary.warnings.length > 0 && (
-            <div className="mt-2 text-[10px] text-amber-300">
-              {brokerAccountSummary.warnings.join(' | ')}
-            </div>
-          )}
-        </div>
-      )}
+      <AccountOverview
+        summary={brokerAccountSummary}
+        executionMode={executionMode}
+        updatedAt={accountUpdatedAt}
+        refreshing={isRefreshingAccount}
+        error={accountError}
+        onRefresh={() => void fetchBrokerAccount()}
+      />
 
       <div className="flex items-center gap-1 border-b border-[#2a2a35] flex-shrink-0">
         {TABS.map((tab) => (
