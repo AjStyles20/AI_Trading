@@ -69,6 +69,38 @@ describe('BottomPanel Component', () => {
     vi.mocked(axios.post).mockImplementation(() => Promise.resolve({ data: {} }));
   });
 
+  it('shows why saving a strategy failed, in the dialog and then in the workspace list', async () => {
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    vi.mocked(axios.get).mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/api/trading/history')) return Promise.resolve({ data: [] });
+      if (path.includes('/api/trading/account/')) {
+        return Promise.resolve({ data: { broker_id: 'paper', configured: true, can_trade: true, balances: [], warnings: [] } });
+      }
+      return Promise.resolve({ data: { items: [], logs: [] } });
+    });
+    vi.mocked(axios.post).mockImplementation((url: string) =>
+      String(url).endsWith('/api/strategies')
+        ? Promise.reject({ isAxiosError: true, response: { data: { detail: 'Strategy name already exists.' } } })
+        : Promise.resolve({ data: {} }),
+    );
+    render(<BottomPanel {...dummyProps} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save Workspace' })); });
+
+    const message = 'Could not save the strategy: Strategy name already exists.';
+    expect(screen.getByRole('alert')).toHaveTextContent(message);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.getByRole('alert')).toHaveTextContent(message);
+    fireEvent.click(screen.getByLabelText('Dismiss error'));
+    expect(screen.queryByText(message)).toBeNull();
+    expect(alertSpy).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
+    vi.mocked(axios.post).mockImplementation(() => Promise.resolve({ data: {} }));
+  });
+
   it('optimizes the default ranges within the backend limit of 1,000 combinations', async () => {
     const post = vi.mocked(axios.post);
     post.mockClear();

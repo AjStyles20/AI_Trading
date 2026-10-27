@@ -261,6 +261,7 @@ export default function BottomPanel({
   const [selectedTagFilters, setSelectedTagFilters] = useState<string[]>([]);
   const [strategyViewMode, setStrategyViewMode] = useState<'flat' | 'grouped'>('flat');
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState('');
   const [strategyName, setStrategyName] = useState('');
   const [strategyTagsInput, setStrategyTagsInput] = useState('');
   const [savedStrategyId, setSavedStrategyId] = useState<number | null>(null);
@@ -660,14 +661,20 @@ export default function BottomPanel({
       };
       const res = await axios.post(`${BACKEND_URL}/api/strategies`, payload);
       setSavedStrategyId(res.data.strategy_id);
+      setWorkspaceError('');
       setIsSaveModalOpen(false);
       await fetchSavedStrategies();
     } catch (err) {
       console.error(err);
-      alert('Failed to save strategy.');
+      reportWorkspaceError(err, 'save the strategy');
     } finally {
       setIsSavingStrategy(false);
     }
+  };
+
+  // Strategy workspace actions report failures inline, with the backend's reason.
+  const reportWorkspaceError = (err: unknown, action: string) => {
+    setWorkspaceError(`Could not ${action}: ${apiErrorDetail(err, 'check the backend connection.')}`);
   };
 
   const updateStrategyTags = async (strategy: StrategyWorkspace, tags: string[]) => {
@@ -691,7 +698,7 @@ export default function BottomPanel({
       await fetchSavedStrategies();
     } catch (err) {
       console.error(err);
-      alert('Failed to update strategy tags.');
+      reportWorkspaceError(err, 'update the strategy tags');
     }
   };
 
@@ -699,6 +706,7 @@ export default function BottomPanel({
     try {
       const res = await axios.get(`${BACKEND_URL}/api/strategies/${strategyId}`);
       const strategy = res.data;
+      setWorkspaceError('');
       setStrategyName(strategy.name || '');
       setStrategyTagsInput(Array.isArray(strategy.tags) ? strategy.tags.join(', ') : '');
       setSavedStrategyId(strategy.id);
@@ -720,7 +728,7 @@ export default function BottomPanel({
       setActiveTab('code');
     } catch (err) {
       console.error(err);
-      alert('Failed to load strategy.');
+      reportWorkspaceError(err, 'load the strategy');
     }
   };
 
@@ -730,7 +738,7 @@ export default function BottomPanel({
       await fetchSavedStrategies();
     } catch (err) {
       console.error(err);
-      alert('Failed to duplicate strategy.');
+      reportWorkspaceError(err, 'duplicate the strategy');
     }
   };
 
@@ -740,7 +748,7 @@ export default function BottomPanel({
       await fetchSavedStrategies();
     } catch (err) {
       console.error(err);
-      alert('Failed to mark strategy as baseline.');
+      reportWorkspaceError(err, 'mark the strategy as baseline');
     }
   };
 
@@ -754,7 +762,7 @@ export default function BottomPanel({
       await fetchSavedStrategies();
     } catch (err) {
       console.error(err);
-      alert('Failed to archive strategy.');
+      reportWorkspaceError(err, 'archive the strategy');
     }
   };
 
@@ -764,7 +772,7 @@ export default function BottomPanel({
       await fetchSavedStrategies();
     } catch (err) {
       console.error(err);
-      alert('Failed to restore strategy.');
+      reportWorkspaceError(err, 'restore the strategy');
     }
   };
 
@@ -799,7 +807,7 @@ export default function BottomPanel({
       await fetchSavedStrategies();
     } catch (err) {
       console.error(err);
-      alert(`Failed to ${action} selected strategies.`);
+      reportWorkspaceError(err, `${action} the selected strategies`);
     }
   };
 
@@ -1423,7 +1431,7 @@ export default function BottomPanel({
       await fetchSavedStrategies();
     } catch (err) {
       console.error(err);
-      alert('Failed to rename tag across strategies.');
+      reportWorkspaceError(err, 'rename the tag');
     }
   };
 
@@ -1558,6 +1566,9 @@ export default function BottomPanel({
               <h3 className="text-sm font-bold text-white">Save Strategy Workspace</h3>
               <button onClick={() => setIsSaveModalOpen(false)} className="text-gray-500 hover:text-white transition-colors">Close</button>
             </div>
+            {workspaceError && (
+              <p role="alert" className="mb-3 text-xs text-red-300 border border-red-500/40 bg-red-500/10 rounded px-3 py-2">{workspaceError}</p>
+            )}
             <label className="block text-xs text-gray-400 mb-2">
               Strategy Name
               <input
@@ -1824,6 +1835,12 @@ export default function BottomPanel({
       <div className="flex-1 w-full min-h-[420px] max-h-[75vh] overflow-y-auto font-mono text-xs mt-2 p-3 bg-[#0a0a0c] rounded border border-[#2a2a35]">
         {activeTab === 'code' && (
           <div className="space-y-4">
+            {workspaceError && !isSaveModalOpen && (
+              <div role="alert" className="flex items-start justify-between gap-3 text-xs text-red-300 border border-red-500/40 bg-red-500/10 rounded px-3 py-2">
+                <span>{workspaceError}</span>
+                <button type="button" onClick={() => setWorkspaceError('')} aria-label="Dismiss error" className="text-red-300 hover:text-white">×</button>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <div className="text-[10px] uppercase tracking-widest text-gray-500">Saved Workspaces</div>
               <div className="flex items-center gap-2">
