@@ -762,3 +762,80 @@ describe('ChartPanel sentiment badge', () => {
     expect(screen.getByText('No sentiment')).toBeInTheDocument();
   });
 });
+
+describe('ChartPanel preferences and shortcuts', () => {
+  let store: Map<string, string>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    charts.length = 0;
+    post.mockReset();
+    post.mockResolvedValue({ data: candles(105) });
+    setVisibility('visible');
+    store = new Map();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => { store.set(key, String(value)); },
+        removeItem: (key: string) => { store.delete(key); },
+        clear: () => store.clear(),
+      },
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const active = (id: string) => document.getElementById(id)!.className.includes('bg-[#a55eea]');
+  const rsiOn = () => screen.getByText('RSI 14').className.includes('border-emerald-500 ');
+
+  it('restores the saved timeframe and indicators', async () => {
+    store.set('astral.chart.timeframe', JSON.stringify('4h'));
+    store.set('astral.chart.indicators', JSON.stringify({ rsi14: true, sma20: false }));
+    render(<ChartPanel symbol="AAPL" />);
+    await flush();
+
+    expect(active('tf-4h')).toBe(true);
+    expect(rsiOn()).toBe(true);
+    expect(post).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ interval: '4h' }));
+  });
+
+  it('ignores corrupt or unknown saved values', async () => {
+    store.set('astral.chart.timeframe', JSON.stringify('7y'));
+    store.set('astral.chart.indicators', '{broken');
+    render(<ChartPanel symbol="AAPL" />);
+    await flush();
+
+    expect(active('tf-1h')).toBe(true);
+    expect(rsiOn()).toBe(false);
+  });
+
+  it('switches timeframe and toggles indicators from the keyboard, and saves them', async () => {
+    render(<ChartPanel symbol="AAPL" />);
+    await flush();
+
+    await act(async () => { fireEvent.keyDown(window, { key: '2' }); });
+    await act(async () => { fireEvent.keyDown(window, { key: 'r' }); });
+
+    expect(active('tf-5m')).toBe(true);
+    expect(rsiOn()).toBe(true);
+    expect(JSON.parse(store.get('astral.chart.timeframe')!)).toBe('5m');
+    expect(JSON.parse(store.get('astral.chart.indicators')!).rsi14).toBe(true);
+  });
+
+  it('leaves keys alone while typing in a field or using a modifier', async () => {
+    render(<ChartPanel symbol="AAPL" />);
+    const field = document.createElement('input');
+    document.body.appendChild(field);
+    await flush();
+
+    await act(async () => { fireEvent.keyDown(field, { key: '2' }); });
+    await act(async () => { fireEvent.keyDown(window, { key: 'r', ctrlKey: true }); });
+
+    expect(active('tf-1h')).toBe(true);
+    expect(rsiOn()).toBe(false);
+    field.remove();
+  });
+});

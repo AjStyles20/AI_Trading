@@ -7,6 +7,8 @@ import type { BacktestResults } from './BottomPanel';
 import { BACKEND_URL } from '../lib/api';
 import { getHistoryLimit, getRefreshIntervalMs, INITIAL_VISIBLE_CANDLES } from '../lib/liveRefresh';
 import { formatPrice, get24hChange, getPriceDirection, type PriceDirection } from '../lib/priceTicker';
+import { booleanFlags, oneOf, PREF_KEYS, readPreference, storePreference } from '../lib/preferences';
+import { INDICATOR_KEYS, isShortcutEvent, TIMEFRAME_KEYS } from '../lib/shortcuts';
 import {
   binanceStreamUrl,
   fetchBinanceKlines,
@@ -19,6 +21,16 @@ import {
 } from '../lib/binanceMarket';
 
 type IndicatorKey = 'sma20' | 'ema21' | 'rsi14' | 'macd' | 'bb' | 'atr';
+
+const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1D'] as const;
+const DEFAULT_INDICATORS: Record<IndicatorKey, boolean> = {
+  sma20: true,
+  ema21: true,
+  rsi14: false,
+  macd: false,
+  bb: false,
+  atr: false,
+};
 type AssetType = 'crypto' | 'stock';
 
 type HistoryPoint = {
@@ -104,7 +116,7 @@ export default function ChartPanel({
   // candles are applied only on top of their own market's history.
   const historyKeyRef = useRef<string | null>(null);
 
-  const [timeframe, setTimeframe] = useState('1h');
+  const [timeframe, setTimeframe] = useState<string>(() => readPreference<string>(PREF_KEYS.timeframe, oneOf(TIMEFRAMES), '1h'));
   const [isLoading, setIsLoading] = useState(false);
   const [dataError, setDataError] = useState('');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -123,14 +135,30 @@ export default function ChartPanel({
     reason: string | null,
   } | null>(null);
   const [candleData, setCandleData] = useState<CandlePoint[]>([]);
-  const [enabledIndicators, setEnabledIndicators] = useState<Record<IndicatorKey, boolean>>({
-    sma20: true,
-    ema21: true,
-    rsi14: false,
-    macd: false,
-    bb: false,
-    atr: false,
-  });
+  const [enabledIndicators, setEnabledIndicators] = useState<Record<IndicatorKey, boolean>>(
+    () => readPreference(PREF_KEYS.indicators, booleanFlags(DEFAULT_INDICATORS), DEFAULT_INDICATORS),
+  );
+
+  useEffect(() => { storePreference(PREF_KEYS.timeframe, timeframe); }, [timeframe]);
+  useEffect(() => { storePreference(PREF_KEYS.indicators, enabledIndicators); }, [enabledIndicators]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isShortcutEvent(event)) return;
+      const nextTimeframe = TIMEFRAME_KEYS[event.key];
+      const indicator = INDICATOR_KEYS[event.key.toLowerCase() as keyof typeof INDICATOR_KEYS];
+      if (nextTimeframe) {
+        setTimeframe(nextTimeframe);
+      } else if (indicator) {
+        setEnabledIndicators((current) => ({ ...current, [indicator]: !current[indicator] }));
+      } else {
+        return;
+      }
+      event.preventDefault();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   // A background fetch is a live refresh: no loading overlay, no view reset, and
   // a failure keeps the last good chart instead of replacing it with an error.
@@ -620,7 +648,7 @@ export default function ChartPanel({
   const sourceTitle = streaming
     ? `Streaming ${binanceSymbol} live from Binance (data-stream.binance.vision); the price updates about every second.`
     : `Refreshes every ${getRefreshIntervalMs(timeframe) / 1000}s from Yahoo Finance via the backend; prices can lag the exchange.`;
-  const timeframes = ['1m', '5m', '15m', '1h', '4h', '1D'];
+  const timeframes = TIMEFRAMES;
 
   const toggleIndicator = (key: IndicatorKey) => {
     setEnabledIndicators((current) => ({

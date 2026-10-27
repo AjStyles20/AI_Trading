@@ -864,6 +864,18 @@ describe('Sidebar watchlist', () => {
     }
   });
 
+  it('focuses the search with "/" but not while typing elsewhere', async () => {
+    await renderWatchlist();
+    const box = screen.getByPlaceholderText('Search ticker (e.g. GOOG, SOL-USD)...');
+    const chat = screen.getByPlaceholderText(/Configure an AI provider|Ask AI to analyze/);
+
+    fireEvent.keyDown(chat, { key: '/' });
+    expect(document.activeElement).not.toBe(box);
+
+    fireEvent.keyDown(window, { key: '/' });
+    expect(document.activeElement).toBe(box);
+  });
+
   it('falls back to the default list when saved data is corrupt', async () => {
     store.set('astral.watchlist', '{not json');
     await renderWatchlist();

@@ -34,6 +34,8 @@ import {
   type Quote,
 } from '../lib/watchlist';
 
+import { isShortcutEvent } from '../lib/shortcuts';
+
 // Watchlist quotes are daily-change figures; the backend caches them for a minute.
 const QUOTE_REFRESH_MS = 60_000;
 
@@ -149,6 +151,18 @@ export default function Sidebar({
   // undefined: not loaded yet; null: no quote available for that symbol.
   const [quotes, setQuotes] = useState<Record<string, Quote | null>>({});
   const [searchError, setSearchError] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // '/' jumps to the watchlist search, as in many web apps.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== '/' || !isShortcutEvent(event)) return;
+      event.preventDefault();
+      searchInputRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const messageEndRef = useRef<HTMLDivElement>(null);
@@ -1053,7 +1067,8 @@ export default function Sidebar({
         
         <div className="px-3 pb-3">
           <div className="relative group">
-            <input 
+            <input
+              ref={searchInputRef}
               type="text"
               placeholder="Search ticker (e.g. GOOG, SOL-USD)..."
               value={searchQuery}
