@@ -148,3 +148,46 @@ def test_crypto_backtest_uses_the_period_the_user_chose(monkeypatch):
     })
     assert response.status_code == 200, response.text
     assert seen["period"] == "3mo"
+
+
+def _daily_closes(*closes):
+    return pd.DataFrame(
+        {"open": closes, "high": closes, "low": closes, "close": closes, "volume": [1.0] * len(closes)},
+        index=pd.date_range("2026-10-20", periods=len(closes), freq="D"),
+    )
+
+
+def test_quote_reports_price_and_change_since_previous_close(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        data_api.market_data, "get_daily_history",
+        lambda symbol, asset_type: calls.append((symbol, asset_type)) or _daily_closes(100.0, 200.0, 210.0),
+    )
+    response = client.get("/api/market/quote/stock/AAPL")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["price"] == 210.0
+    assert body["previous_close"] == 200.0
+    assert body["change_pct"] == pytest.approx(5.0)
+
+    # A second watchlist poll within the window reuses the cached quote.
+    client.get("/api/market/quote/stock/aapl")
+    assert calls == [("AAPL", "stock")]
+
+
+def test_quote_with_one_candle_has_no_change(monkeypatch):
+    monkeypatch.setattr(data_api.market_data, "get_daily_history", lambda *args: _daily_closes(50.0))
+    body = client.get("/api/market/quote/crypto/BTC-USDT").json()
+    assert body["price"] == 50.0
+    assert body["change_pct"] is None
+
+
+def test_quote_reports_unknown_symbols_and_bad_asset_types(monkeypatch):
+    from core.data_service import MarketDataError
+
+    def no_data(*args):
+        raise MarketDataError("No market data returned for ZZZZ.")
+
+    monkeypatch.setattr(data_api.market_data, "get_daily_history", no_data)
+    assert client.get("/api/market/quote/stock/ZZZZ").status_code == 503
+    assert client.get("/api/market/quote/forex/EURUSD").status_code == 400

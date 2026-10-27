@@ -5,6 +5,7 @@ import BottomPanel from './components/BottomPanel';
 import StrategyBuilder from './components/StrategyBuilder';
 import type { AssetType, BacktestResults, BuilderGraph } from './components/BottomPanel';
 import type { StrategyBuilderGraph } from './components/StrategyBuilder';
+import { assetTypeFor } from './lib/watchlist';
 
 export type ViewType = 'chart' | 'builder';
 
@@ -27,7 +28,7 @@ function App() {
 
   const handleSymbolChange = (newSymbol: string) => {
     setSymbol(newSymbol);
-    setAssetType(newSymbol.includes('/') || newSymbol.includes('-') ? 'crypto' : 'stock');
+    setAssetType(assetTypeFor(newSymbol));
   };
 
   return (
@@ -76,7 +77,7 @@ function App() {
               setBuilderGraph((payload.builderGraph as StrategyBuilderGraph) || { nodes: [], edges: [] });
               if (payload.symbol) {
                 setSymbol(payload.symbol);
-                setAssetType(payload.assetType || (payload.symbol.includes('/') || payload.symbol.includes('-') ? 'crypto' : 'stock'));
+                setAssetType(payload.assetType || assetTypeFor(payload.symbol));
               }
               setActiveView('builder');
             }}

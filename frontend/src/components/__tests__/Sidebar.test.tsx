@@ -4,6 +4,7 @@ import axios from 'axios';
 import Sidebar from '../Sidebar';
 import { fromStoredMessages, toMarkdownTranscript, transcriptFilename } from '../../lib/chatTranscript';
 import { markdownToHtml, messageToHtml, transcriptToHtml, wordDocument } from '../../lib/chatDocument';
+import { formatChange, normalizeSymbol, parseQuote, quotePath } from '../../lib/watchlist';
 import {
   attachmentCaptionText,
   checkImageFile,
@@ -645,6 +646,7 @@ describe('Sidebar startup and expanded chat', () => {
       if (String(url).endsWith('/api/chat/history')) {
         return Promise.resolve({ data: { messages: [{ role: 'user', content: 'Saved question', created_at: '2026-10-25 10:00:00' }] } });
       }
+      if (String(url).includes('/api/market/quote/')) return Promise.resolve({ data: { price: 1, change_pct: 0 } });
       settingsCalls += 1;
       return settingsCalls < 3 ? Promise.reject(new Error('backend starting')) : Promise.resolve({ data: configured });
     });
@@ -729,5 +731,143 @@ describe('Settings: Test connections', () => {
     await act(async () => { fireEvent.click(screen.getByText('Test connections')); });
 
     expect(screen.getByTestId('connection-status')).toHaveTextContent('The Astral backend could not be reached');
+  });
+});
+
+describe('watchlist helpers', () => {
+  it('normalizes tickers and pairs and rejects junk', () => {
+    expect(normalizeSymbol('  aapl ')).toBe('AAPL');
+    expect(normalizeSymbol('sol-usd')).toBe('SOL-USD');
+    expect(normalizeSymbol('btc/usdt')).toBe('BTC/USDT');
+    expect(normalizeSymbol('BRK.B')).toBe('BRK.B');
+    expect(normalizeSymbol('')).toBeNull();
+    expect(normalizeSymbol('<script>')).toBeNull();
+    expect(normalizeSymbol('A'.repeat(30))).toBeNull();
+  });
+
+  it('builds quote paths that never put a slash in the symbol', () => {
+    expect(quotePath('BTC/USDT')).toBe('/api/market/quote/crypto/BTC-USDT');
+    expect(quotePath('AAPL')).toBe('/api/market/quote/stock/AAPL');
+  });
+
+  it('accepts only finite positive quote prices', () => {
+    expect(parseQuote({ price: 210, change_pct: 5 })).toEqual({ price: 210, changePct: 5 });
+    expect(parseQuote({ price: 210, change_pct: null })).toEqual({ price: 210, changePct: null });
+    expect(parseQuote({ price: 'NaN' })).toBeNull();
+    expect(parseQuote({ price: -1 })).toBeNull();
+    expect(parseQuote(null)).toBeNull();
+    expect(formatChange(1.234)).toBe('+1.23%');
+    expect(formatChange(-0.5)).toBe('-0.50%');
+  });
+});
+
+describe('Sidebar watchlist', () => {
+  let store: Map<string, string>;
+  const quotes: Record<string, { price: number; change_pct: number | null }> = {
+    '/api/market/quote/crypto/BTC-USDT': { price: 80000, change_pct: 1.5 },
+    '/api/market/quote/stock/AAPL': { price: 210, change_pct: -0.75 },
+    '/api/market/quote/stock/MSFT': { price: 400, change_pct: 0.2 },
+  };
+
+  beforeEach(() => {
+    get.mockReset();
+    post.mockReset();
+    get.mockImplementation((url: string) => {
+      const path = String(url).replace(/^https?:\/\/[^/]+/, '');
+      if (path in quotes) return Promise.resolve({ data: quotes[path] });
+      if (path.startsWith('/api/market/quote/')) {
+        return Promise.reject({ isAxiosError: true, response: { status: 503, data: { detail: 'No market data.' } } });
+      }
+      if (path.endsWith('/api/chat/history')) return Promise.resolve({ data: { messages: [] } });
+      return Promise.resolve({ data: savedSettings });
+    });
+    Element.prototype.scrollIntoView = vi.fn();
+    store = new Map([['astral.watchlist', JSON.stringify(['BTC/USDT', 'AAPL'])]]);
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => { store.set(key, String(value)); },
+        removeItem: (key: string) => { store.delete(key); },
+        clear: () => store.clear(),
+      },
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const renderWatchlist = async (onSymbolChange = vi.fn()) => {
+    render(<Sidebar activeView="chart" onViewChange={vi.fn()} currentSymbol="BTC/USDT" onSymbolChange={onSymbolChange} />);
+    await act(async () => {});
+    await act(async () => {});
+    return onSymbolChange;
+  };
+
+  const search = async (text: string) => {
+    const box = screen.getByPlaceholderText('Search ticker (e.g. GOOG, SOL-USD)...');
+    fireEvent.change(box, { target: { value: text } });
+    await act(async () => { fireEvent.keyDown(box, { key: 'Enter' }); });
+  };
+
+  it('restores the saved watchlist and shows each daily change', async () => {
+    await renderWatchlist();
+
+    expect(screen.getByText('BTC/USDT')).toBeInTheDocument();
+    expect(screen.queryByText('NVDA')).toBeNull();
+    expect(screen.getByTestId('change-BTC/USDT')).toHaveTextContent('+1.50%');
+    expect(screen.getByTestId('change-AAPL')).toHaveTextContent('-0.75%');
+    expect(screen.getByTestId('change-AAPL')).toHaveClass('text-red-500');
+  });
+
+  it('adds a symbol the provider knows, saves it and selects it', async () => {
+    const onSymbolChange = await renderWatchlist();
+    await search('msft');
+
+    expect(screen.getByText('MSFT')).toBeInTheDocument();
+    expect(onSymbolChange).toHaveBeenCalledWith('MSFT');
+    expect(JSON.parse(store.get('astral.watchlist')!)).toEqual(['BTC/USDT', 'AAPL', 'MSFT']);
+  });
+
+  it('refuses unknown symbols with a message instead of adding them', async () => {
+    const onSymbolChange = await renderWatchlist();
+    await search('ZZZZ');
+
+    expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load market data for ZZZZ.");
+    expect(screen.queryByText('ZZZZ')).toBeNull();
+    expect(onSymbolChange).not.toHaveBeenCalled();
+  });
+
+  it('removes a symbol and remembers that', async () => {
+    await renderWatchlist();
+    fireEvent.click(screen.getByLabelText('Remove AAPL from watchlist'));
+
+    expect(screen.queryByText('AAPL')).toBeNull();
+    expect(JSON.parse(store.get('astral.watchlist')!)).toEqual(['BTC/USDT']);
+  });
+
+  it('keeps the last good quote when a later refresh fails', async () => {
+    vi.useFakeTimers();
+    try {
+      render(<Sidebar activeView="chart" onViewChange={vi.fn()} currentSymbol="BTC/USDT" onSymbolChange={vi.fn()} />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(screen.getByTestId('change-AAPL')).toHaveTextContent('-0.75%');
+
+      delete quotes['/api/market/quote/stock/AAPL'];
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+
+      expect(screen.getByTestId('change-AAPL')).toHaveTextContent('-0.75%');
+    } finally {
+      quotes['/api/market/quote/stock/AAPL'] = { price: 210, change_pct: -0.75 };
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to the default list when saved data is corrupt', async () => {
+    store.set('astral.watchlist', '{not json');
+    await renderWatchlist();
+
+    expect(screen.getByText('NVDA')).toBeInTheDocument();
   });
 });

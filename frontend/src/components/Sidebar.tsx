@@ -23,6 +23,19 @@ import {
   type ChatMessage as Message,
   type StoredChatMessage,
 } from '../lib/chatTranscript';
+import {
+  formatChange,
+  MAX_WATCHLIST,
+  normalizeSymbol,
+  parseQuote,
+  quotePath,
+  readWatchlist,
+  storeWatchlist,
+  type Quote,
+} from '../lib/watchlist';
+
+// Watchlist quotes are daily-change figures; the backend caches them for a minute.
+const QUOTE_REFRESH_MS = 60_000;
 
 // The conversation the chat continues across reloads. Kept per browser profile;
 // 'main_session' is the id earlier versions always used, so old history loads.
@@ -132,7 +145,10 @@ export default function Sidebar({
   const [tempAlpacaSecret, setTempAlpacaSecret] = useState('');
   const [tempAlpacaPaperKey, setTempAlpacaPaperKey] = useState('');
   const [tempAlpacaPaperSecret, setTempAlpacaPaperSecret] = useState('');
-  const [watchlist, setWatchlist] = useState(['BTC/USDT', 'ETH/USDT', 'AAPL', 'NVDA', 'TSLA', 'SOL-USD']);
+  const [watchlist, setWatchlist] = useState<string[]>(readWatchlist);
+  // undefined: not loaded yet; null: no quote available for that symbol.
+  const [quotes, setQuotes] = useState<Record<string, Quote | null>>({});
+  const [searchError, setSearchError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const messageEndRef = useRef<HTMLDivElement>(null);
@@ -452,21 +468,76 @@ export default function Sidebar({
 
   const handleSearch = async () => {
     if (!searchQuery.trim() || isSearching) return;
+    setSearchError('');
+    const ticker = normalizeSymbol(searchQuery);
+    if (!ticker) {
+      setSearchError('Use a ticker like AAPL or a pair like SOL-USD.');
+      return;
+    }
+    if (watchlist.includes(ticker)) {
+      onSymbolChange(ticker);
+      setSearchQuery('');
+      return;
+    }
+    if (watchlist.length >= MAX_WATCHLIST) {
+      setSearchError(`The watchlist holds up to ${MAX_WATCHLIST} symbols. Remove one first.`);
+      return;
+    }
     setIsSearching(true);
     try {
-      const ticker = searchQuery.toUpperCase();
-      // Simple validation or just add it
-      if (!watchlist.includes(ticker)) {
-        setWatchlist(prev => [...prev, ticker]);
-      }
+      // Only add symbols the data provider actually knows.
+      const quote = parseQuote((await axios.get(`${BACKEND_URL}${quotePath(ticker)}`)).data);
+      if (!quote) throw new Error('no quote');
+      setQuotes((current) => ({ ...current, [ticker]: quote }));
+      setWatchlist((prev) => (prev.includes(ticker) ? prev : [...prev, ticker]));
       onSymbolChange(ticker);
       setSearchQuery('');
     } catch {
-      alert("Symbol not found or data error.");
+      // The provider answers both an unknown symbol and a busy moment with no
+      // data, so don't claim the symbol doesn't exist.
+      setSearchError(`Couldn't load market data for ${ticker}. Check the symbol, or try again in a moment.`);
     } finally {
       setIsSearching(false);
     }
   };
+
+  const removeFromWatchlist = (symbol: string) => {
+    setWatchlist((prev) => prev.filter((item) => item !== symbol));
+  };
+
+  useEffect(() => { storeWatchlist(watchlist); }, [watchlist]);
+
+  // Refresh every watchlist quote while the backend is up and the tab is visible.
+  useEffect(() => {
+    if (!backendOnline) return;
+    let cancelled = false;
+    const refresh = async () => {
+      if (document.visibilityState === 'hidden') return;
+      // One request at a time: a burst of parallel requests is what makes
+      // Yahoo return empty answers.
+      for (const symbol of watchlist) {
+        if (cancelled) return;
+        let quote: Quote | null = null;
+        try {
+          quote = parseQuote((await axios.get(`${BACKEND_URL}${quotePath(symbol)}`)).data);
+        } catch {
+          quote = null;
+        }
+        if (cancelled) return;
+        // A failed refresh keeps the last good quote rather than blanking it.
+        setQuotes((current) => ({ ...current, [symbol]: quote ?? current[symbol] ?? null }));
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, QUOTE_REFRESH_MS);
+    const onVisible = () => { if (document.visibilityState === 'visible') void refresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [backendOnline, watchlist]);
 
   // Docked in the sidebar, or expanded into a large overlay (Esc closes). The
   // expanded overlay is rendered into <body> so it always sits above the chart.
@@ -986,7 +1057,7 @@ export default function Sidebar({
               type="text"
               placeholder="Search ticker (e.g. GOOG, SOL-USD)..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => { setSearchQuery(e.target.value); setSearchError(''); }}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               className="w-full bg-[#0a0a0c] border border-[#2a2a35] rounded-lg py-1.5 pl-8 pr-3 text-[10px] text-white focus:border-[#a55eea] outline-none transition-all"
             />
@@ -994,22 +1065,54 @@ export default function Sidebar({
               {isSearching ? <div className="w-3 h-3 border border-[#a55eea] border-t-transparent rounded-full animate-spin"></div> : "🔍"}
             </span>
           </div>
+          {searchError && <p role="alert" className="mt-1 text-[10px] text-red-400">{searchError}</p>}
         </div>
 
         <div className="flex flex-wrap gap-1 px-3 pb-3 max-h-32 overflow-y-auto custom-scrollbar">
-          {watchlist.map((symbol) => (
-            <button
-              key={symbol}
-              onClick={() => onSymbolChange(symbol)}
-              className={`px-2.5 py-1 text-[10px] font-bold rounded-md border transition-all ${
-                currentSymbol === symbol 
-                  ? 'bg-[#a55eea]/10 border-[#a55eea] text-[#a55eea]' 
-                  : 'bg-[#1c1c24] border-[#2a2a35] text-gray-400 hover:border-gray-500'
-              }`}
-            >
-              {symbol}
-            </button>
-          ))}
+          {watchlist.length === 0 && (
+            <p className="text-[10px] text-gray-600">Search for a ticker to add it to the watchlist.</p>
+          )}
+          {watchlist.map((symbol) => {
+            const quote = quotes[symbol];
+            const change = quote?.changePct ?? null;
+            return (
+              <div
+                key={symbol}
+                className={`group/chip flex items-center rounded-md border transition-all ${
+                  currentSymbol === symbol
+                    ? 'bg-[#a55eea]/10 border-[#a55eea] text-[#a55eea]'
+                    : 'bg-[#1c1c24] border-[#2a2a35] text-gray-400 hover:border-gray-500'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => onSymbolChange(symbol)}
+                  title={quote === null ? 'No quote available' : undefined}
+                  className="pl-2.5 pr-1 py-1 text-[10px] font-bold flex items-center gap-1.5"
+                >
+                  <span>{symbol}</span>
+                  {quote && (
+                    <span className="font-mono font-normal text-gray-300">
+                      {quote.price.toLocaleString(undefined, { maximumFractionDigits: quote.price < 1 ? 6 : 2 })}
+                    </span>
+                  )}
+                  {change !== null && (
+                    <span data-testid={`change-${symbol}`} className={`font-mono font-normal ${change > 0 ? 'text-green-500' : change < 0 ? 'text-red-500' : 'text-gray-500'}`}>
+                      {formatChange(change)}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeFromWatchlist(symbol)}
+                  aria-label={`Remove ${symbol} from watchlist`}
+                  className="pr-1.5 text-[10px] text-gray-600 opacity-0 group-hover/chip:opacity-100 focus:opacity-100 hover:text-red-400"
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
         </div>
       </div>
 

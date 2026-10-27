@@ -18,6 +18,28 @@ class DataRequest(BaseModel):
     period: Optional[str] = None
     limit: int = Field(500, ge=1, le=5000)
 
+@router.get("/api/market/quote/{asset_type}/{symbol}")
+def get_quote(asset_type: str, symbol: str):
+    """Latest price and change since the previous daily close, for the watchlist."""
+    try:
+        if asset_type not in {"stock", "crypto"}:
+            raise ValueError("asset_type must be stock or crypto")
+        key = ("quote", asset_type, symbol.strip().upper())
+        # Shares the chart's cache so polling every watchlist symbol can't
+        # trigger Yahoo rate-limiting; the 1h window reuses a quote for a minute.
+        closes = history_cache.get_or_fetch(
+            key, "1h", lambda: market_data.get_daily_history(symbol, asset_type)
+        )["close"]
+        price = float(closes.iloc[-1])
+        previous = float(closes.iloc[-2]) if len(closes) >= 2 else None
+        change_pct = (price - previous) / previous * 100 if previous else None
+        return {"symbol": symbol, "price": price, "previous_close": previous, "change_pct": change_pct}
+    except MarketDataError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/api/market/price/{asset_type}/{symbol}")
 def get_price(asset_type: str, symbol: str):
     try:

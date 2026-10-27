@@ -175,5 +175,18 @@ class MarketDataService:
         except Exception as e:
             raise MarketDataError(f"Failed to fetch latest price for {symbol}: {e}") from e
 
+    def get_daily_history(self, symbol: str, asset_type: str = "stock") -> pd.DataFrame:
+        """The last few daily candles, for watchlist quotes and daily change."""
+        if asset_type not in {"stock", "crypto"}:
+            raise ValueError("asset_type must be stock or crypto")
+        query_symbol = symbol.replace('/', '-').replace('USDT', 'USD') if asset_type == "crypto" else symbol
+        try:
+            df = yf.Ticker(query_symbol).history(period="5d", interval="1d")
+            return self._validate_frame(df, symbol)
+        except MarketDataError:
+            raise
+        except Exception as e:
+            raise MarketDataError(f"Failed to fetch daily history for {symbol}: {e}") from e
+
 # Singleton instance
 market_data = MarketDataService()
