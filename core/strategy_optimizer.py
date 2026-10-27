@@ -1,7 +1,7 @@
 import itertools
 
 import pandas as pd
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterator, List
 
 from core.backtest_engine import backtest_engine
 from core.safe_strategy_runtime import safe_strategy_runtime
@@ -36,11 +36,13 @@ class StrategyOptimizer:
         }
 
         candidate_builder = strategies.get(strategy_type, self._ema_rsi_candidates)
-        candidates = candidate_builder(custom_ranges or {})
+        # Take one past the limit lazily: huge ranges are rejected without
+        # ever building their full cross-product in memory.
+        candidates = list(itertools.islice(candidate_builder(custom_ranges or {}), MAX_CANDIDATES + 1))
         if len(candidates) > MAX_CANDIDATES:
             raise ValueError(
-                f"This search has {len(candidates):,} parameter combinations; the limit is "
-                f"{MAX_CANDIDATES:,}. Use fewer values in the optimizer ranges."
+                f"This search has more than {MAX_CANDIDATES:,} parameter combinations. "
+                "Use fewer values in the optimizer ranges."
             )
         if len(df) < 30:
             raise ValueError("At least 30 chronological rows are required for optimization.")
@@ -276,7 +278,7 @@ class StrategyOptimizer:
             cleaned.add(int(numeric))
         return sorted(cleaned)
 
-    def _ema_rsi_candidates(self, custom_ranges: Dict[str, List[int]]) -> List[Dict[str, int]]:
+    def _ema_rsi_candidates(self, custom_ranges: Dict[str, List[int]]) -> Iterator[Dict[str, int]]:
         ema_fast = self._sanitize_values(custom_ranges.get("ema_fast"), [8, 12, 21])
         ema_slow = self._sanitize_values(custom_ranges.get("ema_slow"), [26, 34, 55])
         rsi_period = self._sanitize_values(custom_ranges.get("rsi_period"), [10, 14])
@@ -286,7 +288,7 @@ class StrategyOptimizer:
         take_profit_pct = self._sanitize_values(custom_ranges.get("take_profit_pct"), DEFAULT_TAKE_PROFIT_PCT)
         cooldown_bars = self._sanitize_nonnegative_values(custom_ranges.get("cooldown_bars"), DEFAULT_COOLDOWN_BARS)
         position_size_pct = self._sanitize_values(custom_ranges.get("position_size_pct"), DEFAULT_POSITION_SIZE_PCT)
-        return [
+        return (
             {
                 "ema_fast": fast,
                 "ema_slow": slow,
@@ -310,16 +312,16 @@ class StrategyOptimizer:
                 position_size_pct,
             )
             if fast < slow and buy < sell
-        ]
+        )
 
-    def _sma_cross_candidates(self, custom_ranges: Dict[str, List[int]]) -> List[Dict[str, int]]:
+    def _sma_cross_candidates(self, custom_ranges: Dict[str, List[int]]) -> Iterator[Dict[str, int]]:
         sma_fast = self._sanitize_values(custom_ranges.get("sma_fast"), [5, 10, 20])
         sma_slow = self._sanitize_values(custom_ranges.get("sma_slow"), [30, 50, 100])
         stop_loss_pct = self._sanitize_values(custom_ranges.get("stop_loss_pct"), DEFAULT_STOP_LOSS_PCT)
         take_profit_pct = self._sanitize_values(custom_ranges.get("take_profit_pct"), DEFAULT_TAKE_PROFIT_PCT)
         cooldown_bars = self._sanitize_nonnegative_values(custom_ranges.get("cooldown_bars"), DEFAULT_COOLDOWN_BARS)
         position_size_pct = self._sanitize_values(custom_ranges.get("position_size_pct"), DEFAULT_POSITION_SIZE_PCT)
-        return [
+        return (
             {
                 "sma_fast": fast,
                 "sma_slow": slow,
@@ -337,9 +339,9 @@ class StrategyOptimizer:
                 position_size_pct,
             )
             if fast < slow
-        ]
+        )
 
-    def _macd_rsi_candidates(self, custom_ranges: Dict[str, List[int]]) -> List[Dict[str, int]]:
+    def _macd_rsi_candidates(self, custom_ranges: Dict[str, List[int]]) -> Iterator[Dict[str, int]]:
         rsi_period = self._sanitize_values(custom_ranges.get("rsi_period"), [10, 14])
         rsi_buy = self._sanitize_values(custom_ranges.get("rsi_buy"), [25, 30, 35])
         rsi_sell = self._sanitize_values(custom_ranges.get("rsi_sell"), [65, 70, 75])
@@ -347,7 +349,7 @@ class StrategyOptimizer:
         take_profit_pct = self._sanitize_values(custom_ranges.get("take_profit_pct"), DEFAULT_TAKE_PROFIT_PCT)
         cooldown_bars = self._sanitize_nonnegative_values(custom_ranges.get("cooldown_bars"), DEFAULT_COOLDOWN_BARS)
         position_size_pct = self._sanitize_values(custom_ranges.get("position_size_pct"), DEFAULT_POSITION_SIZE_PCT)
-        return [
+        return (
             {
                 "rsi_period": rsi_period_value,
                 "rsi_buy": buy,
@@ -367,7 +369,7 @@ class StrategyOptimizer:
                 position_size_pct,
             )
             if buy < sell
-        ]
+        )
 
     def _build_strategy_code(self, strategy_type: str, params: Dict[str, int]) -> str:
         risk_block = f"""

@@ -348,7 +348,7 @@ def test_optimizer_rejects_searches_too_large_to_finish():
         "cooldown_bars": [0, 2, 4],
         "position_size_pct": [25, 50, 100],
     }
-    with pytest.raises(ValueError, match="13,122 parameter combinations; the limit is 1,000"):
+    with pytest.raises(ValueError, match="more than 1,000 parameter combinations"):
         strategy_optimizer.optimize(frame(), strategy_type="ema_rsi", custom_ranges=huge)
 
 
@@ -356,4 +356,21 @@ def test_optimizer_rejects_searches_too_large_to_finish():
 def test_default_optimizer_grids_fit_under_the_limit(builder):
     from core.strategy_optimizer import MAX_CANDIDATES
 
-    assert 0 < len(getattr(strategy_optimizer, builder)({})) <= MAX_CANDIDATES
+    assert 0 < len(list(getattr(strategy_optimizer, builder)({}))) <= MAX_CANDIDATES
+
+
+def test_optimizer_rejects_huge_ranges_without_building_them():
+    # About 4 billion combinations: building the list first would exhaust memory.
+    import time
+
+    huge = {
+        "ema_fast": list(range(1, 400)),
+        "ema_slow": list(range(400, 800)),
+        "rsi_period": list(range(2, 30)),
+        "rsi_buy": list(range(5, 45)),
+        "rsi_sell": list(range(55, 95)),
+    }
+    started = time.perf_counter()
+    with pytest.raises(ValueError, match="more than 1,000 parameter combinations"):
+        strategy_optimizer.optimize(frame(), strategy_type="ema_rsi", custom_ranges=huge)
+    assert time.perf_counter() - started < 2.0
