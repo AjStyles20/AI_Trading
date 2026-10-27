@@ -68,6 +68,22 @@ describe('BottomPanel Component', () => {
     alertSpy.mockRestore();
     vi.mocked(axios.post).mockImplementation(() => Promise.resolve({ data: {} }));
   });
+
+  it('optimizes the default ranges within the backend limit of 1,000 combinations', async () => {
+    const post = vi.mocked(axios.post);
+    post.mockClear();
+    render(<BottomPanel {...dummyProps} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole('button', { name: 'Optimize' })[0]);
+    });
+
+    const call = post.mock.calls.find(([url]) => String(url).endsWith('/api/strategy/optimize'));
+    const ranges = (call?.[1] as { custom_ranges: Record<string, number[]> }).custom_ranges;
+    const combinations = Object.values(ranges).reduce((total, values) => total * values.length, 1);
+    expect(combinations).toBeGreaterThan(1);
+    expect(combinations).toBeLessThanOrEqual(1000);
+  });
 });
 
 describe('BottomPanel background refresh', () => {

@@ -274,10 +274,12 @@ export default function BottomPanel({
     rsi_sell: '65,70,75',
     sma_fast: '5,10,20',
     sma_slow: '30,50,100',
-    stop_loss_pct: '2,3,5',
-    take_profit_pct: '4,6,8',
-    cooldown_bars: '0,2,4',
-    position_size_pct: '25,50,100',
+    // Kept small: every combination is a full backtest, and the backend
+    // rejects searches over 1,000 combinations (core/strategy_optimizer.py).
+    stop_loss_pct: '2,5',
+    take_profit_pct: '4,8',
+    cooldown_bars: '2',
+    position_size_pct: '50',
   });
   const [backtestInterval, setBacktestInterval] = useState('1h');
   const [backtestPeriod, setBacktestPeriod] = useState('6mo');
