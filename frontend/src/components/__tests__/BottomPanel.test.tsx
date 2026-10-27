@@ -10,6 +10,7 @@ vi.mock('axios', () => ({
     get: vi.fn(() => Promise.resolve({ data: {} })),
     post: vi.fn(() => Promise.resolve({ data: {} })),
     delete: vi.fn(() => Promise.resolve({ data: {} })),
+    isAxiosError: (err: unknown) => Boolean((err as { isAxiosError?: boolean })?.isAxiosError),
   }
 }));
 
@@ -35,6 +36,33 @@ describe('BottomPanel Component', () => {
     // Check if Terminal tab exists
     const terminalTabList = screen.getAllByText(/Terminal/i);
     expect(terminalTabList.length).toBeGreaterThan(0);
+  });
+
+  it('shows the backend reason when a backtest fails', async () => {
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    vi.mocked(axios.get).mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/api/trading/history')) return Promise.resolve({ data: [] });
+      if (path.includes('/api/trading/account/')) {
+        return Promise.resolve({ data: { broker_id: 'paper', configured: true, can_trade: true, balances: [], warnings: [] } });
+      }
+      return Promise.resolve({ data: { items: [], logs: [] } });
+    });
+    vi.mocked(axios.post).mockImplementation((url: string) =>
+      String(url).endsWith('/api/backtest/run')
+        ? Promise.reject({ isAxiosError: true, response: { data: { detail: 'No market data returned for AAPL.' } } })
+        : Promise.resolve({ data: {} }),
+    );
+    render(<BottomPanel {...dummyProps} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Run Backtest' }));
+    });
+
+    expect(await screen.findByText('Backtest failed: No market data returned for AAPL.')).toBeTruthy();
+    expect(alertSpy).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
+    vi.mocked(axios.post).mockImplementation(() => Promise.resolve({ data: {} }));
   });
 });
 

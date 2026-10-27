@@ -210,6 +210,7 @@ export default function BottomPanel({
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState('');
   const [isBacktesting, setIsBacktesting] = useState(false);
+  const [backtestError, setBacktestError] = useState('');
   const [isLiveTrading, setIsLiveTrading] = useState(false);
   const [tradingLogs, setTradingLogs] = useState<string[]>([]);
   const [tradeHistory, setTradeHistory] = useState<TradeRecord[]>([]);
@@ -519,6 +520,7 @@ export default function BottomPanel({
     setIsBacktesting(true);
     setActiveTab('backtest');
     setBacktestSummary('');
+    setBacktestError('');
     try {
       const res = await axios.post(`${BACKEND_URL}/api/backtest/run`, {
         symbol,
@@ -532,9 +534,15 @@ export default function BottomPanel({
       });
       setBacktestResults(res.data);
       setValidationResult(res.data.validation || null);
-    } catch (err) {
+    } catch (err: unknown) {
+      // The backend says why (no market data, invalid strategy output, ...);
+      // a generic message sent users hunting for syntax errors that weren't there.
+      const detail =
+        axios.isAxiosError(err) && typeof err.response?.data?.detail === 'string'
+          ? err.response.data.detail
+          : 'Backtest failed. Check the backend connection.';
       console.error(err);
-      alert('Backtest failed. Ensure the strategy code is valid Python.');
+      setBacktestError(detail);
     } finally {
       setIsBacktesting(false);
     }
@@ -2068,6 +2076,12 @@ export default function BottomPanel({
               <div className="text-[#a55eea] font-bold text-sm">Backtest Report ({symbol} {backtestInterval})</div>
               {isBacktesting && <div className="text-xs text-yellow-500 animate-pulse font-bold">CALCULATING METRICS...</div>}
             </div>
+
+            {backtestError && (
+              <p role="alert" className="text-xs text-red-300 border border-red-500/40 bg-red-500/10 rounded px-3 py-2">
+                Backtest failed: {backtestError}
+              </p>
+            )}
 
             {backtestResults ? (
               <>
