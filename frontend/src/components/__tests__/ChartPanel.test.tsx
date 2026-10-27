@@ -718,3 +718,47 @@ describe('ChartPanel symbol switch', () => {
     expect(screen.getByRole('alert')).toBeInTheDocument();
   });
 });
+
+describe('ChartPanel sentiment badge', () => {
+  const get = vi.mocked(axios.get);
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    charts.length = 0;
+    post.mockReset();
+    post.mockResolvedValue({ data: candles(105) });
+    setVisibility('visible');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    get.mockImplementation(() => Promise.resolve({ data: { sentiment_score: 0.5, sentiment_label: 'Neutral' } }));
+  });
+
+  it('says it needs AI instead of showing a score when no provider is set', async () => {
+    get.mockResolvedValue({ data: { status: 'needs_ai', sentiment_score: null, sentiment_label: null, reason: 'No AI provider is configured.' } });
+    render(<ChartPanel symbol="AAPL" />);
+    await flush();
+
+    const badge = screen.getByText('Sentiment needs AI');
+    expect(badge.parentElement).toHaveAttribute('title', 'No AI provider is configured.');
+    expect(screen.queryByText('+0.50')).toBeNull();
+  });
+
+  it('shows the score and label when the AI scored the headlines', async () => {
+    get.mockResolvedValue({ data: { status: 'ok', sentiment_score: -0.35, sentiment_label: 'Bearish', reason: null } });
+    render(<ChartPanel symbol="AAPL" />);
+    await flush();
+
+    expect(screen.getByText('Bearish')).toBeInTheDocument();
+    expect(screen.getByText('-0.35')).toBeInTheDocument();
+  });
+
+  it('shows no number when sentiment cannot be loaded', async () => {
+    get.mockRejectedValue(new Error('offline'));
+    render(<ChartPanel symbol="AAPL" />);
+    await flush();
+
+    expect(screen.getByText('No sentiment')).toBeInTheDocument();
+  });
+});

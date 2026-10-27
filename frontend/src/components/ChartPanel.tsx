@@ -116,7 +116,12 @@ export default function ChartPanel({
   // a switch to another symbol/timeframe never shows the previous market's state.
   const [streamState, setStreamState] = useState<{ key: string; status: StreamStatus } | null>(null);
   const [tickerState, setTickerState] = useState<{ key: string; ticker: LiveTicker } | null>(null);
-  const [sentiment, setSentiment] = useState<{ score: number, label: string } | null>(null);
+  const [sentiment, setSentiment] = useState<{
+    status: 'ok' | 'needs_ai' | 'unavailable' | 'error',
+    score: number | null,
+    label: string | null,
+    reason: string | null,
+  } | null>(null);
   const [candleData, setCandleData] = useState<CandlePoint[]>([]);
   const [enabledIndicators, setEnabledIndicators] = useState<Record<IndicatorKey, boolean>>({
     sma20: true,
@@ -550,16 +555,26 @@ export default function ChartPanel({
   }, [candleData, enabledIndicators, backtestResults]);
 
   useEffect(() => {
+    let cancelled = false;
+    setSentiment(null);
     const fetchSentiment = async () => {
       try {
         const querySymbol = symbol.replace('/', '-');
         const res = await axios.get(`${BACKEND_URL}/api/research/sentiment/${querySymbol}`);
-        setSentiment({ score: res.data.sentiment_score, label: res.data.sentiment_label });
+        if (cancelled) return;
+        setSentiment({
+          status: res.data.status,
+          score: res.data.sentiment_score ?? null,
+          label: res.data.sentiment_label ?? null,
+          reason: res.data.reason ?? null,
+        });
       } catch (err) {
         console.error('Failed to fetch sentiment:', err);
+        if (!cancelled) setSentiment({ status: 'error', score: null, label: null, reason: 'Sentiment could not be loaded.' });
       }
     };
     fetchSentiment();
+    return () => { cancelled = true; };
   }, [symbol]);
 
   useEffect(() => {
@@ -673,12 +688,19 @@ export default function ChartPanel({
           </div>
         </div>
         <div className="flex gap-2 text-sm text-gray-400 items-center">
-          {sentiment && (
-            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#2a2a35] bg-[#1c1c24] ${sentiment.score > 0 ? 'text-green-500 border-green-500/30' : sentiment.score < 0 ? 'text-red-500 border-red-500/30' : 'text-gray-400'}`} title="AI Market Sentiment">
+          {sentiment && (sentiment.status === 'ok' && sentiment.score !== null ? (
+            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#2a2a35] bg-[#1c1c24] ${sentiment.score > 0 ? 'text-green-500 border-green-500/30' : sentiment.score < 0 ? 'text-red-500 border-red-500/30' : 'text-gray-400'}`} title="AI news sentiment">
               <span className="text-[10px] uppercase font-bold tracking-wider">{sentiment.label}</span>
               <span className="text-xs font-bold">{sentiment.score > 0 ? '+' : ''}{sentiment.score.toFixed(2)}</span>
             </div>
-          )}
+          ) : (
+            // No provider, no headlines or an unusable answer: say so, never show a number.
+            <div className="flex items-center px-3 py-1.5 rounded-lg border border-dashed border-[#2a2a35] bg-[#1c1c24] text-gray-500" title={sentiment.reason ?? undefined}>
+              <span className="text-[10px] uppercase font-bold tracking-wider">
+                {sentiment.status === 'needs_ai' ? 'Sentiment needs AI' : 'No sentiment'}
+              </span>
+            </div>
+          ))}
           <button onClick={() => toggleIndicator('sma20')} className={`px-3 py-1.5 rounded-lg border transition-all text-xs font-semibold ${enabledIndicators.sma20 ? 'bg-amber-500/10 border-amber-500 text-amber-300' : 'bg-[#1c1c24] border-[#2a2a35] hover:border-amber-500/40'}`}>
             SMA 20
           </button>
