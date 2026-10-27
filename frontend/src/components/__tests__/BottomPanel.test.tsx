@@ -38,7 +38,10 @@ describe('BottomPanel Component', () => {
     expect(terminalTabList.length).toBeGreaterThan(0);
   });
 
-  it('shows the backend reason when a backtest fails', async () => {
+  it.each([
+    ['Run Backtest', '/api/backtest/run', 'Backtest failed'],
+    ['Optimize', '/api/strategy/optimize', 'Optimization failed'],
+  ])('shows the backend reason when %s fails', async (button, endpoint, prefix) => {
     const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
     vi.mocked(axios.get).mockImplementation((url: string) => {
       const path = String(url);
@@ -49,17 +52,18 @@ describe('BottomPanel Component', () => {
       return Promise.resolve({ data: { items: [], logs: [] } });
     });
     vi.mocked(axios.post).mockImplementation((url: string) =>
-      String(url).endsWith('/api/backtest/run')
+      String(url).endsWith(endpoint)
         ? Promise.reject({ isAxiosError: true, response: { data: { detail: 'No market data returned for AAPL.' } } })
         : Promise.resolve({ data: {} }),
     );
     render(<BottomPanel {...dummyProps} />);
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Run Backtest' }));
+      // The action button comes before the tab of the same name.
+      fireEvent.click(screen.getAllByRole('button', { name: button })[0]);
     });
 
-    expect(await screen.findByText('Backtest failed: No market data returned for AAPL.')).toBeTruthy();
+    expect(await screen.findByText(`${prefix}: No market data returned for AAPL.`)).toBeTruthy();
     expect(alertSpy).not.toHaveBeenCalled();
     alertSpy.mockRestore();
     vi.mocked(axios.post).mockImplementation(() => Promise.resolve({ data: {} }));

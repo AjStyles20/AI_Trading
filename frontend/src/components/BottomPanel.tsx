@@ -186,6 +186,13 @@ const normalizeTags = (tags: string[]): string[] => {
 
 const TRADING_REFRESH_MS = 5_000;
 
+// The backend explains failures (no market data, invalid strategy output, ...)
+// in `detail`; a generic message sends users hunting for problems that aren't there.
+const apiErrorDetail = (err: unknown, fallback: string): string =>
+  axios.isAxiosError(err) && typeof err.response?.data?.detail === 'string'
+    ? err.response.data.detail
+    : fallback;
+
 export default function BottomPanel({
   symbol,
   assetType,
@@ -240,6 +247,7 @@ export default function BottomPanel({
   const [optimizationResults, setOptimizationResults] = useState<OptimizationRun | null>(null);
   const [optimizationHistory, setOptimizationHistory] = useState<OptimizationRun[]>([]);
   const [isOptimizing, setIsOptimizing] = useState(false);
+  const [optimizationError, setOptimizationError] = useState('');
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [isValidating, setIsValidating] = useState(false);
   const [savedStrategies, setSavedStrategies] = useState<StrategyWorkspace[]>([]);
@@ -535,14 +543,8 @@ export default function BottomPanel({
       setBacktestResults(res.data);
       setValidationResult(res.data.validation || null);
     } catch (err: unknown) {
-      // The backend says why (no market data, invalid strategy output, ...);
-      // a generic message sent users hunting for syntax errors that weren't there.
-      const detail =
-        axios.isAxiosError(err) && typeof err.response?.data?.detail === 'string'
-          ? err.response.data.detail
-          : 'Backtest failed. Check the backend connection.';
       console.error(err);
-      setBacktestError(detail);
+      setBacktestError(apiErrorDetail(err, 'Check the backend connection.'));
     } finally {
       setIsBacktesting(false);
     }
@@ -803,6 +805,7 @@ export default function BottomPanel({
     if (isOptimizing) return;
     setIsOptimizing(true);
     setActiveTab('optimize');
+    setOptimizationError('');
     try {
       const parseRangeList = (value: string) =>
         value
@@ -871,9 +874,9 @@ export default function BottomPanel({
       if (res.data?.best?.code) {
         setStrategyCode(res.data.best.code);
       }
-    } catch (err) {
+    } catch (err: unknown) {
       console.error(err);
-      alert('Optimization failed. Check backend data availability.');
+      setOptimizationError(apiErrorDetail(err, 'Check the backend connection.'));
     } finally {
       setIsOptimizing(false);
     }
@@ -2242,6 +2245,12 @@ export default function BottomPanel({
               <div className="text-[#a55eea] font-bold text-sm">Optimization Lab</div>
               {isOptimizing && <div className="text-xs text-yellow-500 animate-pulse font-bold">RUNNING PARAMETER SWEEP...</div>}
             </div>
+
+            {optimizationError && (
+              <p role="alert" className="text-xs text-red-300 border border-red-500/40 bg-red-500/10 rounded px-3 py-2">
+                Optimization failed: {optimizationError}
+              </p>
+            )}
 
             {optimizationResults?.best ? (
               <>
