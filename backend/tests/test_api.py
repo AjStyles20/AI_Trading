@@ -121,3 +121,30 @@ def strategy(data):
     # The backtest might fail with 400 if yfinance has no data, which is acceptable handled behavior, 
     # but we just want to ensure it doesn't 500 crash.
     assert response.status_code in [200, 400]
+
+
+def test_crypto_backtest_uses_the_period_the_user_chose(monkeypatch):
+    # Crypto research used to ignore the chosen period and always fetch ~600 days,
+    # while the report claimed the selected one.
+    import backtest_api
+
+    seen = {}
+
+    def fake_crypto(symbol, interval, limit=500, period=None):
+        seen["period"] = period
+        closes = [100.0 + i for i in range(40)]
+        return pd.DataFrame(
+            {"open": closes, "high": closes, "low": closes, "close": closes, "volume": [1.0] * 40},
+            index=pd.date_range("2026-01-01", periods=40, freq="h"),
+        )
+
+    monkeypatch.setattr(backtest_api.market_data, "get_crypto_data", fake_crypto)
+    response = client.post("/api/backtest/run", json={
+        "symbol": "BTC/USDT",
+        "asset_type": "crypto",
+        "interval": "1h",
+        "period": "3mo",
+        "strategy_code": "def strategy(df):\n    df['signal'] = 0\n    return df\n",
+    })
+    assert response.status_code == 200, response.text
+    assert seen["period"] == "3mo"
