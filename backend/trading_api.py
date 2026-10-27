@@ -630,8 +630,16 @@ def submit_guarded_order(
         raise ValueError("Broker-normalized order quantity must be finite and greater than zero.")
     # A venue may round a requested quantity upward. Apply central risk to the
     # actual quantity that will be submitted, not only the initial estimate.
+    # A capped-limit BUY (e.g. Bitget's IOC) may fill up to its limit price, so
+    # price the check at the worst case rather than the quote.
+    risk_price = order.price
+    if order.side.upper() == "BUY" and broker_validation.get("limit_price") is not None:
+        limit_price = float(broker_validation["limit_price"])
+        if not math.isfinite(limit_price) or limit_price <= 0:
+            raise ValueError("Broker limit price must be finite and greater than zero.")
+        risk_price = max(order.price, limit_price)
     normalized_risk = risk_engine.evaluate_order(
-        side=order.side, qty=normalized_qty, price=order.price,
+        side=order.side, qty=normalized_qty, price=risk_price,
         execution_mode=execution_mode, settings=settings,
         current_position_qty=current_position_qty, account_equity=account_equity,
         day_start_equity=day_start_equity, peak_equity=peak_equity,
