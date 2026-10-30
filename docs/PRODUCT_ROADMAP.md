@@ -180,6 +180,10 @@ These are decided when their phase starts, not before:
 | Live price display, 24h change | Done |
 | Backtesting, optimisation, walk-forward | Done (see README maturity gates) |
 | Paper trading with guarded orders and kill switch | Done (V4) |
-| AI chat, strategy generation, summaries (3 providers) | Done, but the chat cannot see app data yet (Phase 2) |
-| Broker sandbox readiness | In progress (V5) |
+| Phase 1: saved watchlist with quotes, honest sentiment badge, saved preferences, keyboard shortcuts, inline errors | Done |
+| AI chat, strategy generation, summaries (3 providers) | Done |
+| Phase 2: chat sees the symbol, price, indicators and latest backtest | Done; not yet exercised with a real provider. Positions, memory controls and proposal cards not started |
+| Phase 3: price alerts with desktop notifications | Done, checked only while the app is open. Running-strategy dashboard and session journal not started |
+| Phase 4: settings audit log, user guide | Done. Threat model, Electron content security policy and permission limits, npm audit review, code signing not done |
+| Broker sandbox readiness | In progress (V5); needs test keys from the owner |
 | Everything else in this roadmap | Not started |

@@ -21,15 +21,17 @@ use it safely. Pick whichever provider suits you; you can switch at any time in
 | **AI export** | Strategy Builder | Turns your visual node graph into a strategy | Yes: **Local Export** builds one without AI |
 | **Strategy summary** | Bottom panel | Explains a strategy's logic, risk controls and gaps in plain English | No |
 | **Backtest summary** | Bottom panel | Explains return, drawdown, win rate, red flags, and one idea to test next | No |
-| **News sentiment** | Badge above the chart | Rates recent Yahoo Finance headlines as bullish, bearish or neutral | Shows a placeholder **NEUTRAL +0.50** |
+| **News sentiment** | Badge above the chart | Rates recent Yahoo Finance headlines as bullish, bearish or neutral | No score: the badge reads **Sentiment needs AI** |
 
 ### What the AI does **not** do
 
 - **It does not trade.** It cannot submit, cancel or change orders. The trading
   loop, risk checks and kill switch never consult it.
-- **It does not see the app's data (yet).** When you ask "Analyze AAPL trend",
-  the model receives only your text: no prices, indicators or backtest results.
-  It answers from general knowledge, which can be out of date or wrong. See
+- **It sees only the chart snapshot you share.** With **Share chart** on (the
+  switch in the chat header), each message includes the symbol, timeframe, price,
+  indicator values and latest backtest summary on your screen, and these go to
+  your chosen provider. With it off, the model receives only your text and
+  answers from general knowledge, which can be out of date or wrong. See
   [Known limitations](#9-known-limitations-and-planned-improvements).
 - **It does not see your accounts.** No broker keys, balances or positions are
   sent to it.
@@ -155,7 +157,7 @@ stay stored securely and are not sent anywhere.
 
 | Action | Sent to the provider |
 |---|---|
-| Chat | Your message, plus a few recent messages and related past conversations for context |
+| Chat | Your message, a few recent messages and related past conversations for context, and (with **Share chart** on) the symbol, timeframe, price, indicator values and latest backtest summary |
 | Generate strategy | Your strategy description |
 | AI export | The node types and connections in your graph |
 | Strategy summary | The strategy code and the symbol |
@@ -207,8 +209,9 @@ suggestion for what to try next, then test that suggestion the same way.
 - An AI answer is a **starting point**, not a fact. Models can sound confident
   and be wrong.
 - No AI output, backtest or optimizer score proves a strategy will make money.
-- Until the chat can see live data, double-check any price, level or "current
-  trend" it mentions against the chart.
+- Double-check any price, level or "current trend" the chat mentions against the
+  chart. Its snapshot is from when you sent the message, and with **Share chart**
+  off it has no market data at all.
 
 ---
 
@@ -243,7 +246,7 @@ These are built into the project and are not negotiable:
 | Ollama error about the model | The model name does not match what you pulled | Run `ollama list` and copy the exact name into Settings |
 | Very slow answers with Ollama | The model is too large for your computer | Use a smaller model, or switch to Groq |
 | The first chat message is slow | The local chat memory is starting up for the first time | Wait; later messages are faster |
-| Sentiment badge always **NEUTRAL +0.50** | No provider configured (it is a placeholder) | Configure a provider |
+| Sentiment badge reads **Sentiment needs AI** | No provider configured | Configure a provider |
 
 ---
 
@@ -251,9 +254,7 @@ These are built into the project and are not negotiable:
 
 | Limitation | Effect | Planned fix |
 |---|---|---|
-| Chat does not receive app data | Answers about "the trend" are not based on the chart you see | Send the current symbol, live price, timeframe, indicator values and last backtest with each question |
 | AI export sends only the graph's shape | Indicator periods and thresholds you set in the builder are guessed | Include each node's settings in the export |
-| Sentiment shows **NEUTRAL +0.50** without a provider | Looks like a real reading when it is not | Show "needs AI" instead |
 | Sentiment uses only five headlines | A thin sample; easily skewed | Use more sources and show the headlines used |
 | Only three providers | Other OpenAI-compatible services need a code change | Add a "custom provider" option if wanted |
 
