@@ -647,6 +647,7 @@ describe('Sidebar startup and expanded chat', () => {
         return Promise.resolve({ data: { messages: [{ role: 'user', content: 'Saved question', created_at: '2026-10-25 10:00:00' }] } });
       }
       if (String(url).includes('/api/market/quote/')) return Promise.resolve({ data: { price: 1, change_pct: 0 } });
+      if (String(url).endsWith('/api/alerts')) return Promise.resolve({ data: { items: [] } });
       settingsCalls += 1;
       return settingsCalls < 3 ? Promise.reject(new Error('backend starting')) : Promise.resolve({ data: configured });
     });

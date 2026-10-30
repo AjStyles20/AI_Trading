@@ -192,6 +192,22 @@ def init_db():
     )
     ''')
 
+    # Price alerts. Checked by the desktop app while it is open; a triggered
+    # alert keeps its trigger price and time as a record.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS price_alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        asset_type TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        price REAL NOT NULL,
+        note TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        triggered_at TIMESTAMP,
+        triggered_price REAL
+    )
+    ''')
+
     existing_trade_columns = {
         row[1] for row in cursor.execute("PRAGMA table_info(trades)").fetchall()
     }
@@ -1005,3 +1021,66 @@ def duplicate_strategy(strategy_id: int):
 if __name__ == "__main__":
     init_db()
     print("SQLite database initialized successfully.")
+
+
+ALERT_COLUMNS = ("id", "symbol", "asset_type", "direction", "price", "note", "created_at", "triggered_at", "triggered_price")
+
+
+def create_price_alert(symbol: str, asset_type: str, direction: str, price: float, note: str = "") -> dict:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute(
+            "INSERT INTO price_alerts (symbol, asset_type, direction, price, note) VALUES (?, ?, ?, ?, ?)",
+            (symbol, asset_type, direction, price, note),
+        )
+        conn.commit()
+        return get_price_alert(cursor.lastrowid)
+    finally:
+        conn.close()
+
+
+def get_price_alert(alert_id: int) -> dict | None:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        row = conn.execute(f"SELECT {', '.join(ALERT_COLUMNS)} FROM price_alerts WHERE id = ?", (alert_id,)).fetchone()
+        return dict(zip(ALERT_COLUMNS, row)) if row else None
+    finally:
+        conn.close()
+
+
+def get_price_alerts() -> list[dict]:
+    """Active alerts first (oldest first), then triggered ones (most recent first)."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute(
+            f"SELECT {', '.join(ALERT_COLUMNS)} FROM price_alerts "
+            "ORDER BY triggered_at IS NOT NULL, CASE WHEN triggered_at IS NULL THEN id END, triggered_at DESC, id DESC"
+        ).fetchall()
+        return [dict(zip(ALERT_COLUMNS, row)) for row in rows]
+    finally:
+        conn.close()
+
+
+def trigger_price_alert(alert_id: int, price: float) -> dict | None:
+    """Mark an alert triggered once. A second call leaves the first record unchanged."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "UPDATE price_alerts SET triggered_at = CURRENT_TIMESTAMP, triggered_price = ? "
+            "WHERE id = ? AND triggered_at IS NULL",
+            (price, alert_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return get_price_alert(alert_id)
+
+
+def delete_price_alert(alert_id: int) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute("DELETE FROM price_alerts WHERE id = ?", (alert_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()

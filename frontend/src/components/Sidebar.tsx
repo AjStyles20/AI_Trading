@@ -5,6 +5,7 @@ import axios from 'axios';
 import { BACKEND_URL } from '../lib/api';
 import ChatMessage from './ChatMessage';
 import ConnectionStatus from './ConnectionStatus';
+import AlertsPanel from './AlertsPanel';
 import {
   ACCEPTED_IMAGE_TYPES,
   ACCEPTED_VIDEO_TYPES,
@@ -1148,6 +1149,13 @@ export default function Sidebar({
           })}
         </div>
       </div>
+
+      <details className="border-b border-[#2a2a35] flex-shrink-0 group/alerts">
+        <summary className="px-4 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-widest cursor-pointer select-none hover:text-gray-300">
+          Price alerts
+        </summary>
+        <AlertsPanel currentSymbol={currentSymbol} backendOnline={backendOnline} />
+      </details>
 
       {chatExpanded && (
         <div className="flex-1 flex flex-col items-center justify-center gap-2 p-4 text-center text-xs text-gray-500">
