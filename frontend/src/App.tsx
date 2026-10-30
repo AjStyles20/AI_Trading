@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Sidebar from './components/Sidebar';
 import ChartPanel from './components/ChartPanel';
 import BottomPanel from './components/BottomPanel';
@@ -8,6 +8,7 @@ import type { StrategyBuilderGraph } from './components/StrategyBuilder';
 import { assetTypeFor, normalizeSymbol } from './lib/watchlist';
 import { PREF_KEYS, readPreference, storePreference } from './lib/preferences';
 import { isShortcutEvent, SHORTCUTS } from './lib/shortcuts';
+import { buildWorkspaceContext, type ChartSnapshot } from './lib/workspaceContext';
 
 export type ViewType = 'chart' | 'builder';
 
@@ -46,6 +47,15 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
+  // The chart reports its state about once a second. Keep it in a ref so the
+  // updates cost no re-render; the chat reads it only when a message is sent.
+  const chartSnapshotRef = useRef<ChartSnapshot | null>(null);
+  const handleChartSnapshot = useCallback((snapshot: ChartSnapshot) => { chartSnapshotRef.current = snapshot; }, []);
+  const getChatContext = useCallback(
+    () => buildWorkspaceContext(symbol, assetType, chartSnapshotRef.current, backtestResults),
+    [symbol, assetType, backtestResults],
+  );
+
   const handleSymbolChange = (newSymbol: string) => {
     setSymbol(newSymbol);
     setAssetType(assetTypeFor(newSymbol));
@@ -79,6 +89,7 @@ function App() {
         onViewChange={setActiveView} 
         currentSymbol={symbol}
         onSymbolChange={handleSymbolChange}
+        getChatContext={getChatContext}
       />
 
       {/* Main Content Area */}
@@ -92,6 +103,7 @@ function App() {
             <ChartPanel
               symbol={symbol}
               backtestResults={backtestResults ?? undefined}
+              onSnapshot={handleChartSnapshot}
             />
           ) : (
             <StrategyBuilder

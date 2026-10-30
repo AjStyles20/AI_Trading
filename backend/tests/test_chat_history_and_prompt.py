@@ -61,7 +61,8 @@ def test_chat_prompt_describes_astral_strategies_not_external_frameworks():
     assert "Never write VectorBT" in prompt
     assert "using Python and VectorBT" not in prompt
     # Without live data the assistant must not invent current prices.
-    assert "do not currently receive live prices" in prompt
+    assert "Without that section you cannot see live prices" in prompt
+    assert "Never invent current prices" in prompt
     assert "cannot place, change or cancel trades" in prompt
 
 

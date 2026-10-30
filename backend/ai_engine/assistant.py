@@ -4,6 +4,7 @@ from database.vector_manager import VectorMemoryManager
 from database.sqlite_manager import get_settings, record_chat_message, get_recent_chat_messages
 from core.credential_provider import resolve_api_keys
 from ai_engine.attachments import attachment_note
+from ai_engine.workspace_context import WorkspaceContext, format_workspace_context
 import os
 
 
@@ -13,7 +14,7 @@ Act as a collaborative partner: ask a clarifying question when a request is vagu
 
 What you can and cannot do:
 - You cannot place, change or cancel trades. Astral's trading engine and its risk checks do that, only when the user chooses.
-- You do not currently receive live prices, chart data or account data. Never invent current prices, levels or "what the market is doing right now". Say plainly that you cannot see live data and point the user to the chart in the app.
+- You only see market data when a "Current workspace" section appears below: a snapshot of the symbol, price, indicators and latest backtest on the user's screen. Use only those figures. Without that section you cannot see live prices, chart data or account data. Never invent current prices, levels or "what the market is doing right now"; say plainly what you cannot see and point the user to the chart in the app.
 
 Strategies in Astral:
 - Astral runs strategies itself. Never write VectorBT, Backtrader, Zipline, or code that downloads data (yfinance, ccxt, requests); it cannot run inside Astral.
@@ -26,8 +27,9 @@ Format replies in Markdown: short headings, bullet lists, tables where they help
 """
 
 
-def build_chat_system_prompt(context_str: str = "", history_str: str = "") -> str:
-    return f"{CHAT_SYSTEM_PROMPT}\n{context_str}\n{history_str}\n"
+def build_chat_system_prompt(context_str: str = "", history_str: str = "", workspace_str: str = "") -> str:
+    workspace = f"\n{workspace_str}\n" if workspace_str else ""
+    return f"{CHAT_SYSTEM_PROMPT}{workspace}\n{context_str}\n{history_str}\n"
 
 
 class AstralAIAssistant:
@@ -91,7 +93,13 @@ class AstralAIAssistant:
         self._initialized = False
         self._initialize_llm()
 
-    def analyze_market_query(self, query: str, conversation_id: str, images: list[str] | None = None) -> str:
+    def analyze_market_query(
+        self,
+        query: str,
+        conversation_id: str,
+        images: list[str] | None = None,
+        workspace: WorkspaceContext | None = None,
+    ) -> str:
         """Processes a market or strategy query using the LLM and persistent memory.
 
         `images` are validated base64 data URLs (see ai_engine.attachments). They
@@ -135,7 +143,7 @@ class AstralAIAssistant:
             history_str = f"\nRecent Conversation:\n{formatted}"
 
         # 2. Build the prompt
-        system_prompt = build_chat_system_prompt(context_str, history_str)
+        system_prompt = build_chat_system_prompt(context_str, history_str, format_workspace_context(workspace))
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=(

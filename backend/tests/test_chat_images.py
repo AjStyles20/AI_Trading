@@ -75,7 +75,7 @@ def test_chat_rejects_invalid_images_before_calling_the_ai(monkeypatch):
 def test_chat_passes_validated_images_to_the_assistant(monkeypatch):
     received = []
     monkeypatch.setattr(main.ai_assistant, "analyze_market_query",
-                        lambda query, conversation_id, images: received.append((query, images)) or "seen")
+                        lambda query, conversation_id, images, workspace=None: received.append((query, images)) or "seen")
     url = data_url("png", PNG)
     response = client.post("/api/chat", json={"query": "what is this?", "conversation_id": "c1", "images": [url]})
 

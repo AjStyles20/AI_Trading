@@ -876,6 +876,35 @@ describe('Sidebar watchlist', () => {
     expect(document.activeElement).toBe(box);
   });
 
+  it('sends what is on screen with a chat message, unless sharing is turned off', async () => {
+    const context = { symbol: 'BTC/USDT', asset_type: 'crypto' as const, timeframe: '1h', indicators: { rsi14: 41 } };
+    post.mockResolvedValue({ data: { response: 'Sure.', status: 'success' } });
+    const configured = { ...savedSettings, ai_provider: 'groq', credential_presence: { groq: true } };
+    get.mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/api/market/quote/')) return Promise.resolve({ data: { price: 1, change_pct: 0 } });
+      if (path.endsWith('/api/chat/history')) return Promise.resolve({ data: { messages: [] } });
+      return Promise.resolve({ data: configured });
+    });
+    render(<Sidebar activeView="chart" onViewChange={vi.fn()} currentSymbol="BTC/USDT" onSymbolChange={vi.fn()} getChatContext={() => context} />);
+    await act(async () => {});
+    await act(async () => {});
+    const box = screen.getByPlaceholderText('Ask AI to analyze...');
+    const send = async (text: string) => {
+      fireEvent.change(box, { target: { value: text } });
+      await act(async () => { fireEvent.keyDown(box, { key: 'Enter' }); });
+    };
+    const lastChatBody = () => post.mock.calls.filter(([url]) => String(url).endsWith('/api/chat')).at(-1)![1] as { context?: unknown };
+
+    await send('What does RSI say?');
+    expect(lastChatBody().context).toEqual(context);
+
+    fireEvent.click(screen.getByLabelText('Share chart'));
+    await send('And now?');
+    expect(lastChatBody().context).toBeUndefined();
+    expect(store.get('astral.chat.shareContext')).toBe('false');
+  });
+
   it('falls back to the default list when saved data is corrupt', async () => {
     store.set('astral.watchlist', '{not json');
     await renderWatchlist();

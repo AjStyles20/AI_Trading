@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from pydantic import BaseModel
+from typing import Optional
 
 # Add root folder to sys.path for local imports
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -16,6 +17,7 @@ if ROOT_DIR not in sys.path:
 from ai_engine.assistant import ai_assistant
 from ai_engine.strategy_generator import StrategyGenerator
 from ai_engine.attachments import validate_image_data_urls
+from ai_engine.workspace_context import WorkspaceContext
 from database.sqlite_manager import get_recent_chat_messages, init_db
 from indicators_api import router as indicators_router
 from data_api import router as data_router
@@ -91,6 +93,9 @@ class ChatRequest(BaseModel):
     conversation_id: str = "default"
     # Base64 data URLs of attached images; validated before use, never stored.
     images: list[str] = []
+    # What the user is looking at (symbol, price, indicators, latest backtest).
+    # Validated by the model; an invalid snapshot rejects the request (422).
+    context: Optional[WorkspaceContext] = None
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
@@ -99,7 +104,7 @@ async def chat_endpoint(request: ChatRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     try:
-        response = ai_assistant.analyze_market_query(request.query, request.conversation_id, images)
+        response = ai_assistant.analyze_market_query(request.query, request.conversation_id, images, request.context)
         return {"response": response, "status": "success"}
     except Exception as e:
         return {"response": f"Error: {str(e)}", "status": "error"}

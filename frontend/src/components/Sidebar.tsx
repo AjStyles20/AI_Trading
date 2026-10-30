@@ -35,6 +35,10 @@ import {
 } from '../lib/watchlist';
 
 import { isShortcutEvent } from '../lib/shortcuts';
+import { readPreference, storePreference } from '../lib/preferences';
+import type { WorkspaceContext } from '../lib/workspaceContext';
+
+const SHARE_CONTEXT_KEY = 'astral.chat.shareContext';
 
 // Watchlist quotes are daily-change figures; the backend caches them for a minute.
 const QUOTE_REFRESH_MS = 60_000;
@@ -84,14 +88,20 @@ type SidebarProps = {
   onViewChange: (view: 'chart' | 'builder') => void;
   currentSymbol: string;
   onSymbolChange: (symbol: string) => void;
+  // What is on screen right now (symbol, price, indicators, latest backtest).
+  getChatContext?: () => WorkspaceContext | null;
 };
 
-export default function Sidebar({ 
-  activeView, 
-  onViewChange, 
-  currentSymbol, 
-  onSymbolChange 
+export default function Sidebar({
+  activeView,
+  onViewChange,
+  currentSymbol,
+  onSymbolChange,
+  getChatContext,
 }: SidebarProps) {
+  // Whether each message carries the on-screen snapshot to the AI provider.
+  const [shareContext, setShareContext] = useState(() => readPreference(SHARE_CONTEXT_KEY, (value) => (typeof value === 'boolean' ? value : null), true));
+  useEffect(() => { storePreference(SHARE_CONTEXT_KEY, shareContext); }, [shareContext]);
   const [messages, setMessages] = useState<Message[]>(() => [welcomeMessage()]);
   const [conversationId, setConversationId] = useState(readConversationId);
   const [chatExpanded, setChatExpanded] = useState(false);
@@ -398,6 +408,7 @@ export default function Sidebar({
         query: [query, attachmentCaptionText(attachments)].filter(Boolean).join('\n\n'),
         images,
         conversation_id: conversationId,
+        context: (shareContext && getChatContext?.()) || undefined,
       }, {
         timeout: 180000 // 180s timeout for model downloads/API calls
       });
@@ -569,6 +580,13 @@ export default function Sidebar({
       >
         <div className="flex items-center gap-0.5 px-3 py-1.5 border-b border-[#2a2a35] text-[10px] text-gray-400 flex-shrink-0">
           <span className="mr-auto font-semibold uppercase tracking-widest text-gray-500">Chat</span>
+          <label
+            title="Send the symbol, price, indicator values and latest backtest on your screen with each message, so the AI can see what you see. They go to your chosen AI provider."
+            className="flex items-center gap-1 px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white cursor-pointer"
+          >
+            <input type="checkbox" checked={shareContext} onChange={(event) => setShareContext(event.target.checked)} className="accent-[#a55eea]" />
+            Share chart
+          </label>
           <button type="button" onClick={startNewConversation} disabled={isLoading} title="Start a new conversation (the current one stays saved)" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors disabled:opacity-40">New</button>
           <button type="button" onClick={() => void copyTranscript()} title="Copy the whole conversation (pastes formatted into Word or Docs)" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors">{transcriptCopied ? 'Copied' : 'Copy all'}</button>
           <button type="button" onClick={exportTranscript} title="Save the conversation as a Markdown file" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors">.md</button>

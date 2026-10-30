@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import axios from 'axios';
 import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
 import type { CandlestickData, IChartApi, ISeriesApi, ISeriesMarkersPluginApi, LineData, SeriesMarker, SeriesType, Time, UTCTimestamp } from 'lightweight-charts';
@@ -9,6 +9,7 @@ import { getHistoryLimit, getRefreshIntervalMs, INITIAL_VISIBLE_CANDLES } from '
 import { formatPrice, get24hChange, getPriceDirection, type PriceDirection } from '../lib/priceTicker';
 import { booleanFlags, oneOf, PREF_KEYS, readPreference, storePreference } from '../lib/preferences';
 import { INDICATOR_KEYS, isShortcutEvent, TIMEFRAME_KEYS } from '../lib/shortcuts';
+import { latestIndicators, type ChartSnapshot } from '../lib/workspaceContext';
 import {
   binanceStreamUrl,
   fetchBinanceKlines,
@@ -95,9 +96,11 @@ const normalizeBackendHistory = (points: HistoryPoint[]): CandlePoint[] => {
 export default function ChartPanel({
   symbol,
   backtestResults,
+  onSnapshot,
 }: {
   symbol: string,
-  backtestResults?: BacktestResults
+  backtestResults?: BacktestResults,
+  onSnapshot?: (snapshot: ChartSnapshot) => void,
 }) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -642,6 +645,19 @@ export default function ChartPanel({
   // fall back to the loaded candles.
   const latestPrice = liveTicker?.price ?? candleData[candleData.length - 1]?.close ?? null;
   const dayChange = liveTicker ? { change: liveTicker.change, percent: liveTicker.percent } : get24hChange(candleData);
+  const latestValues = useMemo(() => latestIndicators(candleData), [candleData]);
+  const dayChangePct = dayChange?.percent ?? null;
+  // Report what is on screen so the chat can share it with the AI on request.
+  useEffect(() => {
+    onSnapshot?.({
+      symbol,
+      timeframe,
+      indicators: latestValues,
+      last_price: latestPrice ?? undefined,
+      change_24h_pct: dayChangePct ?? undefined,
+      price_source: dataSource ?? undefined,
+    });
+  }, [onSnapshot, symbol, timeframe, latestValues, latestPrice, dayChangePct, dataSource]);
   const statusDot = streaming
     ? (streamStatus === 'live' ? 'bg-green-500 animate-pulse' : streamStatus === 'reconnecting' ? 'bg-amber-500' : 'bg-gray-600')
     : (refreshFailed ? 'bg-amber-500' : lastUpdated ? 'bg-green-500 animate-pulse' : 'bg-gray-600');

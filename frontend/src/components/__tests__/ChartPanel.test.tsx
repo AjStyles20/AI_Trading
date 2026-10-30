@@ -839,3 +839,27 @@ describe('ChartPanel preferences and shortcuts', () => {
     field.remove();
   });
 });
+
+describe('ChartPanel snapshot for the AI', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    charts.length = 0;
+    post.mockReset();
+    setVisibility('visible');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('reports the symbol, timeframe, price and indicator values on screen', async () => {
+    post.mockResolvedValue({ data: candles(105) });
+    const onSnapshot = vi.fn();
+    render(<ChartPanel symbol="AAPL" onSnapshot={onSnapshot} />);
+    await flush();
+
+    const snapshot = onSnapshot.mock.calls.at(-1)![0];
+    expect(snapshot).toMatchObject({ symbol: 'AAPL', timeframe: '1h', last_price: 105, price_source: 'backend' });
+    expect(typeof snapshot.indicators).toBe('object');
+  });
+});
