@@ -1,13 +1,44 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Dict, Optional
 import sys, os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from database.sqlite_manager import get_public_settings, get_settings, update_settings, remove_legacy_api_keys
+from database.sqlite_manager import get_audit_events, get_public_settings, get_settings, record_audit_event, update_settings, remove_legacy_api_keys
 from core.credential_provider import credential_presence, set_secure_credential, migrate_legacy_credentials
 
 router = APIRouter()
+
+
+def _audit_settings_change(before: dict, update: "SettingsUpdate") -> None:
+    """Record what a save changed. Credentials are recorded by name only, never by value."""
+    requested = update.model_dump(exclude={"api_keys"}, exclude_none=True)
+    changes = {
+        field: {"from": before.get(field), "to": value}
+        for field, value in requested.items()
+        if before.get(field) != value
+    }
+    credentials = {
+        name: "set" if value else "cleared"
+        for name, value in (update.api_keys or {}).items()
+        if value != "********"
+    }
+    if not changes and not credentials:
+        return
+    details = {"changes": changes}
+    if credentials:
+        details["credentials"] = credentials
+    # A logging problem must never block a save such as arming the kill switch.
+    try:
+        record_audit_event("settings", "updated", details)
+    except Exception as e:
+        print(f"WARNING: Failed to record settings audit event: {type(e).__name__}")
+
+
+@router.get("/api/audit")
+def list_audit_events(limit: int = Query(100, ge=1, le=500)):
+    return {"items": get_audit_events(limit)}
+
 
 class SettingsUpdate(BaseModel):
     api_keys: Optional[Dict[str, str]] = None
@@ -62,6 +93,7 @@ def migrate_credentials():
 @router.post("/api/settings")
 def save_settings(update: SettingsUpdate):
     try:
+        before = get_public_settings() or {}
         secure_updates = update.api_keys or {}
         for key, value in secure_updates.items():
             if value != "********":
@@ -85,6 +117,7 @@ def save_settings(update: SettingsUpdate):
             bitget_account_type=update.bitget_account_type,
         )
         if success:
+            _audit_settings_change(before, update)
             # Trigger AI Assistant reload if API keys changed
             from ai_engine.assistant import ai_assistant
             ai_assistant.reload_settings()

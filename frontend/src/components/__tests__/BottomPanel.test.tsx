@@ -101,6 +101,33 @@ describe('BottomPanel Component', () => {
     vi.mocked(axios.post).mockImplementation(() => Promise.resolve({ data: {} }));
   });
 
+  it('lists settings changes in the Terminal Logs tab, with credentials by name only', async () => {
+    vi.mocked(axios.get).mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/api/trading/history')) return Promise.resolve({ data: [] });
+      if (path.includes('/api/trading/account/')) {
+        return Promise.resolve({ data: { broker_id: 'paper', configured: true, can_trade: true, balances: [], warnings: [] } });
+      }
+      if (path.endsWith('/api/audit')) {
+        return Promise.resolve({ data: { items: [{
+          id: 1, created_at: '2026-10-30 10:00:00', category: 'settings', action: 'updated',
+          details: {
+            changes: { autonomy_kill_switch: { from: true, to: false } },
+            credentials: { binance_testnet_key: 'set' },
+          },
+        }] } });
+      }
+      return Promise.resolve({ data: { items: [], logs: [] } });
+    });
+    render(<BottomPanel {...dummyProps} />);
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Terminal Logs' })); });
+
+    expect(await screen.findByTestId('audit-event')).toHaveTextContent(
+      'autonomy_kill_switch: true → false; binance_testnet_key set',
+    );
+  });
+
   it('optimizes the default ranges within the backend limit of 1,000 combinations', async () => {
     const post = vi.mocked(axios.post);
     post.mockClear();

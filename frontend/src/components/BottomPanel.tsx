@@ -186,6 +186,23 @@ const normalizeTags = (tags: string[]): string[] => {
 
 const TRADING_REFRESH_MS = 5_000;
 
+type AuditEvent = {
+  id: number;
+  created_at: string;
+  category: string;
+  action: string;
+  details: {
+    changes?: Record<string, { from: unknown; to: unknown }>;
+    credentials?: Record<string, string>;
+  };
+};
+
+const describeAuditEvent = ({ details }: AuditEvent): string => {
+  const changes = Object.entries(details.changes ?? {}).map(([field, { from, to }]) => `${field}: ${String(from)} → ${String(to)}`);
+  const credentials = Object.entries(details.credentials ?? {}).map(([name, state]) => `${name} ${state}`);
+  return [...changes, ...credentials].join('; ');
+};
+
 // The backend explains failures (no market data, invalid strategy output, ...)
 // in `detail`; a generic message sends users hunting for problems that aren't there.
 const apiErrorDetail = (err: unknown, fallback: string): string =>
@@ -262,6 +279,24 @@ export default function BottomPanel({
   const [strategyViewMode, setStrategyViewMode] = useState<'flat' | 'grouped'>('flat');
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [workspaceError, setWorkspaceError] = useState('');
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [auditError, setAuditError] = useState('');
+
+  // Loaded when the Terminal Logs tab opens; settings change rarely.
+  useEffect(() => {
+    if (activeTab !== 'logs') return;
+    let cancelled = false;
+    axios.get(`${BACKEND_URL}/api/audit`, { params: { limit: 50 } })
+      .then((res) => {
+        if (cancelled) return;
+        setAuditEvents(Array.isArray(res.data?.items) ? res.data.items : []);
+        setAuditError('');
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setAuditError(`Could not load settings history: ${apiErrorDetail(err, 'check the backend connection.')}`);
+      });
+    return () => { cancelled = true; };
+  }, [activeTab]);
   const [strategyName, setStrategyName] = useState('');
   const [strategyTagsInput, setStrategyTagsInput] = useState('');
   const [savedStrategyId, setSavedStrategyId] = useState<number | null>(null);
@@ -2790,6 +2825,16 @@ export default function BottomPanel({
             ) : (
               <div className="text-gray-600 italic">Waiting for logs... Start Live Paper Trading to see activity.</div>
             )}
+            <div className="pt-3 mt-3 border-t border-[#2a2a35]">
+              <div className="text-gray-500 uppercase tracking-widest mb-1">Settings history</div>
+              {auditError && <div role="alert" className="text-red-400">{auditError}</div>}
+              {!auditError && auditEvents.length === 0 && <div className="text-gray-600 italic">No settings changes recorded yet.</div>}
+              {auditEvents.map((event) => (
+                <div key={event.id} data-testid="audit-event" className="text-gray-400">
+                  <span className="text-gray-600">{event.created_at}</span> {describeAuditEvent(event)}
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

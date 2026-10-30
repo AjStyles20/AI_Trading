@@ -192,6 +192,17 @@ def init_db():
     )
     ''')
 
+    # Audit log of user-visible configuration changes. Never holds credential values.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        category TEXT NOT NULL,
+        action TEXT NOT NULL,
+        details TEXT DEFAULT '{}'
+    )
+    ''')
+
     # Price alerts. Checked by the desktop app while it is open; a triggered
     # alert keeps its trigger price and time as a record.
     cursor.execute('''
@@ -1084,3 +1095,31 @@ def delete_price_alert(alert_id: int) -> bool:
         return cursor.rowcount > 0
     finally:
         conn.close()
+
+
+def record_audit_event(category: str, action: str, details: dict | None = None) -> None:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "INSERT INTO audit_log (category, action, details) VALUES (?, ?, ?)",
+            (category, action, json.dumps(details or {})),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_audit_events(limit: int = 100) -> list[dict]:
+    """Most recent audit events first."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute(
+            "SELECT id, created_at, category, action, details FROM audit_log ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {"id": row[0], "created_at": row[1], "category": row[2], "action": row[3], "details": json.loads(row[4] or "{}")}
+        for row in rows
+    ]
