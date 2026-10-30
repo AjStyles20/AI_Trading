@@ -89,7 +89,8 @@ class PaperBroker(BrokerClient):
                 "cash": round(self.cash, 8),
                 "market_value": round(market_value, 8),
                 "equity": round(self.cash + market_value, 8),
-                "balances": [{"asset": "USD", "free": round(self.cash, 8), "locked": 0.0}],
+                "total_equity_usd": round(self.cash + market_value, 8),
+                "balances": [{"asset": "USD", "free": round(self.cash, 8), "locked": 0.0, "usd_value": round(self.cash, 8)}],
                 "positions": [
                     {
                         "symbol": symbol,

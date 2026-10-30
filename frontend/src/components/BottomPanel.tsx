@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import AccountOverview from './AccountOverview';
+import type { AccountSummary } from '../lib/accountSummary';
 import axios from 'axios';
 
 import { BACKEND_URL } from '../lib/api';
@@ -90,20 +92,7 @@ type BrokerDescriptor = {
   environment?: string;
 };
 
-type BrokerAccountSummary = {
-  broker_id: string;
-  display_name: string;
-  execution_mode: string;
-  environment?: string;
-  configured: boolean;
-  can_trade: boolean;
-  balances: Array<{
-    asset: string;
-    free: number;
-    locked: number;
-  }>;
-  warnings: string[];
-};
+type BrokerAccountSummary = AccountSummary;
 
 type TradingPreflightResponse = {
   broker: BrokerDescriptor;
@@ -195,6 +184,32 @@ const normalizeTags = (tags: string[]): string[] => {
   return Array.from(new Set(normalized));
 };
 
+const TRADING_REFRESH_MS = 5_000;
+
+type AuditEvent = {
+  id: number;
+  created_at: string;
+  category: string;
+  action: string;
+  details: {
+    changes?: Record<string, { from: unknown; to: unknown }>;
+    credentials?: Record<string, string>;
+  };
+};
+
+const describeAuditEvent = ({ details }: AuditEvent): string => {
+  const changes = Object.entries(details.changes ?? {}).map(([field, { from, to }]) => `${field}: ${String(from)} → ${String(to)}`);
+  const credentials = Object.entries(details.credentials ?? {}).map(([name, state]) => `${name} ${state}`);
+  return [...changes, ...credentials].join('; ');
+};
+
+// The backend explains failures (no market data, invalid strategy output, ...)
+// in `detail`; a generic message sends users hunting for problems that aren't there.
+const apiErrorDetail = (err: unknown, fallback: string): string =>
+  axios.isAxiosError(err) && typeof err.response?.data?.detail === 'string'
+    ? err.response.data.detail
+    : fallback;
+
 export default function BottomPanel({
   symbol,
   assetType,
@@ -219,6 +234,7 @@ export default function BottomPanel({
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState('');
   const [isBacktesting, setIsBacktesting] = useState(false);
+  const [backtestError, setBacktestError] = useState('');
   const [isLiveTrading, setIsLiveTrading] = useState(false);
   const [tradingLogs, setTradingLogs] = useState<string[]>([]);
   const [tradeHistory, setTradeHistory] = useState<TradeRecord[]>([]);
@@ -241,10 +257,14 @@ export default function BottomPanel({
   const [isSummarizingStrategy, setIsSummarizingStrategy] = useState(false);
   const [isSummarizingBacktest, setIsSummarizingBacktest] = useState(false);
   const [brokerAccountSummary, setBrokerAccountSummary] = useState<BrokerAccountSummary | null>(null);
+  const [accountUpdatedAt, setAccountUpdatedAt] = useState<Date | null>(null);
+  const [isRefreshingAccount, setIsRefreshingAccount] = useState(false);
+  const [accountError, setAccountError] = useState('');
   const [isTestingOrder, setIsTestingOrder] = useState(false);
   const [optimizationResults, setOptimizationResults] = useState<OptimizationRun | null>(null);
   const [optimizationHistory, setOptimizationHistory] = useState<OptimizationRun[]>([]);
   const [isOptimizing, setIsOptimizing] = useState(false);
+  const [optimizationError, setOptimizationError] = useState('');
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [isValidating, setIsValidating] = useState(false);
   const [savedStrategies, setSavedStrategies] = useState<StrategyWorkspace[]>([]);
@@ -258,6 +278,25 @@ export default function BottomPanel({
   const [selectedTagFilters, setSelectedTagFilters] = useState<string[]>([]);
   const [strategyViewMode, setStrategyViewMode] = useState<'flat' | 'grouped'>('flat');
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState('');
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [auditError, setAuditError] = useState('');
+
+  // Loaded when the Terminal Logs tab opens; settings change rarely.
+  useEffect(() => {
+    if (activeTab !== 'logs') return;
+    let cancelled = false;
+    axios.get(`${BACKEND_URL}/api/audit`, { params: { limit: 50 } })
+      .then((res) => {
+        if (cancelled) return;
+        setAuditEvents(Array.isArray(res.data?.items) ? res.data.items : []);
+        setAuditError('');
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setAuditError(`Could not load settings history: ${apiErrorDetail(err, 'check the backend connection.')}`);
+      });
+    return () => { cancelled = true; };
+  }, [activeTab]);
   const [strategyName, setStrategyName] = useState('');
   const [strategyTagsInput, setStrategyTagsInput] = useState('');
   const [savedStrategyId, setSavedStrategyId] = useState<number | null>(null);
@@ -271,10 +310,12 @@ export default function BottomPanel({
     rsi_sell: '65,70,75',
     sma_fast: '5,10,20',
     sma_slow: '30,50,100',
-    stop_loss_pct: '2,3,5',
-    take_profit_pct: '4,6,8',
-    cooldown_bars: '0,2,4',
-    position_size_pct: '25,50,100',
+    // Kept small: every combination is a full backtest, and the backend
+    // rejects searches over 1,000 combinations (core/strategy_optimizer.py).
+    stop_loss_pct: '2,5',
+    take_profit_pct: '4,8',
+    cooldown_bars: '2',
+    position_size_pct: '50',
   });
   const [backtestInterval, setBacktestInterval] = useState('1h');
   const [backtestPeriod, setBacktestPeriod] = useState('6mo');
@@ -289,8 +330,13 @@ export default function BottomPanel({
       const res = await axios.get(`${BACKEND_URL}/api/trading/status`);
       setIsLiveTrading(res.data.is_active);
       setTradingLogs(res.data.logs);
-      setSelectedBrokerId(res.data.config?.broker_id || 'paper');
-      setExecutionMode(res.data.config?.execution_mode || 'paper');
+      // Mirror the broker and mode only while the trading loop is running. When
+      // it is stopped its config is just the last one used, and applying it every
+      // poll would reset the user's own Broker / Execution mode choice.
+      if (res.data.is_active && res.data.config) {
+        setSelectedBrokerId(res.data.config.broker_id || 'paper');
+        setExecutionMode(res.data.config.execution_mode || 'paper');
+      }
     } catch (err) {
       console.error('Failed to fetch trading status:', err);
     }
@@ -389,20 +435,34 @@ export default function BottomPanel({
     }
   }, [assetType, executionMode, selectedBrokerId]);
 
+  // Trading status, history, orders and positions refresh every 5 s. With a
+  // real broker most of these reach the broker's API, so hidden tabs pause
+  // (and catch up when shown) and a refresh never overlaps the previous one.
   useEffect(() => {
-    void fetchTradingStatus();
-    void fetchTradeHistory();
-    void fetchOpenOrders();
-    void fetchBrokerPositions();
-    void fetchBrokerPortfolioSnapshot();
-    const timer = setInterval(() => {
-      void fetchTradingStatus();
-      void fetchTradeHistory(executionMode === 'live');
-      void fetchOpenOrders();
-      void fetchBrokerPositions();
-      void fetchBrokerPortfolioSnapshot();
-    }, 5000);
-    return () => clearInterval(timer);
+    let inFlight = false;
+    const refresh = async (refreshStatuses: boolean) => {
+      if (inFlight || document.visibilityState !== 'visible') return;
+      inFlight = true;
+      try {
+        await Promise.all([
+          fetchTradingStatus(),
+          fetchTradeHistory(refreshStatuses),
+          fetchOpenOrders(),
+          fetchBrokerPositions(),
+          fetchBrokerPortfolioSnapshot(),
+        ]);
+      } finally {
+        inFlight = false;
+      }
+    };
+    void refresh(false);
+    const timer = setInterval(() => void refresh(executionMode === 'live'), TRADING_REFRESH_MS);
+    const onVisibilityChange = () => void refresh(executionMode === 'live');
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [executionMode, fetchBrokerPortfolioSnapshot, fetchBrokerPositions, fetchOpenOrders, fetchTradeHistory]);
 
   const fetchSettings = useCallback(async () => {
@@ -433,14 +493,23 @@ export default function BottomPanel({
   }, [fetchBrokers]);
 
   const fetchBrokerAccount = useCallback(async () => {
+    setIsRefreshingAccount(true);
     try {
       const res = await axios.get(`${BACKEND_URL}/api/trading/account/${selectedBrokerId}`, {
         params: { execution_mode: executionMode },
       });
       setBrokerAccountSummary(res.data);
+      setAccountUpdatedAt(new Date());
+      setAccountError('');
     } catch (err) {
       console.error('Failed to fetch broker account summary:', err);
+      // Never keep showing a previous account's balances after a failure.
       setBrokerAccountSummary(null);
+      setAccountUpdatedAt(null);
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined;
+      setAccountError(`Could not load the account: ${typeof detail === 'string' ? detail : 'the backend did not answer.'}`);
+    } finally {
+      setIsRefreshingAccount(false);
     }
   }, [executionMode, selectedBrokerId]);
 
@@ -497,6 +566,7 @@ export default function BottomPanel({
     setIsBacktesting(true);
     setActiveTab('backtest');
     setBacktestSummary('');
+    setBacktestError('');
     try {
       const res = await axios.post(`${BACKEND_URL}/api/backtest/run`, {
         symbol,
@@ -510,9 +580,9 @@ export default function BottomPanel({
       });
       setBacktestResults(res.data);
       setValidationResult(res.data.validation || null);
-    } catch (err) {
+    } catch (err: unknown) {
       console.error(err);
-      alert('Backtest failed. Ensure the strategy code is valid Python.');
+      setBacktestError(apiErrorDetail(err, 'Check the backend connection.'));
     } finally {
       setIsBacktesting(false);
     }
@@ -626,14 +696,20 @@ export default function BottomPanel({
       };
       const res = await axios.post(`${BACKEND_URL}/api/strategies`, payload);
       setSavedStrategyId(res.data.strategy_id);
+      setWorkspaceError('');
       setIsSaveModalOpen(false);
       await fetchSavedStrategies();
     } catch (err) {
       console.error(err);
-      alert('Failed to save strategy.');
+      reportWorkspaceError(err, 'save the strategy');
     } finally {
       setIsSavingStrategy(false);
     }
+  };
+
+  // Strategy workspace actions report failures inline, with the backend's reason.
+  const reportWorkspaceError = (err: unknown, action: string) => {
+    setWorkspaceError(`Could not ${action}: ${apiErrorDetail(err, 'check the backend connection.')}`);
   };
 
   const updateStrategyTags = async (strategy: StrategyWorkspace, tags: string[]) => {
@@ -657,7 +733,7 @@ export default function BottomPanel({
       await fetchSavedStrategies();
     } catch (err) {
       console.error(err);
-      alert('Failed to update strategy tags.');
+      reportWorkspaceError(err, 'update the strategy tags');
     }
   };
 
@@ -665,6 +741,7 @@ export default function BottomPanel({
     try {
       const res = await axios.get(`${BACKEND_URL}/api/strategies/${strategyId}`);
       const strategy = res.data;
+      setWorkspaceError('');
       setStrategyName(strategy.name || '');
       setStrategyTagsInput(Array.isArray(strategy.tags) ? strategy.tags.join(', ') : '');
       setSavedStrategyId(strategy.id);
@@ -686,7 +763,7 @@ export default function BottomPanel({
       setActiveTab('code');
     } catch (err) {
       console.error(err);
-      alert('Failed to load strategy.');
+      reportWorkspaceError(err, 'load the strategy');
     }
   };
 
@@ -696,7 +773,7 @@ export default function BottomPanel({
       await fetchSavedStrategies();
     } catch (err) {
       console.error(err);
-      alert('Failed to duplicate strategy.');
+      reportWorkspaceError(err, 'duplicate the strategy');
     }
   };
 
@@ -706,7 +783,7 @@ export default function BottomPanel({
       await fetchSavedStrategies();
     } catch (err) {
       console.error(err);
-      alert('Failed to mark strategy as baseline.');
+      reportWorkspaceError(err, 'mark the strategy as baseline');
     }
   };
 
@@ -720,7 +797,7 @@ export default function BottomPanel({
       await fetchSavedStrategies();
     } catch (err) {
       console.error(err);
-      alert('Failed to archive strategy.');
+      reportWorkspaceError(err, 'archive the strategy');
     }
   };
 
@@ -730,7 +807,7 @@ export default function BottomPanel({
       await fetchSavedStrategies();
     } catch (err) {
       console.error(err);
-      alert('Failed to restore strategy.');
+      reportWorkspaceError(err, 'restore the strategy');
     }
   };
 
@@ -765,7 +842,7 @@ export default function BottomPanel({
       await fetchSavedStrategies();
     } catch (err) {
       console.error(err);
-      alert(`Failed to ${action} selected strategies.`);
+      reportWorkspaceError(err, `${action} the selected strategies`);
     }
   };
 
@@ -773,6 +850,7 @@ export default function BottomPanel({
     if (isOptimizing) return;
     setIsOptimizing(true);
     setActiveTab('optimize');
+    setOptimizationError('');
     try {
       const parseRangeList = (value: string) =>
         value
@@ -841,9 +919,9 @@ export default function BottomPanel({
       if (res.data?.best?.code) {
         setStrategyCode(res.data.best.code);
       }
-    } catch (err) {
+    } catch (err: unknown) {
       console.error(err);
-      alert('Optimization failed. Check backend data availability.');
+      setOptimizationError(apiErrorDetail(err, 'Check the backend connection.'));
     } finally {
       setIsOptimizing(false);
     }
@@ -1388,7 +1466,7 @@ export default function BottomPanel({
       await fetchSavedStrategies();
     } catch (err) {
       console.error(err);
-      alert('Failed to rename tag across strategies.');
+      reportWorkspaceError(err, 'rename the tag');
     }
   };
 
@@ -1523,6 +1601,9 @@ export default function BottomPanel({
               <h3 className="text-sm font-bold text-white">Save Strategy Workspace</h3>
               <button onClick={() => setIsSaveModalOpen(false)} className="text-gray-500 hover:text-white transition-colors">Close</button>
             </div>
+            {workspaceError && (
+              <p role="alert" className="mb-3 text-xs text-red-300 border border-red-500/40 bg-red-500/10 rounded px-3 py-2">{workspaceError}</p>
+            )}
             <label className="block text-xs text-gray-400 mb-2">
               Strategy Name
               <input
@@ -1761,40 +1842,14 @@ export default function BottomPanel({
         </label>
       </div>
 
-      {brokerAccountSummary && (
-        <div className="border-b border-[#2a2a35] py-3">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            <div className="bg-[#16161e] border border-[#2a2a35] rounded-lg p-3">
-              <div className="text-[10px] uppercase tracking-widest text-gray-500">Broker Status</div>
-              <div className={`text-sm font-bold mt-1 ${brokerAccountSummary.configured ? 'text-emerald-300' : 'text-amber-300'}`}>
-                {brokerAccountSummary.display_name}
-                {brokerAccountSummary.environment ? ` [${brokerAccountSummary.environment}]` : ''}
-                {' | '}
-                {brokerAccountSummary.configured ? 'Configured' : 'Missing Keys'}
-              </div>
-            </div>
-            <div className="bg-[#16161e] border border-[#2a2a35] rounded-lg p-3">
-              <div className="text-[10px] uppercase tracking-widest text-gray-500">Trade Access</div>
-              <div className={`text-sm font-bold mt-1 ${brokerAccountSummary.can_trade ? 'text-emerald-300' : 'text-red-300'}`}>
-                {brokerAccountSummary.can_trade ? 'Enabled' : 'Blocked'}
-              </div>
-            </div>
-            <div className="bg-[#16161e] border border-[#2a2a35] rounded-lg p-3">
-              <div className="text-[10px] uppercase tracking-widest text-gray-500">Balances</div>
-              <div className="text-xs text-white mt-1">
-                {brokerAccountSummary.balances.length > 0
-                  ? brokerAccountSummary.balances.slice(0, 3).map((balance) => `${balance.asset}: ${balance.free}`).join(' | ')
-                  : 'No balances available'}
-              </div>
-            </div>
-          </div>
-          {brokerAccountSummary.warnings.length > 0 && (
-            <div className="mt-2 text-[10px] text-amber-300">
-              {brokerAccountSummary.warnings.join(' | ')}
-            </div>
-          )}
-        </div>
-      )}
+      <AccountOverview
+        summary={brokerAccountSummary}
+        executionMode={executionMode}
+        updatedAt={accountUpdatedAt}
+        refreshing={isRefreshingAccount}
+        error={accountError}
+        onRefresh={() => void fetchBrokerAccount()}
+      />
 
       <div className="flex items-center gap-1 border-b border-[#2a2a35] flex-shrink-0">
         {TABS.map((tab) => (
@@ -1812,9 +1867,15 @@ export default function BottomPanel({
         ))}
       </div>
 
-      <div className="flex-1 w-full overflow-y-auto font-mono text-xs mt-2 p-3 bg-[#0a0a0c] rounded border border-[#2a2a35]">
+      <div className="flex-1 w-full min-h-[420px] max-h-[75vh] overflow-y-auto font-mono text-xs mt-2 p-3 bg-[#0a0a0c] rounded border border-[#2a2a35]">
         {activeTab === 'code' && (
           <div className="space-y-4">
+            {workspaceError && !isSaveModalOpen && (
+              <div role="alert" className="flex items-start justify-between gap-3 text-xs text-red-300 border border-red-500/40 bg-red-500/10 rounded px-3 py-2">
+                <span>{workspaceError}</span>
+                <button type="button" onClick={() => setWorkspaceError('')} aria-label="Dismiss error" className="text-red-300 hover:text-white">×</button>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <div className="text-[10px] uppercase tracking-widest text-gray-500">Saved Workspaces</div>
               <div className="flex items-center gap-2">
@@ -2073,6 +2134,12 @@ export default function BottomPanel({
               {isBacktesting && <div className="text-xs text-yellow-500 animate-pulse font-bold">CALCULATING METRICS...</div>}
             </div>
 
+            {backtestError && (
+              <p role="alert" className="text-xs text-red-300 border border-red-500/40 bg-red-500/10 rounded px-3 py-2">
+                Backtest failed: {backtestError}
+              </p>
+            )}
+
             {backtestResults ? (
               <>
                 {validationResult && (
@@ -2232,6 +2299,12 @@ export default function BottomPanel({
               <div className="text-[#a55eea] font-bold text-sm">Optimization Lab</div>
               {isOptimizing && <div className="text-xs text-yellow-500 animate-pulse font-bold">RUNNING PARAMETER SWEEP...</div>}
             </div>
+
+            {optimizationError && (
+              <p role="alert" className="text-xs text-red-300 border border-red-500/40 bg-red-500/10 rounded px-3 py-2">
+                Optimization failed: {optimizationError}
+              </p>
+            )}
 
             {optimizationResults?.best ? (
               <>
@@ -2752,6 +2825,16 @@ export default function BottomPanel({
             ) : (
               <div className="text-gray-600 italic">Waiting for logs... Start Live Paper Trading to see activity.</div>
             )}
+            <div className="pt-3 mt-3 border-t border-[#2a2a35]">
+              <div className="text-gray-500 uppercase tracking-widest mb-1">Settings history</div>
+              {auditError && <div role="alert" className="text-red-400">{auditError}</div>}
+              {!auditError && auditEvents.length === 0 && <div className="text-gray-600 italic">No settings changes recorded yet.</div>}
+              {auditEvents.map((event) => (
+                <div key={event.id} data-testid="audit-event" className="text-gray-400">
+                  <span className="text-gray-600">{event.created_at}</span> {describeAuditEvent(event)}
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

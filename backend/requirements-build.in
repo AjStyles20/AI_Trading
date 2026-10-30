@@ -1,0 +1,4 @@
+# Windows desktop bundle build tooling. Edit this file, then run
+# scripts/lock_backend.sh to regenerate requirements-build.txt (constrained to
+# the runtime lock).
+pyinstaller>=6,<7

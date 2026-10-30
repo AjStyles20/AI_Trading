@@ -1,10 +1,11 @@
+import type { ReactNode } from 'react';
 import { render } from '@testing-library/react';
 import StrategyBuilder from '../StrategyBuilder';
 import { describe, it, expect, vi } from 'vitest';
 
 // Basic stub for react-flow since jsdom handles SVG/canvas differently
 vi.mock('@xyflow/react', () => ({
-  ReactFlow: ({ children }: any) => <div data-testid="react-flow-mock">{children}</div>,
+  ReactFlow: ({ children }: { children?: ReactNode }) => <div data-testid="react-flow-mock">{children}</div>,
   Controls: () => <div />,
   Background: () => <div />,
   MiniMap: () => <div />,

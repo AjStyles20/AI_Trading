@@ -10,6 +10,10 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
+    // Rendering the large panels can take several seconds on slower PCs. The
+    // default 5s made unrelated tests fail at random there; assertions still fail at once.
+    testTimeout: 30_000,
+    globalSetup: ['./vitest.global-setup.js'],
     setupFiles: ['./src/setupTests.ts']
   }
 })

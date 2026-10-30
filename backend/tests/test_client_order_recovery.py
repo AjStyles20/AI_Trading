@@ -60,7 +60,8 @@ def test_alpaca_submits_and_recovers_by_client_order_id(monkeypatch):
 def test_bitget_submits_and_recovers_by_client_order_id(monkeypatch):
     broker = BitgetBroker()
     calls = []
-    monkeypatch.setattr(broker, "validate_order", lambda *a: {"normalized_qty": 1.0})
+    monkeypatch.setattr(broker, "validate_order", lambda *a: {"normalized_qty": 1.0, "limit_price": 100.5})
+    monkeypatch.setattr(broker, "_symbol_rules", lambda symbol, settings: {"quantity_decimals": 6, "price_decimals": 2})
 
     def request(method, path, settings, **kwargs):
         calls.append((method, path, kwargs))

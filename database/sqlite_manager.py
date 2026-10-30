@@ -52,7 +52,9 @@ def init_db():
         binance_environment TEXT DEFAULT 'live',
         bitget_environment TEXT DEFAULT 'live',
         ai_provider TEXT DEFAULT 'openai',
-        ai_model TEXT DEFAULT ''
+        ai_model TEXT DEFAULT '',
+        ai_vision_model TEXT DEFAULT '',
+        bitget_account_type TEXT DEFAULT 'classic'
     )
     ''')
 
@@ -68,6 +70,8 @@ def init_db():
         "bitget_environment": "ALTER TABLE settings ADD COLUMN bitget_environment TEXT DEFAULT 'live'",
         "ai_provider": "ALTER TABLE settings ADD COLUMN ai_provider TEXT DEFAULT 'openai'",
         "ai_model": "ALTER TABLE settings ADD COLUMN ai_model TEXT DEFAULT ''",
+        "ai_vision_model": "ALTER TABLE settings ADD COLUMN ai_vision_model TEXT DEFAULT ''",
+        "bitget_account_type": "ALTER TABLE settings ADD COLUMN bitget_account_type TEXT DEFAULT 'classic'",
     }
     for column, statement in settings_column_migrations.items():
         if column not in existing_settings_columns:
@@ -188,6 +192,33 @@ def init_db():
     )
     ''')
 
+    # Audit log of user-visible configuration changes. Never holds credential values.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        category TEXT NOT NULL,
+        action TEXT NOT NULL,
+        details TEXT DEFAULT '{}'
+    )
+    ''')
+
+    # Price alerts. Checked by the desktop app while it is open; a triggered
+    # alert keeps its trigger price and time as a record.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS price_alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        asset_type TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        price REAL NOT NULL,
+        note TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        triggered_at TIMESTAMP,
+        triggered_price REAL
+    )
+    ''')
+
     existing_trade_columns = {
         row[1] for row in cursor.execute("PRAGMA table_info(trades)").fetchall()
     }
@@ -223,7 +254,7 @@ def get_settings():
             SELECT id, api_keys, theme, paper_trading,
                    risk_live_trading_enabled, autonomy_kill_switch, risk_max_order_notional, risk_max_position_pct,
                    risk_max_daily_loss_pct, risk_max_drawdown_pct,
-                   binance_environment, bitget_environment, ai_provider, ai_model
+                   binance_environment, bitget_environment, ai_provider, ai_model, ai_vision_model, bitget_account_type
             FROM settings WHERE id=1
         """)
         row = cursor.fetchone()
@@ -244,6 +275,8 @@ def get_settings():
                 "bitget_environment": row[11] or "live",
                 "ai_provider": row[12] or "openai",
                 "ai_model": row[13] or "",
+                "ai_vision_model": row[14] or "",
+                "bitget_account_type": row[15] or "classic",
             }
     except sqlite3.Error:
         return None
@@ -303,6 +336,8 @@ def update_settings(
     bitget_environment: str = None,
     ai_provider: str = None,
     ai_model: str = None,
+    ai_vision_model: str = None,
+    bitget_account_type: str = None,
 ):
     current = get_settings()
     if not current:
@@ -340,6 +375,12 @@ def update_settings(
     next_ai_model = ai_model.strip() if ai_model is not None else current["ai_model"]
     if len(next_ai_model) > 128 or any(ord(char) < 32 for char in next_ai_model):
         raise ValueError("Invalid AI model name")
+    next_ai_vision_model = ai_vision_model.strip() if ai_vision_model is not None else current["ai_vision_model"]
+    if len(next_ai_vision_model) > 128 or any(ord(char) < 32 for char in next_ai_vision_model):
+        raise ValueError("Invalid AI vision model name")
+    next_bitget_account_type = bitget_account_type if bitget_account_type is not None else current["bitget_account_type"]
+    if next_bitget_account_type not in {"classic", "unified"}:
+        raise ValueError("bitget_account_type must be 'classic' or 'unified'")
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -348,7 +389,7 @@ def update_settings(
         SET api_keys = ?, theme = ?, paper_trading = ?,
             risk_live_trading_enabled = ?, autonomy_kill_switch = ?, risk_max_order_notional = ?, risk_max_position_pct = ?,
             risk_max_daily_loss_pct = ?, risk_max_drawdown_pct = ?,
-            binance_environment = ?, bitget_environment = ?, ai_provider = ?, ai_model = ?
+            binance_environment = ?, bitget_environment = ?, ai_provider = ?, ai_model = ?, ai_vision_model = ?, bitget_account_type = ?
         WHERE id = 1
     """, (
         json.dumps(_preserve_legacy_api_keys(api_keys, current["api_keys"])),
@@ -364,6 +405,8 @@ def update_settings(
         next_bitget_environment,
         next_ai_provider,
         next_ai_model,
+        next_ai_vision_model,
+        next_bitget_account_type,
     ))
     conn.commit()
     conn.close()
@@ -989,3 +1032,94 @@ def duplicate_strategy(strategy_id: int):
 if __name__ == "__main__":
     init_db()
     print("SQLite database initialized successfully.")
+
+
+ALERT_COLUMNS = ("id", "symbol", "asset_type", "direction", "price", "note", "created_at", "triggered_at", "triggered_price")
+
+
+def create_price_alert(symbol: str, asset_type: str, direction: str, price: float, note: str = "") -> dict:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute(
+            "INSERT INTO price_alerts (symbol, asset_type, direction, price, note) VALUES (?, ?, ?, ?, ?)",
+            (symbol, asset_type, direction, price, note),
+        )
+        conn.commit()
+        return get_price_alert(cursor.lastrowid)
+    finally:
+        conn.close()
+
+
+def get_price_alert(alert_id: int) -> dict | None:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        row = conn.execute(f"SELECT {', '.join(ALERT_COLUMNS)} FROM price_alerts WHERE id = ?", (alert_id,)).fetchone()
+        return dict(zip(ALERT_COLUMNS, row)) if row else None
+    finally:
+        conn.close()
+
+
+def get_price_alerts() -> list[dict]:
+    """Active alerts first (oldest first), then triggered ones (most recent first)."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute(
+            f"SELECT {', '.join(ALERT_COLUMNS)} FROM price_alerts "
+            "ORDER BY triggered_at IS NOT NULL, CASE WHEN triggered_at IS NULL THEN id END, triggered_at DESC, id DESC"
+        ).fetchall()
+        return [dict(zip(ALERT_COLUMNS, row)) for row in rows]
+    finally:
+        conn.close()
+
+
+def trigger_price_alert(alert_id: int, price: float) -> dict | None:
+    """Mark an alert triggered once. A second call leaves the first record unchanged."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "UPDATE price_alerts SET triggered_at = CURRENT_TIMESTAMP, triggered_price = ? "
+            "WHERE id = ? AND triggered_at IS NULL",
+            (price, alert_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return get_price_alert(alert_id)
+
+
+def delete_price_alert(alert_id: int) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute("DELETE FROM price_alerts WHERE id = ?", (alert_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def record_audit_event(category: str, action: str, details: dict | None = None) -> None:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "INSERT INTO audit_log (category, action, details) VALUES (?, ?, ?)",
+            (category, action, json.dumps(details or {})),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_audit_events(limit: int = 100) -> list[dict]:
+    """Most recent audit events first."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute(
+            "SELECT id, created_at, category, action, details FROM audit_log ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {"id": row[0], "created_at": row[1], "category": row[2], "action": row[3], "details": json.loads(row[4] or "{}")}
+        for row in rows
+    ]

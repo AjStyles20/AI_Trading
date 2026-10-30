@@ -1,14 +1,81 @@
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 
 import { BACKEND_URL } from '../lib/api';
+import ChatMessage from './ChatMessage';
+import ConnectionStatus from './ConnectionStatus';
+import AlertsPanel from './AlertsPanel';
+import {
+  ACCEPTED_IMAGE_TYPES,
+  ACCEPTED_VIDEO_TYPES,
+  attachmentCaptionText,
+  MAX_ATTACHMENTS,
+  prepareImageAttachment,
+  prepareVideoFrames,
+  type ImageAttachment,
+} from '../lib/imageAttachments';
+import {
+  copyRich,
+  downloadTextFile,
+  fromStoredMessages,
+  toMarkdownTranscript,
+  transcriptFilename,
+  type ChatMessage as Message,
+  type StoredChatMessage,
+} from '../lib/chatTranscript';
+import {
+  formatChange,
+  MAX_WATCHLIST,
+  normalizeSymbol,
+  parseQuote,
+  quotePath,
+  readWatchlist,
+  storeWatchlist,
+  type Quote,
+} from '../lib/watchlist';
 
-type Message = {
-  id: string;
-  role: 'user' | 'assistant';
-  text: string;
-  timestamp: string;
+import { isShortcutEvent } from '../lib/shortcuts';
+import { readPreference, storePreference } from '../lib/preferences';
+import type { WorkspaceContext } from '../lib/workspaceContext';
+
+const SHARE_CONTEXT_KEY = 'astral.chat.shareContext';
+
+// Watchlist quotes are daily-change figures; the backend caches them for a minute.
+const QUOTE_REFRESH_MS = 60_000;
+
+// The conversation the chat continues across reloads. Kept per browser profile;
+// 'main_session' is the id earlier versions always used, so old history loads.
+const CONVERSATION_KEY = 'astral.chat.conversationId';
+const DEFAULT_CONVERSATION_ID = 'main_session';
+const HISTORY_LIMIT = 500;
+// The backend may still be starting when the page opens; keep trying.
+const SETTINGS_RETRY_MS = 5_000;
+
+const readConversationId = (): string => {
+  try {
+    return window.localStorage.getItem(CONVERSATION_KEY) || DEFAULT_CONVERSATION_ID;
+  } catch {
+    return DEFAULT_CONVERSATION_ID;
+  }
 };
+
+const storeConversationId = (id: string) => {
+  try {
+    window.localStorage.setItem(CONVERSATION_KEY, id);
+  } catch {
+    // Storage unavailable (private window); the id still applies for this session.
+  }
+};
+
+const WELCOME_TEXT = "Hello! I'm Astral AI, your intelligent trading companion. I can analyse markets, generate strategies, run backtests, and more. How can I help you today?";
+
+const welcomeMessage = (): Message => ({
+  id: 'welcome',
+  role: 'assistant',
+  text: WELCOME_TEXT,
+  timestamp: new Date().toLocaleTimeString(),
+});
 
 const SUGGESTIONS = [
   "Analyze AAPL trend",
@@ -22,22 +89,24 @@ type SidebarProps = {
   onViewChange: (view: 'chart' | 'builder') => void;
   currentSymbol: string;
   onSymbolChange: (symbol: string) => void;
+  // What is on screen right now (symbol, price, indicators, latest backtest).
+  getChatContext?: () => WorkspaceContext | null;
 };
 
-export default function Sidebar({ 
-  activeView, 
-  onViewChange, 
-  currentSymbol, 
-  onSymbolChange 
+export default function Sidebar({
+  activeView,
+  onViewChange,
+  currentSymbol,
+  onSymbolChange,
+  getChatContext,
 }: SidebarProps) {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '0',
-      role: 'assistant',
-      text: "Hello! I'm Astral AI, your intelligent trading companion. I can analyse markets, generate strategies, run backtests, and more. How can I help you today?",
-      timestamp: new Date().toLocaleTimeString(),
-    }
-  ]);
+  // Whether each message carries the on-screen snapshot to the AI provider.
+  const [shareContext, setShareContext] = useState(() => readPreference(SHARE_CONTEXT_KEY, (value) => (typeof value === 'boolean' ? value : null), true));
+  useEffect(() => { storePreference(SHARE_CONTEXT_KEY, shareContext); }, [shareContext]);
+  const [messages, setMessages] = useState<Message[]>(() => [welcomeMessage()]);
+  const [conversationId, setConversationId] = useState(readConversationId);
+  const [chatExpanded, setChatExpanded] = useState(false);
+  const [transcriptCopied, setTranscriptCopied] = useState(false);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [backendOnline, setBackendOnline] = useState(false);
@@ -48,6 +117,11 @@ export default function Sidebar({
   const [tempAiProvider, setTempAiProvider] = useState<'openai' | 'groq' | 'ollama'>('openai');
   const [aiModel, setAiModel] = useState('');
   const [tempAiModel, setTempAiModel] = useState('');
+  const [aiVisionModel, setAiVisionModel] = useState('');
+  const [tempAiVisionModel, setTempAiVisionModel] = useState('');
+  const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
+  const [attachError, setAttachError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [groqKey, setGroqKey] = useState('');
   const [tempGroqKey, setTempGroqKey] = useState('');
   const [binanceKey, setBinanceKey] = useState('');
@@ -75,6 +149,8 @@ export default function Sidebar({
   const [tempBitgetSecret, setTempBitgetSecret] = useState('');
   const [tempBitgetPassphrase, setTempBitgetPassphrase] = useState('');
   const [tempBitgetDemoEnabled, setTempBitgetDemoEnabled] = useState(false);
+  const [bitgetAccountType, setBitgetAccountType] = useState<'classic' | 'unified'>('classic');
+  const [tempBitgetAccountType, setTempBitgetAccountType] = useState<'classic' | 'unified'>('classic');
   const [tempBitgetDemoKey, setTempBitgetDemoKey] = useState('');
   const [tempBitgetDemoSecret, setTempBitgetDemoSecret] = useState('');
   const [tempBitgetDemoPassphrase, setTempBitgetDemoPassphrase] = useState('');
@@ -82,7 +158,22 @@ export default function Sidebar({
   const [tempAlpacaSecret, setTempAlpacaSecret] = useState('');
   const [tempAlpacaPaperKey, setTempAlpacaPaperKey] = useState('');
   const [tempAlpacaPaperSecret, setTempAlpacaPaperSecret] = useState('');
-  const [watchlist, setWatchlist] = useState(['BTC/USDT', 'ETH/USDT', 'AAPL', 'NVDA', 'TSLA', 'SOL-USD']);
+  const [watchlist, setWatchlist] = useState<string[]>(readWatchlist);
+  // undefined: not loaded yet; null: no quote available for that symbol.
+  const [quotes, setQuotes] = useState<Record<string, Quote | null>>({});
+  const [searchError, setSearchError] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // '/' jumps to the watchlist search, as in many web apps.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== '/' || !isShortcutEvent(event)) return;
+      event.preventDefault();
+      searchInputRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const messageEndRef = useRef<HTMLDivElement>(null);
@@ -90,11 +181,14 @@ export default function Sidebar({
     ? Boolean(aiModel.trim())
     : aiProvider === 'groq' ? Boolean(groqKey) : Boolean(openaiKey && openaiKey !== 'mock-key');
  
-  // Fetch settings on load
+  // Fetch settings on load, retrying until the backend answers.
   useEffect(() => {
+    let cancelled = false;
+    let retryTimer: number | undefined;
     const fetchSettings = async () => {
       try {
         const res = await axios.get(`${BACKEND_URL}/api/settings`);
+        if (cancelled) return;
         setBackendOnline(true);
         const provider = ['openai', 'groq', 'ollama'].includes(res.data.ai_provider)
           ? res.data.ai_provider as 'openai' | 'groq' | 'ollama' : 'openai';
@@ -102,87 +196,65 @@ export default function Sidebar({
         setTempAiProvider(provider);
         setAiModel(res.data.ai_model || '');
         setTempAiModel(res.data.ai_model || '');
-        const groqConfigured = res.data.api_keys?.groq || (res.data.credential_presence?.groq ? '********' : '');
-        setGroqKey(groqConfigured);
-        setTempGroqKey(groqConfigured);
-        if (res.data.api_keys?.openai) {
-          setOpenaiKey(res.data.api_keys.openai);
-          setTempKey(res.data.api_keys.openai);
-        } else if (res.data.credential_presence?.openai) {
-          setOpenaiKey('********');
-          setTempKey('********');
-        }
-        if (res.data.api_keys?.binance_key) {
-          setBinanceKey(res.data.api_keys.binance_key);
-          setTempBinanceKey(res.data.api_keys.binance_key);
-        }
-        if (res.data.api_keys?.binance_secret) {
-          setBinanceSecret(res.data.api_keys.binance_secret);
-          setTempBinanceSecret(res.data.api_keys.binance_secret);
-        }
-        const testnetEnabled = ['1', 'true', 'yes', 'on'].includes(
-          String(res.data.api_keys?.binance_testnet || '').trim().toLowerCase()
-        );
+        setAiVisionModel(res.data.ai_vision_model || '');
+        setTempAiVisionModel(res.data.ai_vision_model || '');
+        // Saved keys live in the OS credential store and the backend only reports
+        // whether each one is present. Show a present key as the mask so saving
+        // keeps it; an empty field means "remove this key".
+        const storedKey = (key: string): string =>
+          res.data.api_keys?.[key] || (res.data.credential_presence?.[key] ? '********' : '');
+        setGroqKey(storedKey('groq'));
+        setTempGroqKey(storedKey('groq'));
+        setOpenaiKey(storedKey('openai'));
+        setTempKey(storedKey('openai'));
+        setBinanceKey(storedKey('binance_key'));
+        setTempBinanceKey(storedKey('binance_key'));
+        setBinanceSecret(storedKey('binance_secret'));
+        setTempBinanceSecret(storedKey('binance_secret'));
+        const testnetEnabled = res.data.binance_environment === 'testnet';
         setBinanceTestnetEnabled(testnetEnabled);
         setTempBinanceTestnetEnabled(testnetEnabled);
-        if (res.data.api_keys?.binance_testnet_key) {
-          setBinanceTestnetKey(res.data.api_keys.binance_testnet_key);
-          setTempBinanceTestnetKey(res.data.api_keys.binance_testnet_key);
-        }
-        if (res.data.api_keys?.binance_testnet_secret) {
-          setBinanceTestnetSecret(res.data.api_keys.binance_testnet_secret);
-          setTempBinanceTestnetSecret(res.data.api_keys.binance_testnet_secret);
-        }
-        if (res.data.api_keys?.bitget_key) {
-          setBitgetKey(res.data.api_keys.bitget_key);
-          setTempBitgetKey(res.data.api_keys.bitget_key);
-        }
-        if (res.data.api_keys?.bitget_secret) {
-          setBitgetSecret(res.data.api_keys.bitget_secret);
-          setTempBitgetSecret(res.data.api_keys.bitget_secret);
-        }
-        if (res.data.api_keys?.bitget_passphrase) {
-          setBitgetPassphrase(res.data.api_keys.bitget_passphrase);
-          setTempBitgetPassphrase(res.data.api_keys.bitget_passphrase);
-        }
-        const bitgetDemoEnabled = ['1', 'true', 'yes', 'on'].includes(
-          String(res.data.api_keys?.bitget_demo || '').trim().toLowerCase()
-        );
+        setBinanceTestnetKey(storedKey('binance_testnet_key'));
+        setTempBinanceTestnetKey(storedKey('binance_testnet_key'));
+        setBinanceTestnetSecret(storedKey('binance_testnet_secret'));
+        setTempBinanceTestnetSecret(storedKey('binance_testnet_secret'));
+        setBitgetKey(storedKey('bitget_key'));
+        setTempBitgetKey(storedKey('bitget_key'));
+        setBitgetSecret(storedKey('bitget_secret'));
+        setTempBitgetSecret(storedKey('bitget_secret'));
+        setBitgetPassphrase(storedKey('bitget_passphrase'));
+        setTempBitgetPassphrase(storedKey('bitget_passphrase'));
+        const bitgetDemoEnabled = res.data.bitget_environment === 'demo';
         setBitgetDemoEnabled(bitgetDemoEnabled);
         setTempBitgetDemoEnabled(bitgetDemoEnabled);
-        if (res.data.api_keys?.bitget_demo_key) {
-          setBitgetDemoKey(res.data.api_keys.bitget_demo_key);
-          setTempBitgetDemoKey(res.data.api_keys.bitget_demo_key);
-        }
-        if (res.data.api_keys?.bitget_demo_secret) {
-          setBitgetDemoSecret(res.data.api_keys.bitget_demo_secret);
-          setTempBitgetDemoSecret(res.data.api_keys.bitget_demo_secret);
-        }
-        if (res.data.api_keys?.bitget_demo_passphrase) {
-          setBitgetDemoPassphrase(res.data.api_keys.bitget_demo_passphrase);
-          setTempBitgetDemoPassphrase(res.data.api_keys.bitget_demo_passphrase);
-        }
-        if (res.data.api_keys?.alpaca_key) {
-          setAlpacaKey(res.data.api_keys.alpaca_key);
-          setTempAlpacaKey(res.data.api_keys.alpaca_key);
-        }
-        if (res.data.api_keys?.alpaca_secret) {
-          setAlpacaSecret(res.data.api_keys.alpaca_secret);
-          setTempAlpacaSecret(res.data.api_keys.alpaca_secret);
-        }
-        if (res.data.api_keys?.alpaca_paper_key) {
-          setAlpacaPaperKey(res.data.api_keys.alpaca_paper_key);
-          setTempAlpacaPaperKey(res.data.api_keys.alpaca_paper_key);
-        }
-        if (res.data.api_keys?.alpaca_paper_secret) {
-          setAlpacaPaperSecret(res.data.api_keys.alpaca_paper_secret);
-          setTempAlpacaPaperSecret(res.data.api_keys.alpaca_paper_secret);
-        }
+        const accountType = res.data.bitget_account_type === 'unified' ? 'unified' : 'classic';
+        setBitgetAccountType(accountType);
+        setTempBitgetAccountType(accountType);
+        setBitgetDemoKey(storedKey('bitget_demo_key'));
+        setTempBitgetDemoKey(storedKey('bitget_demo_key'));
+        setBitgetDemoSecret(storedKey('bitget_demo_secret'));
+        setTempBitgetDemoSecret(storedKey('bitget_demo_secret'));
+        setBitgetDemoPassphrase(storedKey('bitget_demo_passphrase'));
+        setTempBitgetDemoPassphrase(storedKey('bitget_demo_passphrase'));
+        setAlpacaKey(storedKey('alpaca_key'));
+        setTempAlpacaKey(storedKey('alpaca_key'));
+        setAlpacaSecret(storedKey('alpaca_secret'));
+        setTempAlpacaSecret(storedKey('alpaca_secret'));
+        setAlpacaPaperKey(storedKey('alpaca_paper_key'));
+        setTempAlpacaPaperKey(storedKey('alpaca_paper_key'));
+        setAlpacaPaperSecret(storedKey('alpaca_paper_secret'));
+        setTempAlpacaPaperSecret(storedKey('alpaca_paper_secret'));
       } catch {
+        if (cancelled) return;
         setBackendOnline(false);
+        retryTimer = window.setTimeout(() => void fetchSettings(), SETTINGS_RETRY_MS);
       }
     };
-    fetchSettings();
+    void fetchSettings();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(retryTimer);
+    };
   }, []);
 
   const saveSettings = async () => {
@@ -190,18 +262,20 @@ export default function Sidebar({
       await axios.post(`${BACKEND_URL}/api/settings`, {
         ai_provider: tempAiProvider,
         ai_model: tempAiModel,
+        ai_vision_model: tempAiVisionModel,
+        binance_environment: tempBinanceTestnetEnabled ? 'testnet' : 'live',
+        bitget_environment: tempBitgetDemoEnabled ? 'demo' : 'live',
+        bitget_account_type: tempBitgetAccountType,
         api_keys: {
           openai: tempKey,
           groq: tempGroqKey,
           binance_key: tempBinanceKey,
           binance_secret: tempBinanceSecret,
-          binance_testnet: tempBinanceTestnetEnabled ? 'true' : 'false',
           binance_testnet_key: tempBinanceTestnetKey,
           binance_testnet_secret: tempBinanceTestnetSecret,
           bitget_key: tempBitgetKey,
           bitget_secret: tempBitgetSecret,
           bitget_passphrase: tempBitgetPassphrase,
-          bitget_demo: tempBitgetDemoEnabled ? 'true' : 'false',
           bitget_demo_key: tempBitgetDemoKey,
           bitget_demo_secret: tempBitgetDemoSecret,
           bitget_demo_passphrase: tempBitgetDemoPassphrase,
@@ -215,6 +289,7 @@ export default function Sidebar({
       setGroqKey(tempGroqKey);
       setAiProvider(tempAiProvider);
       setAiModel(tempAiModel);
+      setAiVisionModel(tempAiVisionModel);
       setBinanceKey(tempBinanceKey);
       setBinanceSecret(tempBinanceSecret);
       setBinanceTestnetEnabled(tempBinanceTestnetEnabled);
@@ -224,6 +299,7 @@ export default function Sidebar({
       setBitgetSecret(tempBitgetSecret);
       setBitgetPassphrase(tempBitgetPassphrase);
       setBitgetDemoEnabled(tempBitgetDemoEnabled);
+      setBitgetAccountType(tempBitgetAccountType);
       setBitgetDemoKey(tempBitgetDemoKey);
       setBitgetDemoSecret(tempBitgetDemoSecret);
       setBitgetDemoPassphrase(tempBitgetDemoPassphrase);
@@ -241,18 +317,73 @@ export default function Sidebar({
         timestamp: new Date().toLocaleTimeString(),
       };
       setMessages(prev => [...prev, successMsg]);
-    } catch {
-      alert("Failed to save settings. Ensure the backend is running.");
+    } catch (err) {
+      // Only blame the connection when the backend could not be reached; when it
+      // answered, show its reason (e.g. a rejected value or credential store error).
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined;
+      if (axios.isAxiosError(err) && !err.response) {
+        alert('Failed to save settings: the backend could not be reached. Make sure it is running.');
+      } else {
+        alert(`Failed to save settings: ${typeof detail === 'string' ? detail : 'the backend rejected the request.'}`);
+      }
     }
   };
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, chatExpanded]);
+
+  // Reload the saved conversation so the chat survives a page reload. Waits
+  // until the backend is reachable, so a slow backend start still loads it.
+  useEffect(() => {
+    if (!backendOnline) return;
+    let cancelled = false;
+    axios.get(`${BACKEND_URL}/api/chat/history`, { params: { conversation_id: conversationId, limit: HISTORY_LIMIT } })
+      .then((res) => {
+        const stored = (res.data?.messages ?? []) as StoredChatMessage[];
+        if (!cancelled && stored.length > 0) setMessages([welcomeMessage(), ...fromStoredMessages(stored)]);
+      })
+      .catch(() => { /* Backend offline: start with an empty conversation. */ });
+    return () => { cancelled = true; };
+  }, [conversationId, backendOnline]);
+
+  useEffect(() => {
+    if (!chatExpanded) return;
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') setChatExpanded(false); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [chatExpanded]);
+
+  const copyTranscript = async () => {
+    // The HTML converter is loaded on demand, only when copying or saving.
+    const { transcriptToHtml } = await import('../lib/chatDocument');
+    if (await copyRich(transcriptToHtml(messages), toMarkdownTranscript(messages))) {
+      setTranscriptCopied(true);
+      window.setTimeout(() => setTranscriptCopied(false), 1_500);
+    }
+  };
+
+  const exportTranscript = () => downloadTextFile(transcriptFilename(), toMarkdownTranscript(messages));
+  // Word opens this HTML-based .doc directly, tables and formatting included.
+  const exportWord = async () => {
+    const { transcriptToHtml, wordDocument } = await import('../lib/chatDocument');
+    downloadTextFile(transcriptFilename(new Date(), 'doc'), wordDocument(transcriptToHtml(messages)), 'application/msword');
+  };
+
+  // Starts a fresh conversation. The previous one stays saved; the AI's
+  // long-term memory is not cleared.
+  const startNewConversation = () => {
+    if (isLoading) return;
+    const id = `chat-${Date.now()}`;
+    storeConversationId(id);
+    setConversationId(id);
+    setMessages([welcomeMessage()]);
+  };
 
   const sendMessage = async (query: string) => {
-    if (!query.trim() || isLoading) return;
+    const images = attachments.map((attachment) => attachment.dataUrl);
+    if ((!query.trim() && images.length === 0) || isLoading) return;
     if (!aiConfigured) {
       setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant',
         text: 'Choose and configure an AI provider in Settings before using chat. Backtesting and local graph export do not need an AI provider.',
@@ -264,16 +395,21 @@ export default function Sidebar({
       id: Date.now().toString(),
       role: 'user',
       text: query,
+      images: images.length > 0 ? images : undefined,
       timestamp: new Date().toLocaleTimeString(),
     };
     setMessages(prev => [...prev, userMessage]);
     setInput('');
+    setAttachments([]);
+    setAttachError('');
     setIsLoading(true);
 
     try {
       const res = await axios.post(`${BACKEND_URL}/api/chat`, {
-        query,
-        conversation_id: 'main_session',
+        query: [query, attachmentCaptionText(attachments)].filter(Boolean).join('\n\n'),
+        images,
+        conversation_id: conversationId,
+        context: (shareContext && getChatContext?.()) || undefined,
       }, {
         timeout: 180000 // 180s timeout for model downloads/API calls
       });
@@ -312,27 +448,263 @@ export default function Sidebar({
 
   };
 
+  // Images picked with the paperclip, or pasted (e.g. a screenshot with Ctrl+V).
+  const addImageFiles = async (files: File[]) => {
+    const room = MAX_ATTACHMENTS - attachments.length;
+    if (files.length === 0) return;
+    if (room <= 0) {
+      setAttachError(`You can attach up to ${MAX_ATTACHMENTS} images per message.`);
+      return;
+    }
+    const prepared: ImageAttachment[] = [];
+    const problems: string[] = [];
+    let skipped = 0;
+    for (const file of files) {
+      const slots = room - prepared.length;
+      if (slots <= 0) {
+        skipped += 1;
+        continue;
+      }
+      try {
+        if (file.type.startsWith('video/')) {
+          // A video is sent as still frames, using the remaining slots.
+          prepared.push(...await prepareVideoFrames(file, slots));
+        } else {
+          prepared.push(await prepareImageAttachment(file));
+        }
+      } catch (error) {
+        problems.push(error instanceof Error ? error.message : `${file.name}: could not be attached.`);
+      }
+    }
+    if (skipped > 0) problems.push(`Only ${MAX_ATTACHMENTS} images can be attached per message.`);
+    setAttachments((current) => [...current, ...prepared].slice(0, MAX_ATTACHMENTS));
+    setAttachError(problems.join(' '));
+  };
+
+  const handlePaste = (event: React.ClipboardEvent<HTMLInputElement>) => {
+    const images = Array.from(event.clipboardData?.files ?? []).filter((file) => file.type.startsWith('image/') || file.type.startsWith('video/'));
+    if (images.length === 0) return;
+    event.preventDefault();
+    void addImageFiles(images);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') sendMessage(input);
   };
 
   const handleSearch = async () => {
     if (!searchQuery.trim() || isSearching) return;
+    setSearchError('');
+    const ticker = normalizeSymbol(searchQuery);
+    if (!ticker) {
+      setSearchError('Use a ticker like AAPL or a pair like SOL-USD.');
+      return;
+    }
+    if (watchlist.includes(ticker)) {
+      onSymbolChange(ticker);
+      setSearchQuery('');
+      return;
+    }
+    if (watchlist.length >= MAX_WATCHLIST) {
+      setSearchError(`The watchlist holds up to ${MAX_WATCHLIST} symbols. Remove one first.`);
+      return;
+    }
     setIsSearching(true);
     try {
-      const ticker = searchQuery.toUpperCase();
-      // Simple validation or just add it
-      if (!watchlist.includes(ticker)) {
-        setWatchlist(prev => [...prev, ticker]);
-      }
+      // Only add symbols the data provider actually knows.
+      const quote = parseQuote((await axios.get(`${BACKEND_URL}${quotePath(ticker)}`)).data);
+      if (!quote) throw new Error('no quote');
+      setQuotes((current) => ({ ...current, [ticker]: quote }));
+      setWatchlist((prev) => (prev.includes(ticker) ? prev : [...prev, ticker]));
       onSymbolChange(ticker);
       setSearchQuery('');
     } catch {
-      alert("Symbol not found or data error.");
+      // The provider answers both an unknown symbol and a busy moment with no
+      // data, so don't claim the symbol doesn't exist.
+      setSearchError(`Couldn't load market data for ${ticker}. Check the symbol, or try again in a moment.`);
     } finally {
       setIsSearching(false);
     }
   };
+
+  const removeFromWatchlist = (symbol: string) => {
+    setWatchlist((prev) => prev.filter((item) => item !== symbol));
+  };
+
+  useEffect(() => { storeWatchlist(watchlist); }, [watchlist]);
+
+  // Refresh every watchlist quote while the backend is up and the tab is visible.
+  useEffect(() => {
+    if (!backendOnline) return;
+    let cancelled = false;
+    const refresh = async () => {
+      if (document.visibilityState === 'hidden') return;
+      // One request at a time: a burst of parallel requests is what makes
+      // Yahoo return empty answers.
+      for (const symbol of watchlist) {
+        if (cancelled) return;
+        let quote: Quote | null = null;
+        try {
+          quote = parseQuote((await axios.get(`${BACKEND_URL}${quotePath(symbol)}`)).data);
+        } catch {
+          quote = null;
+        }
+        if (cancelled) return;
+        // A failed refresh keeps the last good quote rather than blanking it.
+        setQuotes((current) => ({ ...current, [symbol]: quote ?? current[symbol] ?? null }));
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, QUOTE_REFRESH_MS);
+    const onVisible = () => { if (document.visibilityState === 'visible') void refresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [backendOnline, watchlist]);
+
+  // Docked in the sidebar, or expanded into a large overlay (Esc closes). The
+  // expanded overlay is rendered into <body> so it always sits above the chart.
+  const chatPanel = (
+    <div
+      className={chatExpanded ? 'fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4' : 'flex-1 min-h-0 flex flex-col'}
+      onClick={chatExpanded ? (event) => { if (event.target === event.currentTarget) setChatExpanded(false); } : undefined}
+    >
+      <div
+        role={chatExpanded ? 'dialog' : undefined}
+        aria-label={chatExpanded ? 'Astral AI chat' : undefined}
+        className={chatExpanded
+          ? 'w-[min(1100px,96vw)] h-[92vh] flex flex-col bg-[#111115] border border-[#2a2a35] rounded-xl shadow-2xl overflow-hidden'
+          : 'flex-1 min-h-0 flex flex-col'}
+      >
+        <div className="flex items-center gap-0.5 px-3 py-1.5 border-b border-[#2a2a35] text-[10px] text-gray-400 flex-shrink-0">
+          <span className="mr-auto font-semibold uppercase tracking-widest text-gray-500">Chat</span>
+          <label
+            title="Send the symbol, price, indicator values and latest backtest on your screen with each message, so the AI can see what you see. They go to your chosen AI provider."
+            className="flex items-center gap-1 px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white cursor-pointer"
+          >
+            <input type="checkbox" checked={shareContext} onChange={(event) => setShareContext(event.target.checked)} className="accent-[#a55eea]" />
+            Share chart
+          </label>
+          <button type="button" onClick={startNewConversation} disabled={isLoading} title="Start a new conversation (the current one stays saved)" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors disabled:opacity-40">New</button>
+          <button type="button" onClick={() => void copyTranscript()} title="Copy the whole conversation (pastes formatted into Word or Docs)" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors">{transcriptCopied ? 'Copied' : 'Copy all'}</button>
+          <button type="button" onClick={exportTranscript} title="Save the conversation as a Markdown file" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors">.md</button>
+          <button type="button" onClick={() => void exportWord()} title="Save the conversation as a Word document" className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors">Word</button>
+          <button
+            type="button"
+            onClick={() => setChatExpanded((expanded) => !expanded)}
+            title={chatExpanded ? 'Close the expanded view (Esc)' : 'Expand the chat'}
+            aria-label={chatExpanded ? 'Close expanded chat' : 'Expand chat'}
+            className="px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white transition-colors text-[#a55eea]"
+          >
+            {chatExpanded ? '✕ Close' : '⤢ Expand'}
+          </button>
+        </div>
+
+        {/* Messages */}
+        <div className={`flex-1 overflow-y-auto space-y-3 ${chatExpanded ? 'p-6' : 'p-3'}`}>
+          {messages.map((msg) => <ChatMessage key={msg.id} message={msg} />)}
+
+          {/* Typing indicator */}
+          {isLoading && (
+            <div className="flex justify-start">
+              <div className="bg-[#1c1c26] border border-[#2a2a35] rounded-xl rounded-bl-sm px-4 py-3">
+                <div className="flex gap-1.5 items-center">
+                  {[0, 1, 2].map(i => (
+                    <div key={i} className="w-1.5 h-1.5 bg-[#a55eea] rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }}></div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={messageEndRef} />
+        </div>
+
+        {/* Quick Suggestions */}
+        {messages.length < 2 && !isLoading && (
+          <div className="px-3 pb-2 space-y-1.5 flex-shrink-0">
+            {SUGGESTIONS.map((s) => (
+              <button
+                key={s}
+                onClick={() => sendMessage(s)}
+                className="w-full text-left text-xs text-gray-400 px-3 py-2 rounded-lg border border-[#2a2a35] bg-[#1a1a22] hover:border-[#a55eea] hover:text-[#a55eea] transition-all"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Input */}
+        <div className="p-3 border-t border-[#2a2a35] bg-[#0d0d12] flex-shrink-0">
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-2" data-testid="attachment-previews">
+              {attachments.map((attachment) => (
+                <div key={attachment.id} className="relative">
+                  <img src={attachment.dataUrl} alt={attachment.name} className="w-14 h-14 object-cover rounded-md border border-[#2a2a35]" />
+                  <button
+                    type="button"
+                    onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
+                    aria-label={`Remove ${attachment.name}`}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[#2a2a35] text-[9px] text-white hover:bg-red-500"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {attachError && <p role="alert" className="text-[10px] text-amber-400 mb-2">{attachError}</p>}
+          <div className="relative flex items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={[...ACCEPTED_IMAGE_TYPES, ...ACCEPTED_VIDEO_TYPES].join(',')}
+              multiple
+              hidden
+              data-testid="image-file-input"
+              onChange={(e) => {
+                void addImageFiles(Array.from(e.target.files ?? []));
+                e.target.value = '';
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isLoading || attachments.length >= MAX_ATTACHMENTS}
+              title="Attach images or a video (or paste a screenshot)"
+              aria-label="Attach images"
+              className="w-9 h-9 rounded-lg border border-[#2a2a35] text-gray-400 flex items-center justify-center hover:text-white hover:border-[#a55eea] transition-colors disabled:opacity-40 flex-shrink-0"
+            >
+              📎
+            </button>
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              disabled={isLoading}
+              placeholder={aiConfigured ? "Ask AI to analyze..." : "Configure an AI provider in Settings ⚙️"}
+              className="flex-1 bg-[#1c1c24] text-sm text-white rounded-lg border border-[#2a2a35] focus:border-[#a55eea] focus:ring-1 focus:ring-[#a55eea] outline-none py-2.5 pl-3 pr-3 transition-all disabled:opacity-50"
+            />
+            <button
+              onClick={() => sendMessage(input)}
+              disabled={isLoading || (!input.trim() && attachments.length === 0) || !aiConfigured}
+              className="w-9 h-9 rounded-lg bg-[#a55eea] flex items-center justify-center text-white hover:bg-[#b87ef7] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="m22 2-7 20-4-9-9-4Z"/>
+                <path d="M22 2 11 13"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="w-80 h-full bg-[#111115] border-r border-[#2a2a35] flex flex-col shadow-2xl z-20 relative">
@@ -350,9 +722,10 @@ export default function Sidebar({
             </div>
             
             <div className="space-y-4 text-xs overflow-y-auto pr-2 min-h-0">
+              <ConnectionStatus />
               <div>
                 <label className="block text-gray-400 mb-1.5 font-medium">AI Provider</label>
-                <select value={tempAiProvider} onChange={(e) => { setTempAiProvider(e.target.value as 'openai' | 'groq' | 'ollama'); setTempAiModel(''); }}
+                <select value={tempAiProvider} onChange={(e) => { setTempAiProvider(e.target.value as 'openai' | 'groq' | 'ollama'); setTempAiModel(''); setTempAiVisionModel(''); }}
                   className="w-full bg-[#0a0a0c] border border-[#2a2a35] rounded-lg py-2 px-3 text-white">
                   <option value="openai">OpenAI (API key)</option>
                   <option value="groq">Groq (hosted, free tier subject to limits)</option>
@@ -365,6 +738,15 @@ export default function Sidebar({
                   placeholder={tempAiProvider === 'openai' ? 'gpt-4.1-mini (default)' : tempAiProvider === 'groq' ? 'openai/gpt-oss-20b (default)' : 'Enter a model installed with ollama pull'}
                   className="w-full bg-[#0a0a0c] border border-[#2a2a35] rounded-lg py-2 px-3 text-white" />
                 <p className="text-[10px] text-gray-500 mt-2">Ollama must be running on this computer at 127.0.0.1:11434. Local speed and memory needs depend on the model and computer.</p>
+              </div>
+              <div>
+                <label className="block text-gray-400 mb-1.5 font-medium">Vision model (for images)</label>
+                <input value={tempAiVisionModel} onChange={(e) => setTempAiVisionModel(e.target.value)}
+                  placeholder={tempAiProvider === 'openai' ? 'Uses the chat model (reads images)' : tempAiProvider === 'groq' ? 'An image-capable Groq model' : 'An image-capable local model'}
+                  className="w-full bg-[#0a0a0c] border border-[#2a2a35] rounded-lg py-2 px-3 text-white" />
+                <p className="text-[10px] text-gray-500 mt-2">
+                  Needed to attach images to the chat. OpenAI&apos;s chat models already read images. For Groq, pick a model listed with vision/image input in Groq&apos;s console; for Ollama, pull an image-capable model.
+                </p>
               </div>
               {tempAiProvider === 'groq' && <div>
                 <label className="block text-gray-400 mb-1.5 font-medium">Groq API Key</label>
@@ -481,6 +863,21 @@ export default function Sidebar({
                     />
                     <p className="text-[10px] text-gray-500 mt-2 leading-relaxed">
                       Add Bitget credentials to enable broker-backed crypto execution. A passphrase is required for Bitget API access.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-gray-400 mb-1.5 font-medium">Bitget account type</label>
+                    <select
+                      value={tempBitgetAccountType}
+                      onChange={(e) => setTempBitgetAccountType(e.target.value === 'unified' ? 'unified' : 'classic')}
+                      className="w-full bg-[#0a0a0c] border border-[#2a2a35] rounded-lg py-2 px-3 text-white"
+                    >
+                      <option value="unified">Unified account (UTA)</option>
+                      <option value="classic">Classic account</option>
+                    </select>
+                    <p className="text-[10px] text-gray-500 mt-2 leading-relaxed">
+                      Bitget shows &quot;Unified account&quot; under Assets when yours is unified. Unified accounts can place orders in demo trading only; with real money they stay read-only (balances, positions and open orders) until unified-account trading has been verified in demo.
                     </p>
                   </div>
 
@@ -616,6 +1013,7 @@ export default function Sidebar({
                setTempGroqKey(groqKey);
                setTempAiProvider(aiProvider);
                setTempAiModel(aiModel);
+               setTempAiVisionModel(aiVisionModel);
                setTempBinanceKey(binanceKey);
                setTempBinanceSecret(binanceSecret);
                setTempBinanceTestnetEnabled(binanceTestnetEnabled);
@@ -625,6 +1023,7 @@ export default function Sidebar({
                setTempBitgetSecret(bitgetSecret);
                setTempBitgetPassphrase(bitgetPassphrase);
                setTempBitgetDemoEnabled(bitgetDemoEnabled);
+               setTempBitgetAccountType(bitgetAccountType);
                setTempBitgetDemoKey(bitgetDemoKey);
                setTempBitgetDemoSecret(bitgetDemoSecret);
                setTempBitgetDemoPassphrase(bitgetDemoPassphrase);
@@ -687,11 +1086,12 @@ export default function Sidebar({
         
         <div className="px-3 pb-3">
           <div className="relative group">
-            <input 
+            <input
+              ref={searchInputRef}
               type="text"
               placeholder="Search ticker (e.g. GOOG, SOL-USD)..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => { setSearchQuery(e.target.value); setSearchError(''); }}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               className="w-full bg-[#0a0a0c] border border-[#2a2a35] rounded-lg py-1.5 pl-8 pr-3 text-[10px] text-white focus:border-[#a55eea] outline-none transition-all"
             />
@@ -699,102 +1099,72 @@ export default function Sidebar({
               {isSearching ? <div className="w-3 h-3 border border-[#a55eea] border-t-transparent rounded-full animate-spin"></div> : "🔍"}
             </span>
           </div>
+          {searchError && <p role="alert" className="mt-1 text-[10px] text-red-400">{searchError}</p>}
         </div>
 
         <div className="flex flex-wrap gap-1 px-3 pb-3 max-h-32 overflow-y-auto custom-scrollbar">
-          {watchlist.map((symbol) => (
-            <button
-              key={symbol}
-              onClick={() => onSymbolChange(symbol)}
-              className={`px-2.5 py-1 text-[10px] font-bold rounded-md border transition-all ${
-                currentSymbol === symbol 
-                  ? 'bg-[#a55eea]/10 border-[#a55eea] text-[#a55eea]' 
-                  : 'bg-[#1c1c24] border-[#2a2a35] text-gray-400 hover:border-gray-500'
-              }`}
-            >
-              {symbol}
-            </button>
-          ))}
+          {watchlist.length === 0 && (
+            <p className="text-[10px] text-gray-600">Search for a ticker to add it to the watchlist.</p>
+          )}
+          {watchlist.map((symbol) => {
+            const quote = quotes[symbol];
+            const change = quote?.changePct ?? null;
+            return (
+              <div
+                key={symbol}
+                className={`group/chip flex items-center rounded-md border transition-all ${
+                  currentSymbol === symbol
+                    ? 'bg-[#a55eea]/10 border-[#a55eea] text-[#a55eea]'
+                    : 'bg-[#1c1c24] border-[#2a2a35] text-gray-400 hover:border-gray-500'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => onSymbolChange(symbol)}
+                  title={quote === null ? 'No quote available' : undefined}
+                  className="pl-2.5 pr-1 py-1 text-[10px] font-bold flex items-center gap-1.5"
+                >
+                  <span>{symbol}</span>
+                  {quote && (
+                    <span className="font-mono font-normal text-gray-300">
+                      {quote.price.toLocaleString(undefined, { maximumFractionDigits: quote.price < 1 ? 6 : 2 })}
+                    </span>
+                  )}
+                  {change !== null && (
+                    <span data-testid={`change-${symbol}`} className={`font-mono font-normal ${change > 0 ? 'text-green-500' : change < 0 ? 'text-red-500' : 'text-gray-500'}`}>
+                      {formatChange(change)}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeFromWatchlist(symbol)}
+                  aria-label={`Remove ${symbol} from watchlist`}
+                  className="pr-1.5 text-[10px] text-gray-600 opacity-0 group-hover/chip:opacity-100 focus:opacity-100 hover:text-red-400"
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
-        {messages.map((msg) => (
-          <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[90%] rounded-xl px-3 py-2 text-sm leading-relaxed shadow-md ${
-              msg.role === 'user' 
-                ? 'bg-[#a55eea] text-white rounded-br-sm'
-                : 'bg-[#1c1c26] text-gray-200 border border-[#2a2a35] rounded-bl-sm'
-            }`}>
-              {msg.role === 'assistant' && (
-                <div className="flex items-center gap-1.5 mb-1.5">
-                  <div className="w-3.5 h-3.5 rounded-full bg-[#a55eea] flex items-center justify-center">
-                    <span className="text-[7px] text-white font-bold">A</span>
-                  </div>
-                  <span className="text-[10px] text-[#a55eea] font-semibold">Astral AI</span>
-                </div>
-              )}
-              <span className="whitespace-pre-wrap">{msg.text}</span>
-              <div className={`text-[9px] mt-1 ${msg.role === 'user' ? 'text-purple-200' : 'text-gray-500'}`}>{msg.timestamp}</div>
-            </div>
-          </div>
-        ))}
+      <details className="border-b border-[#2a2a35] flex-shrink-0 group/alerts">
+        <summary className="px-4 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-widest cursor-pointer select-none hover:text-gray-300">
+          Price alerts
+        </summary>
+        <AlertsPanel currentSymbol={currentSymbol} backendOnline={backendOnline} />
+      </details>
 
-        {/* Typing indicator */}
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-[#1c1c26] border border-[#2a2a35] rounded-xl rounded-bl-sm px-4 py-3">
-              <div className="flex gap-1.5 items-center">
-                {[0, 1, 2].map(i => (
-                  <div key={i} className="w-1.5 h-1.5 bg-[#a55eea] rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }}></div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-        <div ref={messageEndRef} />
-      </div>
-
-      {/* Quick Suggestions */}
-      {messages.length < 2 && !isLoading && (
-        <div className="px-3 pb-2 space-y-1.5 flex-shrink-0">
-          {SUGGESTIONS.map((s) => (
-            <button
-              key={s}
-              onClick={() => sendMessage(s)}
-              className="w-full text-left text-xs text-gray-400 px-3 py-2 rounded-lg border border-[#2a2a35] bg-[#1a1a22] hover:border-[#a55eea] hover:text-[#a55eea] transition-all"
-            >
-              {s}
-            </button>
-          ))}
+      {chatExpanded && (
+        <div className="flex-1 flex flex-col items-center justify-center gap-2 p-4 text-center text-xs text-gray-500">
+          The chat is open in the expanded view.
+          <button type="button" onClick={() => setChatExpanded(false)} className="text-[#a55eea] hover:underline">Dock it here</button>
         </div>
       )}
 
-      {/* Input */}
-      <div className="p-3 border-t border-[#2a2a35] bg-[#0d0d12] flex-shrink-0">
-        <div className="relative flex items-center gap-2">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isLoading}
-            placeholder={aiConfigured ? "Ask AI to analyze..." : "Configure an AI provider in Settings ⚙️"}
-            className="flex-1 bg-[#1c1c24] text-sm text-white rounded-lg border border-[#2a2a35] focus:border-[#a55eea] focus:ring-1 focus:ring-[#a55eea] outline-none py-2.5 pl-3 pr-3 transition-all disabled:opacity-50"
-          />
-          <button
-            onClick={() => sendMessage(input)}
-            disabled={isLoading || !input.trim() || !aiConfigured}
-            className="w-9 h-9 rounded-lg bg-[#a55eea] flex items-center justify-center text-white hover:bg-[#b87ef7] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="m22 2-7 20-4-9-9-4Z"/>
-              <path d="M22 2 11 13"/>
-            </svg>
-          </button>
-        </div>
-      </div>
+      {chatExpanded ? createPortal(chatPanel, document.body) : chatPanel}
     </div>
   );
 }
