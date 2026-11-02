@@ -183,7 +183,7 @@ These are decided when their phase starts, not before:
 | Phase 1: saved watchlist with quotes, honest sentiment badge, saved preferences, keyboard shortcuts, inline errors | Done |
 | AI chat, strategy generation, summaries (3 providers) | Done |
 | Phase 2: chat sees the symbol, price, indicators and latest backtest | Done, including the simulated paper position and builder node settings; not yet exercised with a real provider. Memory controls and proposal cards not started |
-| Phase 3: price alerts with desktop notifications | Alerts done, checked only while the app is open. Session journal done. Running-strategy dashboard not started |
+| Phase 3: price alerts with desktop notifications | Alerts done, checked only while the app is open. Session journal done. Trading session panel done (one session at a time; shows state, arm and stop). Disarm control awaits an owner decision |
 | Phase 4: settings audit log, user guide | Done. npm audit clean after the Electron 45 upgrade. Threat model, Electron content security policy and permission limits, code signing not done |
 | Broker sandbox readiness | In progress (V5); needs test keys from the owner |
 | Everything else in this roadmap | Not started |

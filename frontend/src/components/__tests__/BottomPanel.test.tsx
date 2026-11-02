@@ -155,6 +155,37 @@ describe('BottomPanel Component', () => {
     expect(await screen.findByText('Could not load the session journal: database is locked')).toBeTruthy();
   });
 
+  it('arms the kill switch from the session panel, and shows unknown when status fails', async () => {
+    let status: () => Promise<unknown> = () => Promise.resolve({
+      data: { is_active: false, logs: [], config: null, autonomy_kill_switch: false },
+    });
+    vi.mocked(axios.get).mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.endsWith('/api/trading/status')) return status() as never;
+      if (path.includes('/api/trading/history')) return Promise.resolve({ data: [] });
+      if (path.includes('/api/trading/account/')) {
+        return Promise.resolve({ data: { broker_id: 'paper', configured: true, can_trade: true, balances: [], warnings: [] } });
+      }
+      return Promise.resolve({ data: { items: [], logs: [] } });
+    });
+    const post = vi.mocked(axios.post);
+    post.mockClear();
+    post.mockResolvedValue({ data: { status: 'success' } });
+    const { unmount } = render(<BottomPanel {...dummyProps} />);
+    expect(await screen.findByText('KILL SWITCH DISARMED')).toBeTruthy();
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Arm kill switch' })); });
+
+    expect(post).toHaveBeenCalledWith(expect.stringContaining('/api/settings'), { autonomy_kill_switch: true });
+    expect(screen.getByTestId('kill-switch-state')).toHaveTextContent('KILL SWITCH ARMED');
+    unmount();
+
+    status = () => Promise.reject(new Error('offline'));
+    render(<BottomPanel {...dummyProps} />);
+    expect(await screen.findByText('KILL SWITCH UNKNOWN')).toBeTruthy();
+    post.mockImplementation(() => Promise.resolve({ data: {} }));
+  });
+
   it('optimizes the default ranges within the backend limit of 1,000 combinations', async () => {
     const post = vi.mocked(axios.post);
     post.mockClear();

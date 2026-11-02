@@ -982,11 +982,19 @@ async def toggle_trading(status: TradingStatus):
 
 @router.get("/api/trading/status")
 def get_status():
+    # None means unreadable, which the app shows as unknown. A missing setting reads
+    # as armed, matching how the order path treats it.
+    try:
+        kill_switch_armed = bool((get_settings() or {}).get("autonomy_kill_switch", True))
+    except Exception as exc:
+        print(f"WARNING: Could not read the kill switch state: {type(exc).__name__}")
+        kill_switch_armed = None
     return {
         "is_active": trading_manager.is_running,
         "config": trading_manager.config,
         "logs": trading_manager.logs,
         "recovery_verified": trading_manager.recovery_verified,
+        "autonomy_kill_switch": kill_switch_armed,
     }
 
 @router.get("/api/trading/journal")

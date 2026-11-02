@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ComponentProps } from 'react';
 import AccountOverview from './AccountOverview';
+import TradingSessionPanel from './TradingSessionPanel';
 import type { AccountSummary } from '../lib/accountSummary';
 import axios from 'axios';
 
@@ -243,6 +244,10 @@ export default function BottomPanel({
   const [isBacktesting, setIsBacktesting] = useState(false);
   const [backtestError, setBacktestError] = useState('');
   const [isLiveTrading, setIsLiveTrading] = useState(false);
+  const [sessionConfig, setSessionConfig] = useState<ComponentProps<typeof TradingSessionPanel>['config']>(null);
+  const [killSwitchArmed, setKillSwitchArmed] = useState<boolean | null | undefined>(undefined);
+  const [isArmingKillSwitch, setIsArmingKillSwitch] = useState(false);
+  const [sessionError, setSessionError] = useState('');
   const [tradingLogs, setTradingLogs] = useState<string[]>([]);
   const [tradeHistory, setTradeHistory] = useState<TradeRecord[]>([]);
   const [isRefreshingTradeHistory, setIsRefreshingTradeHistory] = useState(false);
@@ -348,6 +353,8 @@ export default function BottomPanel({
       const res = await axios.get(`${BACKEND_URL}/api/trading/status`);
       setIsLiveTrading(res.data.is_active);
       setTradingLogs(res.data.logs);
+      setSessionConfig(res.data.config ?? null);
+      setKillSwitchArmed(typeof res.data.autonomy_kill_switch === 'boolean' ? res.data.autonomy_kill_switch : null);
       // Mirror the broker and mode only while the trading loop is running. When
       // it is stopped its config is just the last one used, and applying it every
       // poll would reset the user's own Broker / Execution mode choice.
@@ -357,6 +364,22 @@ export default function BottomPanel({
       }
     } catch (err) {
       console.error('Failed to fetch trading status:', err);
+      // Never keep showing a last-known kill switch state that may be out of date.
+      setKillSwitchArmed(null);
+    }
+  };
+
+  const armKillSwitch = async () => {
+    if (isArmingKillSwitch) return;
+    setIsArmingKillSwitch(true);
+    setSessionError('');
+    try {
+      await axios.post(`${BACKEND_URL}/api/settings`, { autonomy_kill_switch: true });
+      setKillSwitchArmed(true);
+    } catch (err: unknown) {
+      setSessionError(`Could not arm the kill switch: ${apiErrorDetail(err, 'check the backend connection.')}`);
+    } finally {
+      setIsArmingKillSwitch(false);
     }
   };
 
@@ -1859,6 +1882,16 @@ export default function BottomPanel({
           </select>
         </label>
       </div>
+
+      <TradingSessionPanel
+        isRunning={isLiveTrading}
+        config={sessionConfig}
+        killSwitchArmed={killSwitchArmed}
+        isArming={isArmingKillSwitch}
+        error={sessionError}
+        onArm={() => void armKillSwitch()}
+        onStop={() => void toggleLiveTrading()}
+      />
 
       <AccountOverview
         summary={brokerAccountSummary}
