@@ -1,3 +1,6 @@
+import math
+import re
+
 from langchain_core.messages import HumanMessage, SystemMessage
 
 STRATEGY_SYSTEM_PROMPT = """You are Astral AI, an expert quantitative trading strategy developer.
@@ -11,6 +14,27 @@ Your code should:
 
 Output ONLY the Python code. No markdown fences.
 """
+
+# The settings a builder node can carry. Anything else in a request is ignored,
+# so only known names and plain values ever reach the prompt.
+_NODE_SETTING_NUMBERS = ("value", "fast", "slow", "signal", "period", "stopLoss", "takeProfit", "cooldown", "positionSize")
+_NODE_SETTING_WORDS = ("indicator", "side", "operator")
+
+
+def _format_node_settings(settings) -> str:
+    if not isinstance(settings, dict):
+        return ""
+    parts = []
+    for key in _NODE_SETTING_WORDS:
+        value = settings.get(key)
+        if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_<>=!+-]{1,20}", value):
+            parts.append(f"{key}={value}")
+    for key in _NODE_SETTING_NUMBERS:
+        value = settings.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+            parts.append(f"{key}={value}")
+    return f" [{', '.join(parts)}]" if parts else ""
+
 
 class StrategyGenerator:
     def __init__(self, llm):
@@ -35,13 +59,14 @@ class StrategyGenerator:
             
         flow_description = "The user has built a strategy visually with the following nodes:\n"
         for idx, node in enumerate(nodes):
-            flow_description += f"- Node {idx} ({node.get('id')}): {node.get('type')}\n"
+            settings = _format_node_settings(node.get('settings'))
+            flow_description += f"- Node {idx} ({node.get('id')}): {node.get('type')}{settings}\n"
             
         flow_description += "\nConnections between logic:\n"
         for edge in edges:
             flow_description += f"- Source node {edge.get('source')} -> Target node {edge.get('target')}\n"
             
-        flow_description += "\nPlease write a Pandas trading strategy that implements this exact visual flow. Return only the python code block."
+        flow_description += "\nPlease write a Pandas trading strategy that implements this exact visual flow, using exactly the settings listed for each node. Return only the python code block."
         
         messages = [
             SystemMessage(content=STRATEGY_SYSTEM_PROMPT),

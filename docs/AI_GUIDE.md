@@ -159,7 +159,7 @@ stay stored securely and are not sent anywhere.
 |---|---|
 | Chat | Your message, a few recent messages and related past conversations for context, and (with **Share chart** on) the symbol, timeframe, price, indicator values and latest backtest summary |
 | Generate strategy | Your strategy description |
-| AI export | The node types and connections in your graph |
+| AI export | The node types, their settings and the connections in your graph |
 | Strategy summary | The strategy code and the symbol |
 | Backtest summary | The backtest results and the symbol |
 | News sentiment | Up to five recent headlines for the symbol |
@@ -254,7 +254,6 @@ These are built into the project and are not negotiable:
 
 | Limitation | Effect | Planned fix |
 |---|---|---|
-| AI export sends only the graph's shape | Indicator periods and thresholds you set in the builder are guessed | Include each node's settings in the export |
 | Sentiment uses only five headlines | A thin sample; easily skewed | Use more sources and show the headlines used |
 | Only three providers | Other OpenAI-compatible services need a code change | Add a "custom provider" option if wanted |
 
