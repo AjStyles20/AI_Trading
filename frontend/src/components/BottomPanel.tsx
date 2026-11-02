@@ -186,6 +186,13 @@ const normalizeTags = (tags: string[]): string[] => {
 
 const TRADING_REFRESH_MS = 5_000;
 
+type JournalEntry = {
+  id: number;
+  created_at: string;
+  session_id: string | null;
+  message: string;
+};
+
 type AuditEvent = {
   id: number;
   created_at: string;
@@ -281,6 +288,8 @@ export default function BottomPanel({
   const [workspaceError, setWorkspaceError] = useState('');
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [auditError, setAuditError] = useState('');
+  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
+  const [journalError, setJournalError] = useState('');
 
   // Loaded when the Terminal Logs tab opens; settings change rarely.
   useEffect(() => {
@@ -294,6 +303,15 @@ export default function BottomPanel({
       })
       .catch((err: unknown) => {
         if (!cancelled) setAuditError(`Could not load settings history: ${apiErrorDetail(err, 'check the backend connection.')}`);
+      });
+    axios.get(`${BACKEND_URL}/api/trading/journal`, { params: { limit: 200 } })
+      .then((res) => {
+        if (cancelled) return;
+        setJournalEntries(Array.isArray(res.data?.items) ? res.data.items : []);
+        setJournalError('');
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setJournalError(`Could not load the session journal: ${apiErrorDetail(err, 'check the backend connection.')}`);
       });
     return () => { cancelled = true; };
   }, [activeTab]);
@@ -2826,12 +2844,24 @@ export default function BottomPanel({
               <div className="text-gray-600 italic">Waiting for logs... Start Live Paper Trading to see activity.</div>
             )}
             <div className="pt-3 mt-3 border-t border-[#2a2a35]">
+              <div className="text-gray-500 uppercase tracking-widest mb-1">Session journal</div>
+              {journalError && <div role="alert" className="text-red-400">{journalError}</div>}
+              {!journalError && journalEntries.length === 0 && <div className="text-gray-600 italic">Nothing recorded yet. Entries appear when the trading loop runs, and are kept across restarts.</div>}
+              <div className="max-h-48 overflow-y-auto space-y-1">
+                {journalEntries.map((entry) => (
+                  <div key={entry.id} data-testid="journal-entry" title={entry.session_id ? `Session started ${entry.session_id} UTC` : undefined} className="text-gray-400">
+                    <span className="text-gray-600">{entry.created_at} UTC</span> {entry.message}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="pt-3 mt-3 border-t border-[#2a2a35]">
               <div className="text-gray-500 uppercase tracking-widest mb-1">Settings history</div>
               {auditError && <div role="alert" className="text-red-400">{auditError}</div>}
               {!auditError && auditEvents.length === 0 && <div className="text-gray-600 italic">No settings changes recorded yet.</div>}
               {auditEvents.map((event) => (
                 <div key={event.id} data-testid="audit-event" className="text-gray-400">
-                  <span className="text-gray-600">{event.created_at}</span> {describeAuditEvent(event)}
+                  <span className="text-gray-600">{event.created_at} UTC</span> {describeAuditEvent(event)}
                 </div>
               ))}
             </div>

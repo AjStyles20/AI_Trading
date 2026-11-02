@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
 import asyncio
@@ -16,7 +16,7 @@ from core.risk_engine import risk_engine
 from core.position_ledger import reconstruct_confirmed_position
 from core.position_protection import evaluate_position_protection
 from core.autonomy_readiness import evaluate_autonomous_readiness
-from database.sqlite_manager import record_trade, get_settings, get_trades, get_trades_for_scope, get_trade_by_id, get_strategy, update_trade_order_state, update_risk_equity_state
+from database.sqlite_manager import get_journal_entries, record_journal_entry, record_trade, get_settings, get_trades, get_trades_for_scope, get_trade_by_id, get_strategy, update_trade_order_state, update_risk_equity_state
 
 router = APIRouter()
 
@@ -92,6 +92,7 @@ class LiveTradingManager:
             "strategy_record": None
         }
         self.logs = []
+        self.session_id = None
         self.last_evaluated_candle = None
         self.cooldown_remaining = 0
         self.recovery_verified = False
@@ -102,8 +103,16 @@ class LiveTradingManager:
         self.logs.append(f"[{timestamp}] {message}")
         if len(self.logs) > 50:
             self.logs.pop(0)
+        # Best effort: the journal must never disturb the loop, including while it
+        # is reporting a problem with the database itself.
+        try:
+            record_journal_entry(self.session_id, message)
+        except Exception as exc:
+            print(f"WARNING: Failed to write the session journal: {type(exc).__name__}")
 
     async def run_loop(self):
+        import datetime
+        self.session_id = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         self.log(
             f"Starting {self.config['execution_mode']} trading loop for {self.config['symbol']} via {self.config['broker_id']}..."
         )
@@ -979,6 +988,11 @@ def get_status():
         "logs": trading_manager.logs,
         "recovery_verified": trading_manager.recovery_verified,
     }
+
+@router.get("/api/trading/journal")
+def get_journal(limit: int = Query(200, ge=1, le=1000)):
+    """What the trading loop did and why, across restarts. Read-only."""
+    return {"items": get_journal_entries(limit)}
 
 @router.get("/api/trading/history")
 def get_history():

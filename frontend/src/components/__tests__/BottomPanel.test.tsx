@@ -128,6 +128,33 @@ describe('BottomPanel Component', () => {
     );
   });
 
+  it('shows the session journal in the Terminal Logs tab, and says when it cannot load', async () => {
+    let journal: () => Promise<unknown> = () => Promise.resolve({ data: { items: [{
+      id: 1, created_at: '2026-11-02 10:00:00', session_id: '2026-11-02 09:59:00', message: 'SIGNAL: BUY',
+    }] } });
+    vi.mocked(axios.get).mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.endsWith('/api/trading/journal')) return journal() as never;
+      if (path.includes('/api/trading/history')) return Promise.resolve({ data: [] });
+      if (path.includes('/api/trading/account/')) {
+        return Promise.resolve({ data: { broker_id: 'paper', configured: true, can_trade: true, balances: [], warnings: [] } });
+      }
+      return Promise.resolve({ data: { items: [], logs: [] } });
+    });
+    const { unmount } = render(<BottomPanel {...dummyProps} />);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Terminal Logs' })); });
+
+    const entry = await screen.findByTestId('journal-entry');
+    expect(entry).toHaveTextContent('2026-11-02 10:00:00 UTC SIGNAL: BUY');
+    expect(entry).toHaveAttribute('title', 'Session started 2026-11-02 09:59:00 UTC');
+    unmount();
+
+    journal = () => Promise.reject({ isAxiosError: true, response: { data: { detail: 'database is locked' } } });
+    render(<BottomPanel {...dummyProps} />);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Terminal Logs' })); });
+    expect(await screen.findByText('Could not load the session journal: database is locked')).toBeTruthy();
+  });
+
   it('optimizes the default ranges within the backend limit of 1,000 combinations', async () => {
     const post = vi.mocked(axios.post);
     post.mockClear();

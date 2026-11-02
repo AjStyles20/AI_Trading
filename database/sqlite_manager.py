@@ -203,6 +203,16 @@ def init_db():
     )
     ''')
 
+    # Session journal: what the trading loop did and why, kept across restarts.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS trading_journal (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        session_id TEXT,
+        message TEXT NOT NULL
+    )
+    ''')
+
     # Price alerts. Checked by the desktop app while it is open; a triggered
     # alert keeps its trigger price and time as a record.
     cursor.execute('''
@@ -1123,3 +1133,33 @@ def get_audit_events(limit: int = 100) -> list[dict]:
         {"id": row[0], "created_at": row[1], "category": row[2], "action": row[3], "details": json.loads(row[4] or "{}")}
         for row in rows
     ]
+
+
+JOURNAL_MAX_ROWS = 5000
+
+
+def record_journal_entry(session_id: str | None, message: str) -> None:
+    # A short timeout: the trading loop writes this and must not wait on a busy database.
+    conn = sqlite3.connect(DB_PATH, timeout=1)
+    try:
+        cursor = conn.execute(
+            "INSERT INTO trading_journal (session_id, message) VALUES (?, ?)",
+            (session_id, message),
+        )
+        conn.execute("DELETE FROM trading_journal WHERE id <= ?", (cursor.lastrowid - JOURNAL_MAX_ROWS,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_journal_entries(limit: int = 200) -> list[dict]:
+    """Most recent journal entries first."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute(
+            "SELECT id, created_at, session_id, message FROM trading_journal ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [{"id": row[0], "created_at": row[1], "session_id": row[2], "message": row[3]} for row in rows]

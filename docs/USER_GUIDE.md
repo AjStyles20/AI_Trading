@@ -95,6 +95,12 @@ labels the kind of money shown.
 limit changes with their old and new values. API keys are listed by name only;
 their values are never recorded.
 
+## Session journal
+
+**Terminal Logs** also keeps a journal of what the trading loop did and why, so
+it survives a restart. It holds the most recent 5,000 lines. Times in the journal
+and in Settings history are in UTC.
+
 ## Where your data lives
 
 Settings, strategies, trades, alerts and chat history are in a local SQLite
