@@ -11,6 +11,9 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from core.position_ledger import reconstruct_confirmed_position
+from database.sqlite_manager import get_trades_for_scope
+
 INDICATOR_LABELS = {
     "sma20": "SMA 20",
     "ema21": "EMA 21",
@@ -61,7 +64,38 @@ def _number(value: float) -> str:
     return f"{value:,.6g}" if abs(value) < 1 else f"{value:,.2f}"
 
 
-def format_workspace_context(context: Optional[WorkspaceContext]) -> str:
+def describe_paper_position(context: Optional[WorkspaceContext]) -> Optional[str]:
+    """One line about the simulated position in this symbol, from confirmed fills.
+
+    Paper only: real broker holdings are never sent to an AI provider. Inconsistent
+    history reads as unavailable, so the model is never told a position is flat
+    when that is not known.
+    """
+    if context is None:
+        return None
+    symbol = context.symbol.upper()
+    try:
+        position = reconstruct_confirmed_position(
+            get_trades_for_scope(symbol, "paper", "paper"),
+            symbol=symbol,
+            broker_id="paper",
+            execution_mode="paper",
+        )
+    except Exception as e:
+        print(f"WARNING: Could not read the paper position: {type(e).__name__}")
+        return "- Paper position (simulated money): unavailable"
+    if position.qty <= 0:
+        return "- Paper position (simulated money): none in this symbol"
+    line = (
+        f"- Paper position (simulated money): {position.qty:g} {symbol} "
+        f"at an average entry of {_number(position.average_entry_price)}"
+    )
+    if context.last_price is not None:
+        line += f", unrealized P&L {position.qty * (context.last_price - position.average_entry_price):+,.2f}"
+    return line
+
+
+def format_workspace_context(context: Optional[WorkspaceContext], paper_position: Optional[str] = None) -> str:
     """A short, plainly labelled block for the system prompt, or '' when absent."""
     if context is None:
         return ""
@@ -78,6 +112,8 @@ def format_workspace_context(context: Optional[WorkspaceContext]) -> str:
             f"{INDICATOR_LABELS[key]} {_number(value)}" for key, value in context.indicators.items()
         )
         lines.append(f"- Indicators on completed and current candles: {values}")
+    if paper_position:
+        lines.append(paper_position)
     if context.backtest is not None:
         bt = context.backtest
         scenario = " ".join(part for part in (bt.period, bt.interval) if part)

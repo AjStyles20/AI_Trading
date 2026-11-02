@@ -582,7 +582,7 @@ export default function Sidebar({
         <div className="flex items-center gap-0.5 px-3 py-1.5 border-b border-[#2a2a35] text-[10px] text-gray-400 flex-shrink-0">
           <span className="mr-auto font-semibold uppercase tracking-widest text-gray-500">Chat</span>
           <label
-            title="Send the symbol, price, indicator values and latest backtest on your screen with each message, so the AI can see what you see. They go to your chosen AI provider."
+            title="Send the symbol, price, indicator values, paper position and latest backtest with each message, so the AI can see what you see. They go to your chosen AI provider. Real account data is never included."
             className="flex items-center gap-1 px-2 py-1 rounded hover:bg-[#1c1c24] hover:text-white cursor-pointer"
           >
             <input type="checkbox" checked={shareContext} onChange={(event) => setShareContext(event.target.checked)} className="accent-[#a55eea]" />

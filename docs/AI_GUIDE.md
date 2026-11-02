@@ -33,7 +33,7 @@ use it safely. Pick whichever provider suits you; you can switch at any time in
   your chosen provider. With it off, the model receives only your text and
   answers from general knowledge, which can be out of date or wrong. See
   [Known limitations](#9-known-limitations-and-planned-improvements).
-- **It does not see your accounts.** No broker keys, balances or positions are
+- **It does not see your real accounts.** No broker keys, real balances or positions are
   sent to it.
 
 ---
@@ -157,14 +157,14 @@ stay stored securely and are not sent anywhere.
 
 | Action | Sent to the provider |
 |---|---|
-| Chat | Your message, a few recent messages and related past conversations for context, and (with **Share chart** on) the symbol, timeframe, price, indicator values and latest backtest summary |
+| Chat | Your message, a few recent messages and related past conversations for context, and (with **Share chart** on) the symbol, timeframe, price, indicator values, your simulated paper position in that symbol and latest backtest summary |
 | Generate strategy | Your strategy description |
 | AI export | The node types, their settings and the connections in your graph |
 | Strategy summary | The strategy code and the symbol |
 | Backtest summary | The backtest results and the symbol |
 | News sentiment | Up to five recent headlines for the symbol |
 
-**Never sent:** broker API keys, balances, positions, orders, or your trade
+**Never sent:** broker API keys, real account balances, positions or orders, or your trade
 history.
 
 **Stored on your computer:** chat history (in Astral's database) and a

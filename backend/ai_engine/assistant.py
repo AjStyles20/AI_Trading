@@ -4,7 +4,7 @@ from database.vector_manager import VectorMemoryManager
 from database.sqlite_manager import get_settings, record_chat_message, get_recent_chat_messages
 from core.credential_provider import resolve_api_keys
 from ai_engine.attachments import attachment_note
-from ai_engine.workspace_context import WorkspaceContext, format_workspace_context
+from ai_engine.workspace_context import WorkspaceContext, describe_paper_position, format_workspace_context
 import os
 
 
@@ -14,7 +14,7 @@ Act as a collaborative partner: ask a clarifying question when a request is vagu
 
 What you can and cannot do:
 - You cannot place, change or cancel trades. Astral's trading engine and its risk checks do that, only when the user chooses.
-- You only see market data when a "Current workspace" section appears below: a snapshot of the symbol, price, indicators and latest backtest on the user's screen. Use only those figures. Without that section you cannot see live prices, chart data or account data. Never invent current prices, levels or "what the market is doing right now"; say plainly what you cannot see and point the user to the chart in the app.
+- You only see market data when a "Current workspace" section appears below: a snapshot of the symbol, price, indicators, simulated paper position and latest backtest on the user's screen. Use only those figures. Without that section you cannot see live prices, chart data or account data. Never invent current prices, levels or "what the market is doing right now"; say plainly what you cannot see and point the user to the chart in the app.
 
 Strategies in Astral:
 - Astral runs strategies itself. Never write VectorBT, Backtrader, Zipline, or code that downloads data (yfinance, ccxt, requests); it cannot run inside Astral.
@@ -143,7 +143,8 @@ class AstralAIAssistant:
             history_str = f"\nRecent Conversation:\n{formatted}"
 
         # 2. Build the prompt
-        system_prompt = build_chat_system_prompt(context_str, history_str, format_workspace_context(workspace))
+        workspace_str = format_workspace_context(workspace, describe_paper_position(workspace))
+        system_prompt = build_chat_system_prompt(context_str, history_str, workspace_str)
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=(

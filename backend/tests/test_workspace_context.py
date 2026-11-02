@@ -91,3 +91,52 @@ def test_chat_endpoint_without_snapshot_still_works_and_rejects_bad_ones(monkeyp
     assert seen["workspace"] is None
     bad = {**SNAPSHOT, "indicators": {"unknown": 1.0}}
     assert client.post("/api/chat", json={"query": "hi", "context": bad}).status_code == 422
+
+
+def _fill(side, qty, price, trade_id, **overrides):
+    return {
+        "id": trade_id, "symbol": "BTC/USDT", "side": side, "qty": qty, "requested_qty": qty,
+        "filled_qty": qty, "filled_price": price, "broker_id": "paper", "execution_mode": "paper",
+        "timestamp": f"2026-10-30 10:00:0{trade_id}", "is_test": False, "metadata": {}, **overrides,
+    }
+
+
+def _paper_line(monkeypatch, trades):
+    import ai_engine.workspace_context as module
+
+    scopes = []
+
+    def fake_trades(symbol, broker_id, execution_mode):
+        scopes.append((symbol, broker_id, execution_mode))
+        return trades
+
+    monkeypatch.setattr(module, "get_trades_for_scope", fake_trades)
+    context = WorkspaceContext.model_validate({**SNAPSHOT, "last_price": 110.0})
+    return module.describe_paper_position(context), scopes, context
+
+
+def test_paper_position_comes_from_confirmed_paper_fills_only(monkeypatch):
+    line, scopes, context = _paper_line(monkeypatch, [_fill("BUY", 2.0, 100.0, 1), _fill("SELL", 0.5, 105.0, 2)])
+
+    assert scopes == [("BTC/USDT", "paper", "paper")]
+    assert "simulated money" in line
+    assert "1.5 BTC/USDT at an average entry of 100.00, unrealized P&L +15.00" in line
+    assert line in format_workspace_context(context, line)
+
+
+def test_no_fills_reads_as_no_paper_position(monkeypatch):
+    line, _, _ = _paper_line(monkeypatch, [])
+    assert line == "- Paper position (simulated money): none in this symbol"
+
+
+def test_inconsistent_history_is_unavailable_not_flat(monkeypatch):
+    # Selling more than was bought is rejected by the ledger.
+    line, _, _ = _paper_line(monkeypatch, [_fill("SELL", 1.0, 100.0, 1)])
+    assert line == "- Paper position (simulated money): unavailable"
+
+
+def test_no_snapshot_means_no_position_lookup(monkeypatch):
+    import ai_engine.workspace_context as module
+
+    monkeypatch.setattr(module, "get_trades_for_scope", lambda *args: pytest.fail("must not read trades"))
+    assert module.describe_paper_position(None) is None

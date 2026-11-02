@@ -71,9 +71,9 @@ Results include warnings about weak evidence, so read them.
 ## AI chat
 
 With a provider configured, the chat can see what is on your screen. **Share
-chart** in the chat header sends the symbol, timeframe, price, indicator values
-and latest backtest summary with each message. That data goes to the provider
-you chose. Turn the switch off to stop sending it.
+chart** in the chat header sends the symbol, timeframe, price, indicator values, your
+simulated paper position and latest backtest summary with each message. That data goes to the provider
+you chose. Real account data is never included. Turn the switch off to stop sending it.
 
 The AI can explain and suggest. It cannot place, change or cancel orders.
 
