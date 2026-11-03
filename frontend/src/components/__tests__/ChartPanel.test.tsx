@@ -863,3 +863,28 @@ describe('ChartPanel snapshot for the AI', () => {
     expect(typeof snapshot.indicators).toBe('object');
   });
 });
+
+describe('ChartPanel symbol names', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    charts.length = 0;
+    post.mockReset();
+    post.mockResolvedValue({ data: candles(3945) });
+    setVisibility('visible');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows gold futures as Gold, keeping the ticker beside it', async () => {
+    render(<ChartPanel symbol="GC=F" />);
+    await flush();
+
+    const heading = screen.getByRole('heading', { level: 2 });
+    expect(heading).toHaveTextContent('GoldGC=F');
+    expect(heading).toHaveAttribute('title', 'Gold futures (COMEX, GC=F), US dollars per troy ounce');
+    // Futures are not a crypto pair, so the backend serves them.
+    expect(post).toHaveBeenCalledWith(expect.stringContaining('/api/market/history'), expect.objectContaining({ symbol: 'GC=F', asset_type: 'stock' }));
+  });
+});

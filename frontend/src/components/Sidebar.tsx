@@ -33,6 +33,8 @@ import {
   readWatchlist,
   storeWatchlist,
   type Quote,
+  displayName,
+  symbolDescription,
 } from '../lib/watchlist';
 
 import { isShortcutEvent } from '../lib/shortcuts';
@@ -1121,10 +1123,10 @@ export default function Sidebar({
                 <button
                   type="button"
                   onClick={() => onSymbolChange(symbol)}
-                  title={quote === null ? 'No quote available' : undefined}
+                  title={[symbolDescription(symbol), quote === null ? 'No quote available' : undefined].filter(Boolean).join(' · ') || undefined}
                   className="pl-2.5 pr-1 py-1 text-[10px] font-bold flex items-center gap-1.5"
                 >
-                  <span>{symbol}</span>
+                  <span>{displayName(symbol)}</span>
                   {quote && (
                     <span className="font-mono font-normal text-gray-300">
                       {quote.price.toLocaleString(undefined, { maximumFractionDigits: quote.price < 1 ? 6 : 2 })}

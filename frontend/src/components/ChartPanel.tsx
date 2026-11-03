@@ -10,6 +10,7 @@ import { formatPrice, get24hChange, getPriceDirection, type PriceDirection } fro
 import { booleanFlags, oneOf, PREF_KEYS, readPreference, storePreference } from '../lib/preferences';
 import { INDICATOR_KEYS, isShortcutEvent, TIMEFRAME_KEYS } from '../lib/shortcuts';
 import { latestIndicators, type ChartSnapshot } from '../lib/workspaceContext';
+import { displayName, symbolDescription } from '../lib/watchlist';
 import {
   binanceStreamUrl,
   fetchBinanceKlines,
@@ -679,7 +680,10 @@ export default function ChartPanel({
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-2" title={sourceTitle}>
             <div className={`w-2 h-2 rounded-full ${statusDot}`}></div>
-            <h2 className="text-lg font-bold text-white tracking-widest uppercase">{symbol}</h2>
+            <h2 className="text-lg font-bold text-white tracking-widest uppercase" title={symbolDescription(symbol)}>
+              {displayName(symbol)}
+              {displayName(symbol) !== symbol && <span className="ml-2 text-xs text-gray-500 normal-case tracking-normal">{symbol}</span>}
+            </h2>
             {latestPrice !== null && (
               <div className="flex items-baseline gap-2">
                 <span

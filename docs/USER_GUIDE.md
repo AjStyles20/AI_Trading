@@ -23,6 +23,12 @@ For AI setup see `AI_GUIDE.md`. For the safety rules see `SAFETY_BASELINE.md`.
   nothing for a moment, so if a real ticker fails, try again shortly.
 - Hover over a symbol and click **×** to remove it. Your list is remembered.
 
+**Gold** is in the watchlist as COMEX gold futures (`GC=F`), priced in US dollars
+per troy ounce. Yahoo's spot gold symbol returns no data, and `GOLD` is a mining
+company's stock, not the metal. Gold is treated like a stock: data comes from
+Yahoo through the backend, so prices can lag, and futures can differ slightly
+from spot gold.
+
 Watchlist prices come from Yahoo Finance. The crypto chart header streams from
 Binance, so the two can differ slightly.
 

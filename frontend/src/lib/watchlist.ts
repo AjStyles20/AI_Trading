@@ -1,8 +1,22 @@
 import type { AssetType } from '../components/BottomPanel';
 
 export const WATCHLIST_KEY = 'astral.watchlist';
-export const DEFAULT_WATCHLIST = ['BTC/USDT', 'ETH/USDT', 'AAPL', 'NVDA', 'TSLA', 'SOL-USD'];
+export const DEFAULT_WATCHLIST = ['BTC/USDT', 'ETH/USDT', 'AAPL', 'NVDA', 'TSLA', 'SOL-USD', 'GC=F'];
 export const MAX_WATCHLIST = 30;
+
+// Symbols added to the defaults after release. Each is added to an existing saved
+// watchlist once; if the user removes it, it stays removed.
+const ADDED_DEFAULTS = ['GC=F'];
+const ADDED_DEFAULTS_KEY = 'astral.watchlist.addedDefaults';
+
+// Readable names for symbols whose ticker says little. Gold is COMEX gold
+// futures: Yahoo's spot gold symbol (XAUUSD=X) returns no data.
+const SYMBOL_NAMES: Record<string, { name: string; description: string }> = {
+  'GC=F': { name: 'Gold', description: 'Gold futures (COMEX, GC=F), US dollars per troy ounce' },
+};
+
+export const displayName = (symbol: string): string => SYMBOL_NAMES[symbol]?.name ?? symbol;
+export const symbolDescription = (symbol: string): string | undefined => SYMBOL_NAMES[symbol]?.description;
 
 export type Quote = { price: number; changePct: number | null };
 
@@ -27,7 +41,13 @@ export const readWatchlist = (): string[] => {
     const symbols = stored
       .map((item) => (typeof item === 'string' ? normalizeSymbol(item) : null))
       .filter((item): item is string => item !== null);
-    return Array.from(new Set(symbols)).slice(0, MAX_WATCHLIST);
+    const offered = JSON.parse(window.localStorage.getItem(ADDED_DEFAULTS_KEY) ?? '[]');
+    const alreadyOffered = new Set(Array.isArray(offered) ? offered : []);
+    const toAdd = ADDED_DEFAULTS.filter((symbol) => !alreadyOffered.has(symbol));
+    if (toAdd.length > 0) {
+      window.localStorage.setItem(ADDED_DEFAULTS_KEY, JSON.stringify(ADDED_DEFAULTS));
+    }
+    return Array.from(new Set([...symbols, ...toAdd])).slice(0, MAX_WATCHLIST);
   } catch {
     return DEFAULT_WATCHLIST;
   }

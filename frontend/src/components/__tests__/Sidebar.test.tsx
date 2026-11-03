@@ -783,7 +783,11 @@ describe('Sidebar watchlist', () => {
       return Promise.resolve({ data: savedSettings });
     });
     Element.prototype.scrollIntoView = vi.fn();
-    store = new Map([['astral.watchlist', JSON.stringify(['BTC/USDT', 'AAPL'])]]);
+    store = new Map([
+      ['astral.watchlist', JSON.stringify(['BTC/USDT', 'AAPL'])],
+      // This user has already been offered the defaults added since release.
+      ['astral.watchlist.addedDefaults', JSON.stringify(['GC=F'])],
+    ]);
     Object.defineProperty(window, 'localStorage', {
       configurable: true,
       value: {
@@ -904,6 +908,25 @@ describe('Sidebar watchlist', () => {
     await send('And now?');
     expect(lastChatBody().context).toBeUndefined();
     expect(store.get('astral.chat.shareContext')).toBe('false');
+  });
+
+  it('adds Gold to an existing watchlist once, and a removal sticks', async () => {
+    store.delete('astral.watchlist.addedDefaults');
+    quotes['/api/market/quote/stock/GC%3DF'] = { price: 3945.4, change_pct: 0.4 };
+    const first = render(<Sidebar activeView="chart" onViewChange={vi.fn()} currentSymbol="BTC/USDT" onSymbolChange={vi.fn()} />);
+    await act(async () => {});
+    await act(async () => {});
+
+    const gold = screen.getByText('Gold');
+    expect(gold.closest('button')).toHaveAttribute('title', expect.stringContaining('Gold futures (COMEX, GC=F)'));
+    expect(screen.getByTestId('change-GC=F')).toHaveTextContent('+0.40%');
+    expect(JSON.parse(store.get('astral.watchlist')!)).toEqual(['BTC/USDT', 'AAPL', 'GC=F']);
+
+    fireEvent.click(screen.getByLabelText('Remove GC=F from watchlist'));
+    first.unmount();
+    await renderWatchlist();
+    expect(screen.queryByText('Gold')).toBeNull();
+    delete quotes['/api/market/quote/stock/GC%3DF'];
   });
 
   it('falls back to the default list when saved data is corrupt', async () => {
