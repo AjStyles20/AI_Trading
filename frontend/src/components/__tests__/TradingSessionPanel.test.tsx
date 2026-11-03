@@ -6,6 +6,7 @@ const config = { symbol: 'BTC/USDT', interval: '1h', broker_id: 'paper', executi
 
 const renderPanel = (overrides = {}) => {
   const onArm = vi.fn();
+  const onDisarm = vi.fn();
   const onStop = vi.fn();
   render(
     <TradingSessionPanel
@@ -13,24 +14,52 @@ const renderPanel = (overrides = {}) => {
       config={config}
       killSwitchArmed={true}
       isArming={false}
+      isDisarming={false}
       error=""
       onArm={onArm}
+      onDisarm={onDisarm}
       onStop={onStop}
       {...overrides}
     />,
   );
-  return { onArm, onStop };
+  return { onArm, onDisarm, onStop };
 };
 
+const disarmButton = () => screen.queryByRole('button', { name: 'Disarm for paper trading' });
+
 describe('TradingSessionPanel', () => {
-  it('never offers a way to disarm the kill switch', () => {
-    for (const killSwitchArmed of [true, false, null]) {
+  it('disarms only after DISARM is typed exactly, and Cancel backs out', () => {
+    const { onDisarm } = renderPanel();
+
+    fireEvent.click(disarmButton()!);
+    const box = screen.getByLabelText('Type DISARM to confirm');
+    const confirm = screen.getByRole('button', { name: 'Confirm disarm' });
+    expect(screen.getByText(/refused\s+while live trading is enabled/)).toBeInTheDocument();
+
+    for (const typed of ['', 'disarm', 'DISARM ', 'DISAR']) {
+      fireEvent.change(box, { target: { value: typed } });
+      expect(confirm).toBeDisabled();
+    }
+    fireEvent.change(box, { target: { value: 'DISARM' } });
+    expect(confirm).toBeEnabled();
+    fireEvent.click(confirm);
+    expect(onDisarm).toHaveBeenCalledWith('DISARM');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByLabelText('Type DISARM to confirm')).toBeNull();
+  });
+
+  it('offers disarm only when the switch is known to be armed and no live session runs', () => {
+    for (const killSwitchArmed of [false, null, undefined]) {
       const { unmount } = render(
-        <TradingSessionPanel isRunning config={config} killSwitchArmed={killSwitchArmed} isArming={false} error="" onArm={vi.fn()} onStop={vi.fn()} />,
+        <TradingSessionPanel isRunning={false} config={config} killSwitchArmed={killSwitchArmed} isArming={false}
+          isDisarming={false} error="" onArm={vi.fn()} onDisarm={vi.fn()} onStop={vi.fn()} />,
       );
-      expect(screen.queryByRole('button', { name: /disarm/i })).toBeNull();
+      expect(disarmButton()).toBeNull();
       unmount();
     }
+    renderPanel({ isRunning: true, config: { ...config, execution_mode: 'live' } });
+    expect(disarmButton()).toBeNull();
   });
 
   it('offers arming while disarmed and calls it with one click', () => {

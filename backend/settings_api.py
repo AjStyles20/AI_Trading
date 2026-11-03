@@ -94,6 +94,18 @@ def migrate_credentials():
 def save_settings(update: SettingsUpdate):
     try:
         before = get_public_settings() or {}
+        # The Trading session panel disarms for paper trading only. Live trading
+        # may only be turned on while the kill switch is, or is being, armed.
+        kill_switch_armed_after = (
+            update.autonomy_kill_switch
+            if update.autonomy_kill_switch is not None
+            else bool(before.get("autonomy_kill_switch", True))
+        )
+        if update.risk_live_trading_enabled and not kill_switch_armed_after:
+            raise HTTPException(
+                status_code=400,
+                detail="Arm the kill switch before enabling live trading.",
+            )
         secure_updates = update.api_keys or {}
         for key, value in secure_updates.items():
             if value != "********":

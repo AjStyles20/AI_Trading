@@ -85,7 +85,11 @@ labels the kind of money shown.
 - **Kill switch:** on by default. While armed, the trading loop only observes and
   creates no orders. The **Trading session** panel above the account shows its state
   and has **Arm kill switch**. If the state can't be read it says UNKNOWN; treat that
-  as a reason to check, not as safe. Disarming is not available in the panel.
+  as a reason to check, not as safe.
+- **Disarm for paper trading:** in the same panel, type `DISARM` to confirm. This is
+  refused while live trading is enabled or a live session is running, and live
+  trading cannot be enabled until you arm the kill switch again. Each disarm is
+  recorded in Settings history.
 - **Stop session:** the same panel shows what is running and can stop it.
 - **Risk limits:** order size, position size, daily loss and drawdown limits are
   checked before any order.

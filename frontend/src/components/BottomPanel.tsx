@@ -247,6 +247,7 @@ export default function BottomPanel({
   const [sessionConfig, setSessionConfig] = useState<ComponentProps<typeof TradingSessionPanel>['config']>(null);
   const [killSwitchArmed, setKillSwitchArmed] = useState<boolean | null | undefined>(undefined);
   const [isArmingKillSwitch, setIsArmingKillSwitch] = useState(false);
+  const [isDisarmingKillSwitch, setIsDisarmingKillSwitch] = useState(false);
   const [sessionError, setSessionError] = useState('');
   const [tradingLogs, setTradingLogs] = useState<string[]>([]);
   const [tradeHistory, setTradeHistory] = useState<TradeRecord[]>([]);
@@ -366,6 +367,21 @@ export default function BottomPanel({
       console.error('Failed to fetch trading status:', err);
       // Never keep showing a last-known kill switch state that may be out of date.
       setKillSwitchArmed(null);
+    }
+  };
+
+  const disarmKillSwitch = async (confirmation: string) => {
+    if (isDisarmingKillSwitch) return;
+    setIsDisarmingKillSwitch(true);
+    setSessionError('');
+    try {
+      // The backend re-checks the confirmation and allows paper trading only.
+      await axios.post(`${BACKEND_URL}/api/trading/kill-switch/disarm`, { confirmation });
+      setKillSwitchArmed(false);
+    } catch (err: unknown) {
+      setSessionError(`Could not disarm the kill switch: ${apiErrorDetail(err, 'check the backend connection.')}`);
+    } finally {
+      setIsDisarmingKillSwitch(false);
     }
   };
 
@@ -1888,8 +1904,10 @@ export default function BottomPanel({
         config={sessionConfig}
         killSwitchArmed={killSwitchArmed}
         isArming={isArmingKillSwitch}
+        isDisarming={isDisarmingKillSwitch}
         error={sessionError}
         onArm={() => void armKillSwitch()}
+        onDisarm={(confirmation) => void disarmKillSwitch(confirmation)}
         onStop={() => void toggleLiveTrading()}
       />
 

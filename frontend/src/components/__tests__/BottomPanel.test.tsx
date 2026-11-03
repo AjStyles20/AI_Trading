@@ -186,6 +186,38 @@ describe('BottomPanel Component', () => {
     post.mockImplementation(() => Promise.resolve({ data: {} }));
   });
 
+  it('sends a confirmed disarm to the backend and keeps it armed when refused', async () => {
+    vi.mocked(axios.get).mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.endsWith('/api/trading/status')) {
+        return Promise.resolve({ data: { is_active: false, logs: [], config: null, autonomy_kill_switch: true } });
+      }
+      if (path.includes('/api/trading/history')) return Promise.resolve({ data: [] });
+      if (path.includes('/api/trading/account/')) {
+        return Promise.resolve({ data: { broker_id: 'paper', configured: true, can_trade: true, balances: [], warnings: [] } });
+      }
+      return Promise.resolve({ data: { items: [], logs: [] } });
+    });
+    const post = vi.mocked(axios.post);
+    post.mockClear();
+    post.mockImplementation((url: string) =>
+      String(url).endsWith('/api/trading/kill-switch/disarm')
+        ? Promise.reject({ isAxiosError: true, response: { data: { detail: 'Live trading is enabled.' } } })
+        : Promise.resolve({ data: {} }),
+    );
+    render(<BottomPanel {...dummyProps} />);
+    expect(await screen.findByText('KILL SWITCH ARMED')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Disarm for paper trading' }));
+    fireEvent.change(screen.getByLabelText('Type DISARM to confirm'), { target: { value: 'DISARM' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Confirm disarm' })); });
+
+    expect(post).toHaveBeenCalledWith(expect.stringContaining('/api/trading/kill-switch/disarm'), { confirmation: 'DISARM' });
+    expect(screen.getByText('Could not disarm the kill switch: Live trading is enabled.')).toBeTruthy();
+    expect(screen.getByTestId('kill-switch-state')).toHaveTextContent('KILL SWITCH ARMED');
+    post.mockImplementation(() => Promise.resolve({ data: {} }));
+  });
+
   it('optimizes the default ranges within the backend limit of 1,000 combinations', async () => {
     const post = vi.mocked(axios.post);
     post.mockClear();
