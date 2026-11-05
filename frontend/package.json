@@ -1,7 +1,7 @@
 {
   "name": "frontend",
   "productName": "Astral AI Trading",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
