@@ -8,6 +8,10 @@ from `claude-work` before it is merged into `master` are marked **pre-release**.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-05
+
+Pre-release from `claude-work` (PR #13), not yet reviewed or merged into `master`.
+
 ### Mobile
 - Read-only phone access over Tailscale: a separate phone gateway that listens
   only on a Tailscale address, requires a per-phone token, and forwards only
