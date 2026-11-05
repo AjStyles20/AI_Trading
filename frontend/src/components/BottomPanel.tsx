@@ -1704,17 +1704,17 @@ export default function BottomPanel({
         </div>
       )}
 
-      <div className="flex items-center gap-2 pb-2 border-b border-[#2a2a35] flex-shrink-0">
+      <div className="flex flex-wrap items-center gap-2 pb-2 border-b border-[#2a2a35] flex-shrink-0">
         <input
           type="text"
           value={strategyPrompt}
           onChange={(e) => setStrategyPrompt(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && generateStrategy()}
           placeholder={isGenerating ? 'Generating...' : 'Describe your strategy (e.g. MACD + RSI oversold, Bollinger breakout)'}
-          className="flex-1 bg-[#1c1c24] text-xs text-white rounded-lg border border-[#2a2a35] focus:border-[#a55eea] focus:ring-1 focus:ring-[#a55eea] outline-none py-2 px-3 transition-all disabled:opacity-50"
+          className="flex-1 min-w-[12rem] bg-[#1c1c24] text-xs text-white rounded-lg border border-[#2a2a35] focus:border-[#a55eea] focus:ring-1 focus:ring-[#a55eea] outline-none py-2 px-3 transition-all disabled:opacity-50"
           disabled={isGenerating}
         />
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             onClick={generateStrategy}
             disabled={isGenerating || !strategyPrompt.trim()}
@@ -1920,12 +1920,12 @@ export default function BottomPanel({
         onRefresh={() => void fetchBrokerAccount()}
       />
 
-      <div className="flex items-center gap-1 border-b border-[#2a2a35] flex-shrink-0">
+      <div className="flex items-center gap-1 border-b border-[#2a2a35] flex-shrink-0 overflow-x-auto">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors ${
+            className={`shrink-0 whitespace-nowrap px-3 py-1.5 text-xs font-medium border-b-2 transition-colors ${
               activeTab === tab.id
                 ? 'border-[#a55eea] text-[#a55eea]'
                 : 'border-transparent text-gray-400 hover:text-gray-300'

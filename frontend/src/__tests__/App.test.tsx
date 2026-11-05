@@ -61,4 +61,25 @@ describe('App', () => {
     await act(async () => { fireEvent.keyDown(window, { key: 'Escape' }); });
     expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull();
   });
+
+  it('opens the sidebar as a drawer on phones and closes it after picking a symbol or pressing Escape', async () => {
+    render(<App />);
+    const drawer = screen.getByTestId('sidebar-drawer');
+    expect(drawer).toHaveAttribute('data-open', 'false');
+
+    fireEvent.click(screen.getByLabelText('Open watchlist, alerts and chat'));
+    expect(drawer).toHaveAttribute('data-open', 'true');
+    fireEvent.click(screen.getByText('pick AAPL'));
+    expect(drawer).toHaveAttribute('data-open', 'false');
+
+    fireEvent.click(screen.getByLabelText('Open watchlist, alerts and chat'));
+    await act(async () => { fireEvent.keyDown(window, { key: 'Escape' }); });
+    expect(drawer).toHaveAttribute('data-open', 'false');
+  });
+
+  it('shows a readable name in the phone header bar', () => {
+    store.set('astral.chart.symbol', JSON.stringify('GC=F'));
+    render(<App />);
+    expect(screen.getAllByText('Gold').length).toBeGreaterThan(0);
+  });
 });

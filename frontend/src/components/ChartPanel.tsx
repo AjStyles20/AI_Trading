@@ -735,7 +735,7 @@ export default function ChartPanel({
             ))}
           </div>
         </div>
-        <div className="flex gap-2 text-sm text-gray-400 items-center">
+        <div className="flex flex-wrap gap-2 text-sm text-gray-400 items-center">
           {sentiment && (sentiment.status === 'ok' && sentiment.score !== null ? (
             <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#2a2a35] bg-[#1c1c24] ${sentiment.score > 0 ? 'text-green-500 border-green-500/30' : sentiment.score < 0 ? 'text-red-500 border-red-500/30' : 'text-gray-400'}`} title="AI news sentiment">
               <span className="text-[10px] uppercase font-bold tracking-wider">{sentiment.label}</span>

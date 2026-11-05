@@ -8,6 +8,11 @@ from `claude-work` before it is merged into `master` are marked **pre-release**.
 
 ## [Unreleased]
 
+### Mobile
+- The layout works on phone-sized screens: below 768px the sidebar is a slide-in
+  drawer (☰), and the chart and panels use the full width. Desktop is unchanged.
+- `docs/MOBILE_ACCESS.md` proposes how a phone could reach the app safely; not built.
+
 ## [0.2.0] - 2026-11-05
 
 Pre-release from `claude-work` (PR #13), not yet reviewed or merged into `master`.

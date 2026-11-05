@@ -5,7 +5,7 @@ import BottomPanel from './components/BottomPanel';
 import StrategyBuilder from './components/StrategyBuilder';
 import type { AssetType, BacktestResults, BuilderGraph } from './components/BottomPanel';
 import type { StrategyBuilderGraph } from './components/StrategyBuilder';
-import { assetTypeFor, normalizeSymbol } from './lib/watchlist';
+import { assetTypeFor, displayName, normalizeSymbol } from './lib/watchlist';
 import { PREF_KEYS, readPreference, storePreference } from './lib/preferences';
 import { isShortcutEvent, SHORTCUTS } from './lib/shortcuts';
 import { buildWorkspaceContext, type ChartSnapshot } from './lib/workspaceContext';
@@ -29,6 +29,7 @@ function App() {
   const [symbol, setSymbol] = useState(() => readPreference(PREF_KEYS.symbol, (value) => (typeof value === 'string' ? normalizeSymbol(value) : null), 'BTC/USDT'));
   const [assetType, setAssetType] = useState<AssetType>(() => assetTypeFor(symbol));
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => { storePreference(PREF_KEYS.symbol, symbol); }, [symbol]);
 
@@ -36,6 +37,7 @@ function App() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setShowShortcuts(false);
+        setSidebarOpen(false);
         return;
       }
       if (event.key === '?' && isShortcutEvent(event)) {
@@ -84,16 +86,45 @@ function App() {
         </div>
       )}
       {/* Left Sidebar - AI Chat & Watchlist */}
-      <Sidebar 
-        activeView={activeView} 
-        onViewChange={setActiveView} 
-        currentSymbol={symbol}
-        onSymbolChange={handleSymbolChange}
-        getChatContext={getChatContext}
-      />
+      {/* On phones (below md) the sidebar is a drawer over the content, so the
+          chart gets the full width; from md up it is the usual fixed column. */}
+      {sidebarOpen && (
+        <div
+          aria-hidden="true"
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 z-30 bg-black/60 md:hidden"
+        />
+      )}
+      <div
+        data-testid="sidebar-drawer"
+        data-open={sidebarOpen}
+        className={`fixed inset-y-0 left-0 z-40 max-w-[85vw] transition-transform md:static md:z-auto md:max-w-none md:translate-x-0 ${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <Sidebar
+          activeView={activeView}
+          onViewChange={(view) => { setActiveView(view); setSidebarOpen(false); }}
+          currentSymbol={symbol}
+          onSymbolChange={(next) => { handleSymbolChange(next); setSidebarOpen(false); }}
+          getChatContext={getChatContext}
+        />
+      </div>
 
       {/* Main Content Area */}
-      <div className="flex flex-col flex-1 overflow-y-auto overscroll-contain scroll-smooth">
+      <div className="flex flex-col flex-1 min-w-0 overflow-y-auto overscroll-contain scroll-smooth">
+        <div className="md:hidden sticky top-0 z-20 flex items-center gap-3 px-3 py-2 bg-[#111115] border-b border-[#2a2a35]">
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Open watchlist, alerts and chat"
+            className="px-2 py-1 rounded border border-[#2a2a35] text-gray-200"
+          >
+            ☰
+          </button>
+          <span className="text-sm font-bold text-white tracking-widest">{displayName(symbol)}</span>
+          <span className="ml-auto text-[10px] text-gray-500 uppercase">{activeView === 'chart' ? 'Chart' : 'Builder'}</span>
+        </div>
         {/* Top/Center Panel - Charts & Indicators / Strategy Builder.
             shrink-0 with a definite height: as flex items of the scroll
             container, both panels would otherwise be squeezed to their minimum
