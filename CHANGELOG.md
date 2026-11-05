@@ -8,6 +8,10 @@ from `claude-work` before it is merged into `master` are marked **pre-release**.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-05
+
+Pre-release from `claude-work` (PR #13), not yet reviewed or merged into `master`.
+
 ### AI
 - Settings → **AI memory** shows the past exchanges the AI recalls, with **Forget**
   for one and a confirmed **Forget everything**. New memories are dated.

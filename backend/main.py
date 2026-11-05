@@ -35,7 +35,7 @@ from backup_api import router as backup_router
 app = FastAPI(
     title="Astral AI Backend",
     description="Backend API for the Astral AI Desktop Application",
-    version="0.2.0"
+    version="0.3.0"
 )
 
 # Ensure database is initialized on startup
