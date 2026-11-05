@@ -34,7 +34,7 @@ from alerts_api import router as alerts_router
 app = FastAPI(
     title="Astral AI Backend",
     description="Backend API for the Astral AI Desktop Application",
-    version="1.0.0"
+    version="0.2.0"
 )
 
 # Ensure database is initialized on startup
