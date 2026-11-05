@@ -6,6 +6,7 @@ import { BACKEND_URL } from '../lib/api';
 import ChatMessage from './ChatMessage';
 import ConnectionStatus from './ConnectionStatus';
 import AlertsPanel from './AlertsPanel';
+import BackupsSection from './BackupsSection';
 import {
   ACCEPTED_IMAGE_TYPES,
   ACCEPTED_VIDEO_TYPES,
@@ -983,8 +984,10 @@ export default function Sidebar({
                 </div>
               </div>
 
+              <BackupsSection />
+
               <div className="pt-2">
-                <button 
+                <button
                   onClick={saveSettings}
                   className="w-full bg-[#a55eea] hover:bg-[#b87ef7] text-white font-bold py-2.5 rounded-lg transition-all shadow-lg active:scale-[0.98]"
                 >

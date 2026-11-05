@@ -8,6 +8,10 @@ from `claude-work` before it is merged into `master` are marked **pre-release**.
 
 ## [Unreleased]
 
+### Backups
+- **Settings → Backups → Back up now** saves a consistent copy of the database on
+  this computer (newest 10 kept). The user guide explains how to restore one.
+
 ### Mobile
 - The layout works on phone-sized screens: below 768px the sidebar is a slide-in
   drawer (☰), and the chart and panels use the full width. Desktop is unchanged.

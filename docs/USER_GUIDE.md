@@ -114,6 +114,18 @@ their values are never recorded.
 it survives a restart. It holds the most recent 5,000 lines. Times in the journal
 and in Settings history are in UTC.
 
+## Backups
+
+**Settings → Backups → Back up now** saves a complete copy of the database
+(settings, strategies, trades, alerts, journal and chat history) in a `backups`
+folder next to it, shown in that panel. The newest 10 are kept. Backups never
+leave your computer; the GitHub repository is public, so data must not go there.
+API keys live in your system's credential store and are not in backups.
+
+To restore one: close Astral completely, rename the current `astral.db` (keep it
+as a fallback), copy the chosen backup next to it, rename the copy to `astral.db`,
+then start Astral.
+
 ## Where your data lives
 
 Settings, strategies, trades, alerts and chat history are in a local SQLite

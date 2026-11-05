@@ -1163,3 +1163,57 @@ def get_journal_entries(limit: int = 200) -> list[dict]:
     finally:
         conn.close()
     return [{"id": row[0], "created_at": row[1], "session_id": row[2], "message": row[3]} for row in rows]
+
+
+BACKUP_KEEP = 10
+
+
+def backup_dir() -> str:
+    """Backups live next to the database, on this computer only."""
+    return os.path.join(os.path.dirname(DB_PATH), "backups")
+
+
+def create_backup(keep: int | None = None) -> dict:
+    """Write a consistent snapshot of the database, then keep only the newest ones.
+
+    Uses SQLite's online backup, so the copy is complete even if the app is
+    writing at the same time. A plain file copy could capture a half-written page.
+    """
+    keep = BACKUP_KEEP if keep is None else keep
+    folder = backup_dir()
+    os.makedirs(folder, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    name = f"astral-{stamp}.db"
+    counter = 1
+    while os.path.exists(os.path.join(folder, name)):
+        counter += 1
+        name = f"astral-{stamp}-{counter}.db"
+    target = os.path.join(folder, name)
+    source = sqlite3.connect(DB_PATH)
+    destination = sqlite3.connect(target)
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
+    for old in list_backups()[keep:]:
+        os.remove(os.path.join(folder, old["name"]))
+    return next(item for item in list_backups() if item["name"] == name)
+
+
+def list_backups() -> list[dict]:
+    """Backups, newest first."""
+    folder = backup_dir()
+    if not os.path.isdir(folder):
+        return []
+    items = []
+    for name in os.listdir(folder):
+        if name.startswith("astral-") and name.endswith(".db"):
+            stat = os.stat(os.path.join(folder, name))
+            items.append({"name": name, "size_bytes": stat.st_size, "modified_ns": stat.st_mtime_ns})
+    # Nanosecond times order backups made within the same second; names would not
+    # ("astral-T-2.db" sorts before "astral-T.db").
+    items.sort(key=lambda item: item["modified_ns"], reverse=True)
+    for item in items:
+        item["created"] = datetime.fromtimestamp(item.pop("modified_ns") / 1e9).strftime("%Y-%m-%d %H:%M:%S")
+    return items
