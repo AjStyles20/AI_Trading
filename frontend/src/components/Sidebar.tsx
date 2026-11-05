@@ -7,6 +7,8 @@ import ChatMessage from './ChatMessage';
 import ConnectionStatus from './ConnectionStatus';
 import AlertsPanel from './AlertsPanel';
 import BackupsSection from './BackupsSection';
+import ProposalCards from './ProposalCards';
+import { extractProposals, type Proposal } from '../lib/aiProposals';
 import MemorySection from './MemorySection';
 import {
   ACCEPTED_IMAGE_TYPES,
@@ -35,6 +37,7 @@ import {
   readWatchlist,
   storeWatchlist,
   type Quote,
+  assetTypeFor,
   displayName,
   symbolDescription,
 } from '../lib/watchlist';
@@ -531,6 +534,34 @@ export default function Sidebar({
     }
   };
 
+  // Runs an AI suggestion the user approved. Only these three kinds exist, and
+  // none can touch orders.
+  const approveProposal = async (proposal: Proposal) => {
+    if (proposal.kind === 'open_chart') {
+      onSymbolChange(proposal.symbol);
+      return;
+    }
+    if (proposal.kind === 'add_watchlist') {
+      if (!watchlist.includes(proposal.symbol) && watchlist.length >= MAX_WATCHLIST) {
+        throw new Error(`The watchlist holds up to ${MAX_WATCHLIST} symbols. Remove one first.`);
+      }
+      setWatchlist((prev) => (prev.includes(proposal.symbol) ? prev : [...prev, proposal.symbol]));
+      return;
+    }
+    try {
+      await axios.post(`${BACKEND_URL}/api/alerts`, {
+        symbol: proposal.symbol,
+        asset_type: assetTypeFor(proposal.symbol),
+        direction: proposal.direction,
+        price: proposal.price,
+      });
+    } catch (err) {
+      const detail = axios.isAxiosError(err) && typeof err.response?.data?.detail === 'string'
+        ? err.response.data.detail : 'check the backend connection.';
+      throw new Error(`Could not add the alert: ${detail}`);
+    }
+  };
+
   const removeFromWatchlist = (symbol: string) => {
     setWatchlist((prev) => prev.filter((item) => item !== symbol));
   };
@@ -609,7 +640,19 @@ export default function Sidebar({
 
         {/* Messages */}
         <div className={`flex-1 overflow-y-auto space-y-3 ${chatExpanded ? 'p-6' : 'p-3'}`}>
-          {messages.map((msg) => <ChatMessage key={msg.id} message={msg} />)}
+          {messages.map((msg) => {
+            if (msg.role !== 'assistant') return <ChatMessage key={msg.id} message={msg} />;
+            const { text, proposals } = extractProposals(msg.text);
+            return (
+              <ChatMessage
+                key={msg.id}
+                message={{ ...msg, text }}
+                footer={proposals.length > 0
+                  ? <ProposalCards messageText={msg.text} proposals={proposals} onApprove={approveProposal} />
+                  : undefined}
+              />
+            );
+          })}
 
           {/* Typing indicator */}
           {isLoading && (

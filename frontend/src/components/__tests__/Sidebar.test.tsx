@@ -929,6 +929,47 @@ describe('Sidebar watchlist', () => {
     delete quotes['/api/market/quote/stock/GC%3DF'];
   });
 
+  it('turns AI suggestions into cards that act only when approved', async () => {
+    const configured = { ...savedSettings, ai_provider: 'groq', credential_presence: { groq: true } };
+    get.mockImplementation((url: string) => {
+      const path = String(url).replace(/^https?:\/\/[^/]+/, '');
+      if (path in quotes) return Promise.resolve({ data: quotes[path] });
+      if (path.startsWith('/api/market/quote/')) return Promise.reject(new Error('no quote'));
+      if (path.endsWith('/api/chat/history')) return Promise.resolve({ data: { messages: [] } });
+      if (path.endsWith('/api/alerts')) return Promise.resolve({ data: { items: [] } });
+      return Promise.resolve({ data: configured });
+    });
+    const reply = [
+      'Consider these.',
+      '',
+      '```astral-action',
+      '[{"kind":"add_watchlist","symbol":"MSFT"},{"kind":"price_alert","symbol":"AAPL","direction":"above","price":250}]',
+      '```',
+    ].join('\n');
+    post.mockImplementation((url: string) => Promise.resolve(
+      String(url).endsWith('/api/chat') ? { data: { response: reply, status: 'success' } } : { data: { id: 9 } },
+    ));
+    await renderWatchlist();
+    const box = screen.getByPlaceholderText('Ask AI to analyze...');
+    fireEvent.change(box, { target: { value: 'ideas?' } });
+    await act(async () => { fireEvent.keyDown(box, { key: 'Enter' }); });
+
+    expect(screen.getByText('Consider these.')).toBeInTheDocument();
+    expect(screen.queryByText(/astral-action/)).toBeNull();
+    expect(screen.getAllByTestId('proposal-card')).toHaveLength(2);
+    expect(screen.queryByText('MSFT')).toBeNull();
+    expect(post.mock.calls.some(([url]) => String(url).endsWith('/api/alerts'))).toBe(false);
+
+    const [addButton, alertButton] = screen.getAllByRole('button', { name: 'Approve' });
+    await act(async () => { fireEvent.click(addButton); });
+    expect(screen.getByText('MSFT')).toBeInTheDocument();
+
+    await act(async () => { fireEvent.click(alertButton); });
+    expect(post).toHaveBeenCalledWith(expect.stringContaining('/api/alerts'), {
+      symbol: 'AAPL', asset_type: 'stock', direction: 'above', price: 250,
+    });
+  });
+
   it('falls back to the default list when saved data is corrupt', async () => {
     store.set('astral.watchlist', '{not json');
     await renderWatchlist();

@@ -23,6 +23,15 @@ use it safely. Pick whichever provider suits you; you can switch at any time in
 | **Backtest summary** | Bottom panel | Explains return, drawdown, win rate, red flags, and one idea to test next | No |
 | **News sentiment** | Badge above the chart | Rates recent Yahoo Finance headlines as bullish, bearish or neutral | No score: the badge reads **Sentiment needs AI** |
 
+### Suggestions you approve
+
+A reply can include up to three **suggestion cards**: open a symbol on the chart, add
+it to the watchlist, or set a price alert. Nothing happens until you click
+**Approve**; **Dismiss** ignores it. A card you have handled stays handled after a
+reload. These are the only actions the AI can suggest, and none of them can place,
+change or cancel an order. Anything else the model writes in that format is
+ignored.
+
 ### What the AI does **not** do
 
 - **It does not trade.** It cannot submit, cancel or change orders. The trading

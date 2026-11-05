@@ -8,6 +8,11 @@ from `claude-work` before it is merged into `master` are marked **pre-release**.
 
 ## [Unreleased]
 
+### AI
+- AI replies can carry up to three suggestion cards (open chart, add to watchlist,
+  set a price alert) that act only when you click Approve. Nothing else is accepted,
+  and none can touch orders.
+
 ## [0.3.0] - 2026-11-05
 
 Pre-release from `claude-work` (PR #13), not yet reviewed or merged into `master`.

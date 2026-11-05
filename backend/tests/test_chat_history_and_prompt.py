@@ -76,3 +76,12 @@ def test_chat_prompt_keeps_memory_and_history_context():
 def test_strategy_generator_asks_for_stop_loss_and_take_profit_columns():
     assert "stop_loss_pct" in STRATEGY_SYSTEM_PROMPT
     assert "take_profit_pct" in STRATEGY_SYSTEM_PROMPT
+
+
+def test_chat_prompt_offers_only_safe_suggested_actions():
+    prompt = build_chat_system_prompt()
+
+    assert "astral-action" in prompt
+    for kind in ("open_chart", "add_watchlist", "price_alert"):
+        assert kind in prompt
+    assert "never place, change or cancel orders" in prompt
