@@ -8,6 +8,12 @@ from `claude-work` before it is merged into `master` are marked **pre-release**.
 
 ## [Unreleased]
 
+### Mobile
+- Read-only phone access over Tailscale: a separate phone gateway that listens
+  only on a Tailscale address, requires a per-phone token, and forwards only
+  read-only requests plus arming the kill switch. Pair and revoke phones in
+  Settings → Phone access. Works with the backend run from source for now.
+
 ## [0.4.0] - 2026-11-05
 
 Pre-release from `claude-work` (PR #13), not yet reviewed or merged into `master`.

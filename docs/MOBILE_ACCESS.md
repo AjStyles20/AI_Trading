@@ -1,6 +1,7 @@
 # Astral AI on a phone: options for remote access
 
-Status: **proposal, not built.** Decisions are the owner's.
+Status: **option A built (0.5.0), read-only.** See the user guide for setup. It works with the
+backend run from source; starting it from the packaged desktop app is not built yet.
 
 ## What exists today
 
@@ -8,8 +9,8 @@ The app's layout works on phone-sized screens (0.2.0 and later): below 768px
 wide, the sidebar becomes a slide-in drawer opened with ☰, and the chart and
 panels use the full width. The desktop layout is unchanged.
 
-That makes Astral usable on a small window or tablet, but **a phone cannot reach
-it yet.** The backend listens only on `127.0.0.1` (this PC), behind
+A phone reaches it only through the optional phone gateway (option A below).
+The backend itself still listens only on `127.0.0.1` (this PC), behind
 `TrustedHostMiddleware`, origin checks and, in the packaged app, a desktop
 token. That is deliberate (see `SAFETY_BASELINE.md` and the roadmap's Phase 7):
 the backend can place orders, so it must never simply be opened to the network.

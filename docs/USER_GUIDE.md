@@ -114,6 +114,27 @@ their values are never recorded.
 it survives a restart. It holds the most recent 5,000 lines. Times in the journal
 and in Settings history are in UTC.
 
+## Using Astral from your phone (read-only)
+
+Your phone can view charts, the watchlist, positions, the journal and alerts, and
+arm the kill switch. It cannot trade, disarm or change settings. It works through
+Tailscale, a free private network, so nothing is opened to the internet.
+
+1. Install Tailscale on this computer and on the phone, and sign in to the same
+   account on both. Note this computer's Tailscale address (it starts with 100.).
+2. Build the web app once: in `frontend/`, run `npm run build`.
+3. Start Astral's backend from source (`python backend/main.py`), then start the
+   gateway in a second terminal:
+   `python backend/phone_gateway.py --host 100.x.y.z` (your Tailscale address).
+4. In Settings → **Phone access**, enter that address and a name, then click
+   **Pair a phone**. Open the link it shows on the phone. It is shown once.
+5. To cut a phone off, click **Revoke**. Pairing and revoking are recorded in the
+   audit log.
+
+The gateway refuses to listen anywhere except a Tailscale address or this
+computer. It does not yet work with the packaged desktop app; use the backend
+from source for now.
+
 ## Backups
 
 **Settings → Backups → Back up now** saves a complete copy of the database

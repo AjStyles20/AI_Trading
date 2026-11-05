@@ -203,6 +203,19 @@ def init_db():
     )
     ''')
 
+    # Phones paired with the read-only phone gateway. Only a hash of each token
+    # is stored; the token itself is shown once, when pairing.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS phone_devices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_seen_at TIMESTAMP,
+        revoked_at TIMESTAMP
+    )
+    ''')
+
     # Session journal: what the trading loop did and why, kept across restarts.
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS trading_journal (
@@ -1217,3 +1230,71 @@ def list_backups() -> list[dict]:
     for item in items:
         item["created"] = datetime.fromtimestamp(item.pop("modified_ns") / 1e9).strftime("%Y-%m-%d %H:%M:%S")
     return items
+
+
+def _hash_phone_token(token: str) -> str:
+    import hashlib
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_phone_device(name: str) -> dict:
+    """Pair a phone. Returns its record plus the token, which is never stored or shown again."""
+    import secrets
+    token = secrets.token_urlsafe(32)
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute(
+            "INSERT INTO phone_devices (name, token_hash) VALUES (?, ?)",
+            (name, _hash_phone_token(token)),
+        )
+        conn.commit()
+        device_id = cursor.lastrowid
+    finally:
+        conn.close()
+    return {**next(d for d in list_phone_devices() if d["id"] == device_id), "token": token}
+
+
+def list_phone_devices() -> list[dict]:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute(
+            "SELECT id, name, created_at, last_seen_at, revoked_at FROM phone_devices ORDER BY id DESC"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {"id": r[0], "name": r[1], "created_at": r[2], "last_seen_at": r[3], "revoked_at": r[4]}
+        for r in rows
+    ]
+
+
+def revoke_phone_device(device_id: int) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute(
+            "UPDATE phone_devices SET revoked_at = CURRENT_TIMESTAMP WHERE id = ? AND revoked_at IS NULL",
+            (device_id,),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def verify_phone_token(token: str | None) -> dict | None:
+    """The paired, unrevoked device a token belongs to, or None. Records when it was last seen."""
+    if not token or len(token) > 200:
+        return None
+    conn = sqlite3.connect(DB_PATH, timeout=2)
+    try:
+        row = conn.execute(
+            "SELECT id, name FROM phone_devices WHERE token_hash = ? AND revoked_at IS NULL",
+            (_hash_phone_token(token),),
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute("UPDATE phone_devices SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?", (row[0],))
+        conn.commit()
+        return {"id": row[0], "name": row[1]}
+    finally:
+        conn.close()

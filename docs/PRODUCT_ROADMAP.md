@@ -185,6 +185,6 @@ These are decided when their phase starts, not before:
 | Phase 2: chat sees the symbol, price, indicators and latest backtest | Done, including the simulated paper position and builder node settings; not yet exercised with a real provider. Memory view and forget done. Proposal cards done (chart, watchlist, alert; never orders) |
 | Phase 3: price alerts with desktop notifications | Alerts done, checked only while the app is open. Session journal done. Trading session panel done (one session at a time; shows state, arm and stop). Typed, audited disarm for paper trading only; live stays locked while disarmed |
 | Phase 4: settings audit log, user guide, threat model (`docs/THREAT_MODEL.md`) | Done. npm audit clean after the Electron 45 upgrade. Electron content security policy and permission limits, code signing not done |
-| Phase 7: phone-sized layout | Done; remote access from a phone proposed in `docs/MOBILE_ACCESS.md`, not built |
+| Phase 7: phone-sized layout, read-only phone access | Done over Tailscale (`docs/MOBILE_ACCESS.md`); works with the backend from source, not yet the packaged app. Phone trading not built |
 | Broker sandbox readiness | In progress (V5); needs test keys from the owner |
 | Everything else in this roadmap | Not started |

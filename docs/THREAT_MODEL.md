@@ -24,6 +24,7 @@ Last reviewed: 2026-11-05, version 0.3.0.
 | Content the AI reads (headlines, pasted text, images) | Prompt injection steering the AI's reply |
 | Another program or user on this PC | Reading the data folder, calling the local API |
 | Anyone with your GitHub access, or the public | The public repository and its releases |
+| Someone on your Tailscale network | Calls to the phone gateway without a paired token |
 | A compromised dependency | Code running inside the backend or desktop app |
 
 ## Defences in place
@@ -60,6 +61,17 @@ Last reviewed: 2026-11-05, version 0.3.0.
 - Backups stay on this computer; the repository is public, so data never goes there.
 - Settings changes are recorded in an audit log.
 
+**Phone gateway** (optional, off by default)
+- A separate process; the backend itself stays loopback-only.
+- Listens only on a Tailscale address (100.64.0.0/10) or this computer; refuses
+  0.0.0.0, home-network addresses and hostnames.
+- Each phone has its own token, stored only as a hash and revocable; pairing and
+  revoking are audit-logged. The pairing link carries the token in the URL
+  fragment, which browsers never send to a server.
+- Forwards only an allowlist of read-only requests plus arming the kill switch.
+  Orders, disarming, settings changes, starting sessions and AI calls are refused.
+- Never forwards the phone's cookies, origin or fetch metadata to the backend.
+
 **Desktop shell**
 - Renderer sandboxed, with context isolation and no Node integration.
 - New windows are denied and navigation is limited to the app's own origin.
@@ -75,7 +87,8 @@ Last reviewed: 2026-11-05, version 0.3.0.
 | Dev server runs without the desktop token | During development, any local program can call the API | Acceptable for development; never expose the dev server |
 | Legacy Python strategies run in-process | Not an OS sandbox | Prefer declarative strategies; never run third-party Python |
 | Unsigned installer | Users can't verify the installer's origin | Code-signing certificate before sharing with others |
-| Phone access | Not built; would open a new route in | Follow `MOBILE_ACCESS.md`: private network, read-only first |
+| Phone gateway works only with the backend run from source | Packaged users can't use it yet | Have the desktop app start it with its session token |
+| Phone gateway speaks HTTP inside Tailscale | Relies on Tailscale's WireGuard encryption | Keep it bound to the Tailscale address only (enforced) |
 
 ## When to update this document
 
