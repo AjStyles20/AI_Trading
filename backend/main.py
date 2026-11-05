@@ -118,6 +118,28 @@ def chat_history(conversation_id: str = "default", limit: int = Query(200, ge=1,
     """Saved messages of one conversation, oldest first, so the chat survives a reload."""
     return {"conversation_id": conversation_id, "messages": get_recent_chat_messages(conversation_id, limit=limit)}
 
+# Long-term AI memory: past exchanges the assistant recalls into new prompts.
+@app.get("/api/ai/memory")
+def list_ai_memory(limit: int = Query(200, ge=1, le=1000)):
+    memory = ai_assistant.memory_manager
+    return {"total": memory.count_memories(), "items": memory.list_memories(limit)}
+
+@app.delete("/api/ai/memory/{memory_id}")
+def forget_ai_memory(memory_id: str):
+    if not ai_assistant.memory_manager.forget(memory_id):
+        raise HTTPException(status_code=404, detail="That memory no longer exists.")
+    return {"status": "forgotten"}
+
+class ForgetAllRequest(BaseModel):
+    confirm: bool = False
+
+@app.post("/api/ai/memory/forget-all")
+def forget_all_ai_memory(request: ForgetAllRequest):
+    # Cannot be undone, so the request must say so explicitly.
+    if not request.confirm:
+        raise HTTPException(status_code=400, detail="Confirm to forget all AI memory.")
+    return {"forgotten": ai_assistant.memory_manager.forget_all()}
+
 class StrategyRequest(BaseModel):
     prompt: str
 

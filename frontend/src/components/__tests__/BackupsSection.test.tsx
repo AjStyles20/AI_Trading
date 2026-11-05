@@ -34,7 +34,7 @@ describe('BackupsSection', () => {
 
     expect(screen.getByTestId('backup-item')).toHaveTextContent('2026-11-05 10:15:0068 KB');
     expect(screen.getByText('C:\\Users\\me\\AppData\\Roaming\\Astral\\backups')).toBeInTheDocument();
-    expect(screen.getByText(/API keys are in your system's credential store and are not included/)).toBeInTheDocument();
+    expect(screen.getByText(/API keys \(in your system's credential store\) and the AI's long-term memory are not included/)).toBeInTheDocument();
   });
 
   it('backs up on request and shows the new backup first', async () => {

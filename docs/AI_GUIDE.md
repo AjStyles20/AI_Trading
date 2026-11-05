@@ -171,6 +171,11 @@ history.
 long-term chat memory (a local ChromaDB store in Astral's data folder). Neither
 is uploaded anywhere. With Ollama, nothing at all leaves your computer.
 
+**Seeing and removing memory:** Settings → **AI memory** lists the past exchanges
+the AI can recall, newest first. **Forget** removes one; **Forget everything**
+removes all of them after you confirm. Neither can be undone, and your chat
+history is kept. AI memory is not included in backups.
+
 **Rule of thumb:** never type secrets (API keys, passwords, account numbers)
 into the chat. The chat is sent to the provider and saved to local memory.
 

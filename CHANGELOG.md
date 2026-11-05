@@ -8,6 +8,10 @@ from `claude-work` before it is merged into `master` are marked **pre-release**.
 
 ## [Unreleased]
 
+### AI
+- Settings → **AI memory** shows the past exchanges the AI recalls, with **Forget**
+  for one and a confirmed **Forget everything**. New memories are dated.
+
 ### Backups
 - **Settings → Backups → Back up now** saves a consistent copy of the database on
   this computer (newest 10 kept). The user guide explains how to restore one.

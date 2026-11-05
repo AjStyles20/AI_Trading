@@ -66,7 +66,7 @@ export default function BackupsSection() {
       </div>
       <p className="text-[10px] text-gray-500 leading-relaxed">
         Saves settings, strategies, trades, alerts, the journal and chat history to this computer only; the newest
-        10 are kept. API keys are in your system's credential store and are not included.
+        10 are kept. API keys (in your system's credential store) and the AI's long-term memory are not included.
         {folder && <> Folder: <span className="font-mono break-all text-gray-400">{folder}</span></>}
       </p>
       {message && <p className="text-[10px] text-emerald-400">{message}</p>}

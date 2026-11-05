@@ -7,6 +7,7 @@ import ChatMessage from './ChatMessage';
 import ConnectionStatus from './ConnectionStatus';
 import AlertsPanel from './AlertsPanel';
 import BackupsSection from './BackupsSection';
+import MemorySection from './MemorySection';
 import {
   ACCEPTED_IMAGE_TYPES,
   ACCEPTED_VIDEO_TYPES,
@@ -985,6 +986,8 @@ export default function Sidebar({
               </div>
 
               <BackupsSection />
+
+              <MemorySection />
 
               <div className="pt-2">
                 <button

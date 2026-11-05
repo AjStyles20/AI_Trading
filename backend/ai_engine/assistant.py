@@ -6,6 +6,7 @@ from core.credential_provider import resolve_api_keys
 from ai_engine.attachments import attachment_note
 from ai_engine.workspace_context import WorkspaceContext, describe_paper_position, format_workspace_context
 import os
+from datetime import datetime, timezone
 
 
 CHAT_SYSTEM_PROMPT = """You are Astral AI, the trading companion built into the Astral desktop app.
@@ -179,7 +180,11 @@ class AstralAIAssistant:
         self.memory_manager.remember_conversation(
             doc_id=str(uuid.uuid4()),
             text=interaction_text,
-            metadata={"topic": "market_analysis", "type": "chat_log"}
+            metadata={
+                "topic": "market_analysis",
+                "type": "chat_log",
+                "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            }
         )
 
         try:

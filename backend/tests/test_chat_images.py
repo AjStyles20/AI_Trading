@@ -104,6 +104,7 @@ class FakeMemory:
 
     def remember_conversation(self, doc_id, text, metadata):
         self.remembered.append(text)
+        self.metadata = metadata
 
 
 @pytest.fixture
@@ -176,3 +177,10 @@ def test_vision_model_setting_is_stored_and_validated(tmp_path, monkeypatch):
     assert sqlite_manager.get_public_settings()["ai_vision_model"] == "vision-x"
     with pytest.raises(ValueError, match="Invalid AI vision model name"):
         sqlite_manager.update_settings(ai_vision_model="bad\nname")
+
+
+def test_new_memories_are_dated_so_they_list_newest_first(chat_assistant):
+    import re
+
+    chat_assistant.analyze_market_query("hello", "c1")
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", chat_assistant.memory_manager.metadata["created_at"])
