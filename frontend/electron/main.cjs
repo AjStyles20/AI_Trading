@@ -2,10 +2,11 @@ const { app, BrowserWindow, protocol, net } = require('electron');
 const { dialog } = require('electron');
 const path = require('path');
 const { APP_ORIGIN, createProtocolHandler } = require('./protocol.cjs');
-const { launchBackend } = require('./backend.cjs');
+const { launchBackend, launchPhoneGateway } = require('./backend.cjs');
 
 const isDev = process.env.NODE_ENV === 'development';
 let backendChild;
+let phoneGatewayChild;
 let desktopToken;
 if (!isDev) {
   protocol.registerSchemesAsPrivileged([{
@@ -58,6 +59,13 @@ app.whenReady().then(async () => {
       });
       backendChild = started.child;
       desktopToken = started.token;
+      // Optional read-only phone access; off unless a Tailscale address was saved
+      // in Settings. Failing to start it never stops the desktop app.
+      phoneGatewayChild = launchPhoneGateway({
+        resourcesPath: process.resourcesPath,
+        userDataPath: app.getPath('userData'),
+        token: desktopToken,
+      });
       backendChild.once('exit', () => {
         if (!backendChild.killed) {
           dialog.showErrorBox('Astral AI backend stopped', 'The backend stopped unexpectedly. See the backend log in the application data folder.');
@@ -115,6 +123,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('before-quit', () => {
+  if (phoneGatewayChild && !phoneGatewayChild.killed) phoneGatewayChild.kill();
   if (backendChild && !backendChild.killed) backendChild.kill();
 });
 

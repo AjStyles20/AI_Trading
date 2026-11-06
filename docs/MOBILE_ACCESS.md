@@ -1,7 +1,8 @@
 # Astral AI on a phone: options for remote access
 
-Status: **option A built (0.5.0), read-only.** See the user guide for setup. It works with the
-backend run from source; starting it from the packaged desktop app is not built yet.
+Status: **option A built, read-only.** See the user guide for setup. Since 0.6.0 the packaged
+desktop app starts the gateway itself when phone access is turned on in Settings; from source,
+run it by hand.
 
 ## What exists today
 

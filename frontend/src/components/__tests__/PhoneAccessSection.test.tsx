@@ -9,6 +9,7 @@ vi.mock('axios', () => ({
     get: vi.fn(),
     post: vi.fn(),
     delete: vi.fn(),
+    put: vi.fn(),
     isAxiosError: (error: unknown) => Boolean((error as { isAxiosError?: boolean })?.isAxiosError),
   },
 }));
@@ -16,6 +17,7 @@ vi.mock('axios', () => ({
 const get = vi.mocked(axios.get);
 const post = vi.mocked(axios.post);
 const del = vi.mocked(axios.delete);
+const put = vi.mocked(axios.put);
 
 describe('Tailscale address check', () => {
   it('accepts only 100.64.0.0 to 100.127.255.255', () => {
@@ -30,10 +32,11 @@ describe('PhoneAccessSection', () => {
     get.mockReset();
     post.mockReset();
     del.mockReset();
-    get.mockResolvedValue({ data: { items: [
+    put.mockReset();
+    get.mockImplementation(async (url: string) => (String(url).endsWith('/api/phone/gateway') ? { data: { host: null } } : { data: { items: [
       { id: 2, name: 'Old phone', created_at: 'x', last_seen_at: null, revoked_at: '2026-11-01' },
       { id: 1, name: 'Pixel', created_at: 'x', last_seen_at: '2026-11-05 10:00:00', revoked_at: null },
-    ] } });
+    ] } }));
   });
 
   const renderSection = async () => {
@@ -81,4 +84,23 @@ describe('PhoneAccessSection', () => {
     expect(del).toHaveBeenCalledWith(expect.stringContaining('/api/phone/devices/1'));
     expect(screen.queryAllByTestId('phone-device')).toHaveLength(0);
   });
+  it('turns phone access on for a Tailscale address and off again', async () => {
+    put.mockImplementation(async (_url: string, body: unknown) => ({ data: body }));
+    await renderSection();
+    expect(screen.getByTestId('gateway-status')).toHaveTextContent('Off');
+
+    fireEvent.change(screen.getByLabelText("This computer's Tailscale address"), { target: { value: '192.168.1.5' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Turn on' })); });
+    expect(put).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("This computer's Tailscale address"), { target: { value: '100.101.102.103' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Turn on' })); });
+    expect(put).toHaveBeenCalledWith(expect.stringContaining('/api/phone/gateway'), { host: '100.101.102.103' });
+    expect(screen.getByTestId('gateway-status')).toHaveTextContent('On at 100.101.102.103');
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Turn off' })); });
+    expect(put).toHaveBeenLastCalledWith(expect.stringContaining('/api/phone/gateway'), { host: null });
+    expect(screen.getByTestId('gateway-status')).toHaveTextContent('Off');
+  });
+
 });

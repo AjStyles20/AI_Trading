@@ -204,11 +204,12 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Read-only phone gateway for Astral AI.")
     parser.add_argument("--host", required=True, help="Your computer's Tailscale address (100.x.y.z).")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--dist", default=DIST_DIR, help="Folder with the built web app (frontend/dist).")
     args = parser.parse_args(argv)
     host = check_bind_address(args.host)
     import uvicorn
     print(f"Phone gateway on http://{host}:{args.port} (read-only; pair phones in Astral's Settings).")
-    uvicorn.run(create_gateway_app(), host=host, port=args.port)
+    uvicorn.run(create_gateway_app(dist_dir=args.dist), host=host, port=args.port, log_level="warning")
 
 
 if __name__ == "__main__":

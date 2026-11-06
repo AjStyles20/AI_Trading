@@ -52,6 +52,7 @@
   "build": {
     "appId": "com.ajstyles20.astralai",
     "files": ["dist/**/*", "electron/**/*.cjs", "package.json"],
+    "asarUnpack": ["dist/**/*"],
     "extraResources": [{ "from": "backend-bundle/astral-backend", "to": "backend" }],
     "directories": { "output": "release" },
     "win": { "target": "nsis" },
