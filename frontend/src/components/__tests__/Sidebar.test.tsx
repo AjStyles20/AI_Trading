@@ -970,6 +970,15 @@ describe('Sidebar watchlist', () => {
     });
   });
 
+  it('hides chat and Settings in the read-only phone view', async () => {
+    render(<Sidebar activeView="chart" onViewChange={vi.fn()} currentSymbol="BTC/USDT" onSymbolChange={vi.fn()} readOnly />);
+    await act(async () => {});
+    expect(screen.queryByPlaceholderText(/Ask AI to analyze|Configure an AI provider/)).toBeNull();
+    expect(screen.getByText(/Chat is not available from a phone/)).toBeInTheDocument();
+    expect(screen.queryByTitle('Settings')).toBeNull();
+    expect(screen.getByText('BTC/USDT')).toBeInTheDocument();
+  });
+
   it('falls back to the default list when saved data is corrupt', async () => {
     store.set('astral.watchlist', '{not json');
     await renderWatchlist();

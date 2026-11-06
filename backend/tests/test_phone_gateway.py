@@ -187,3 +187,9 @@ def test_the_apps_own_arm_request_passes_but_nothing_else_on_settings(gateway, f
         assert gateway.post("/api/settings", json=body).status_code == 403
     assert gateway.post("/api/settings", content=b"not json", headers={"content-type": "application/json"}).status_code == 403
     assert len(forwarded) == count
+
+
+def test_the_app_can_tell_it_is_on_a_paired_phone(gateway):
+    assert gateway.get("/phone/session").status_code == 401
+    paired(gateway)
+    assert gateway.get("/phone/session").json() == {"phone": True, "read_only": True, "device": "My phone"}

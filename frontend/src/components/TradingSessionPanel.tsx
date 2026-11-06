@@ -23,6 +23,7 @@ export default function TradingSessionPanel({
   onArm,
   onDisarm,
   onStop,
+  readOnly = false,
 }: {
   isRunning: boolean;
   config: SessionConfig | null;
@@ -33,11 +34,13 @@ export default function TradingSessionPanel({
   onArm: () => void;
   onDisarm: (confirmation: string) => void;
   onStop: () => void;
+  // On a phone only arming is possible; disarm and stop are hidden.
+  readOnly?: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [typed, setTyped] = useState('');
   const isLive = config?.execution_mode === 'live';
-  const canOfferDisarm = killSwitchArmed === true && !(isRunning && isLive);
+  const canOfferDisarm = !readOnly && killSwitchArmed === true && !(isRunning && isLive);
   const killSwitchLabel =
     killSwitchArmed === undefined ? 'CHECKING' : killSwitchArmed === null ? 'UNKNOWN' : killSwitchArmed ? 'ARMED' : 'DISARMED';
   const killSwitchClass =
@@ -94,7 +97,7 @@ export default function TradingSessionPanel({
               Disarm for paper trading
             </button>
           )}
-          {isRunning && (
+          {isRunning && !readOnly && (
             <button
               type="button"
               onClick={onStop}

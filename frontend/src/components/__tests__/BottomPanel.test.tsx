@@ -218,6 +218,18 @@ describe('BottomPanel Component', () => {
     post.mockImplementation(() => Promise.resolve({ data: {} }));
   });
 
+  it('hides strategy and trading actions in the read-only phone view', () => {
+    render(<BottomPanel {...dummyProps} readOnly />);
+    expect(screen.queryByRole('button', { name: 'Start Live Paper' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Test Broker Order' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Run Backtest' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+    // AI summaries call the provider, which the phone gateway refuses.
+    expect(screen.queryByRole('button', { name: 'Generate' })).toBeNull();
+    // Views stay available.
+    expect(screen.getByRole('button', { name: 'Terminal Logs' })).toBeInTheDocument();
+  });
+
   it('optimizes the default ranges within the backend limit of 1,000 combinations', async () => {
     const post = vi.mocked(axios.post);
     post.mockClear();

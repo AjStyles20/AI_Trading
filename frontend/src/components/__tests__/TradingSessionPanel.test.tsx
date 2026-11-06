@@ -62,6 +62,18 @@ describe('TradingSessionPanel', () => {
     expect(disarmButton()).toBeNull();
   });
 
+  it('on a phone keeps Arm but hides Disarm and Stop', () => {
+    renderPanel({ readOnly: true, killSwitchArmed: true, isRunning: true });
+    expect(screen.queryByRole('button', { name: 'Disarm for paper trading' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Stop session' })).toBeNull();
+  });
+
+  it('on a phone still offers Arm when disarmed', () => {
+    const { onArm } = renderPanel({ readOnly: true, killSwitchArmed: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Arm kill switch' }));
+    expect(onArm).toHaveBeenCalledTimes(1);
+  });
+
   it('offers arming while disarmed and calls it with one click', () => {
     const { onArm } = renderPanel({ killSwitchArmed: false });
 
