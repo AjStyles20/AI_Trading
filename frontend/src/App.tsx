@@ -9,6 +9,7 @@ import { assetTypeFor, displayName, normalizeSymbol } from './lib/watchlist';
 import { PREF_KEYS, readPreference, storePreference } from './lib/preferences';
 import { isShortcutEvent, SHORTCUTS } from './lib/shortcuts';
 import { buildWorkspaceContext, type ChartSnapshot } from './lib/workspaceContext';
+import { detectPhoneMode } from './lib/phoneMode';
 
 export type ViewType = 'chart' | 'builder';
 
@@ -30,6 +31,14 @@ function App() {
   const [assetType, setAssetType] = useState<AssetType>(() => assetTypeFor(symbol));
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Set when served to a paired phone by the read-only phone gateway.
+  const [phoneMode, setPhoneMode] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void detectPhoneMode().then((isPhone) => { if (!cancelled) setPhoneMode(isPhone); });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => { storePreference(PREF_KEYS.symbol, symbol); }, [symbol]);
 
@@ -108,6 +117,7 @@ function App() {
           currentSymbol={symbol}
           onSymbolChange={(next) => { handleSymbolChange(next); setSidebarOpen(false); }}
           getChatContext={getChatContext}
+          readOnly={phoneMode}
         />
       </div>
 
@@ -123,7 +133,9 @@ function App() {
             ☰
           </button>
           <span className="text-sm font-bold text-white tracking-widest">{displayName(symbol)}</span>
-          <span className="ml-auto text-[10px] text-gray-500 uppercase">{activeView === 'chart' ? 'Chart' : 'Builder'}</span>
+          <span className="ml-auto text-[10px] text-gray-500 uppercase">
+            {phoneMode ? 'Phone · read-only' : activeView === 'chart' ? 'Chart' : 'Builder'}
+          </span>
         </div>
         {/* Top/Center Panel - Charts & Indicators / Strategy Builder.
             shrink-0 with a definite height: as flex items of the scroll
@@ -155,6 +167,7 @@ function App() {
             backtestResults={backtestResults} 
             setBacktestResults={setBacktestResults} 
             builderGraph={builderGraph as BuilderGraph}
+            readOnly={phoneMode}
             onLoadStrategy={(payload) => {
               setStrategyCode(payload.code);
               setBuilderGraph((payload.builderGraph as StrategyBuilderGraph) || { nodes: [], edges: [] });

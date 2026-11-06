@@ -227,6 +227,7 @@ export default function BottomPanel({
   setBacktestResults,
   builderGraph,
   onLoadStrategy,
+  readOnly = false,
 }: {
   symbol: string,
   assetType: AssetType,
@@ -236,6 +237,8 @@ export default function BottomPanel({
   setBacktestResults: (r: BacktestResults | null) => void,
   builderGraph: BuilderGraph,
   onLoadStrategy: (payload: { code: string; builderGraph?: BuilderGraph; symbol?: string; assetType?: AssetType }) => void,
+  // Phone view: trading controls the phone gateway would refuse are hidden.
+  readOnly?: boolean,
 }) {
   const [activeTab, setActiveTab] = useState('code');
   const [strategyPrompt, setStrategyPrompt] = useState('');
@@ -1704,6 +1707,9 @@ export default function BottomPanel({
         </div>
       )}
 
+      {/* Strategy actions and trading. Hidden in the read-only phone view, where
+          the phone gateway refuses them. */}
+      {!readOnly && (
       <div className="flex flex-wrap items-center gap-2 pb-2 border-b border-[#2a2a35] flex-shrink-0">
         <input
           type="text"
@@ -1794,6 +1800,7 @@ export default function BottomPanel({
           </button>
         </div>
       </div>
+      )}
       {generationError && (
         <p role="alert" className="text-xs text-amber-300 border border-amber-500/40 bg-amber-500/10 rounded px-3 py-2 mt-2">
           {generationError} Your existing strategy code was kept.
@@ -1909,6 +1916,7 @@ export default function BottomPanel({
         onArm={() => void armKillSwitch()}
         onDisarm={(confirmation) => void disarmKillSwitch(confirmation)}
         onStop={() => void toggleLiveTrading()}
+        readOnly={readOnly}
       />
 
       <AccountOverview
@@ -2181,6 +2189,7 @@ export default function BottomPanel({
             <div className="bg-[#16161e] border border-[#2a2a35] rounded-lg p-3 space-y-2">
               <div className="flex items-center justify-between">
                 <div className="text-[10px] uppercase tracking-widest text-gray-500">AI Strategy Summary</div>
+                {!readOnly && (
                 <button
                   onClick={summarizeStrategy}
                   disabled={isSummarizingStrategy || !strategyCode.trim()}
@@ -2188,6 +2197,7 @@ export default function BottomPanel({
                 >
                   {isSummarizingStrategy ? 'Summarizing...' : 'Generate'}
                 </button>
+                )}
               </div>
               <div className="text-[11px] text-gray-300 whitespace-pre-wrap">
                 {strategySummary || 'Generate a concise explanation of the current strategy.'}
@@ -2241,6 +2251,7 @@ export default function BottomPanel({
                 <div className="bg-[#16161e] border border-[#2a2a35] rounded-lg p-3 space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="text-[10px] uppercase tracking-widest text-gray-500">AI Backtest Summary</div>
+                    {!readOnly && (
                     <button
                       onClick={summarizeBacktest}
                       disabled={isSummarizingBacktest || !backtestResults}
@@ -2248,6 +2259,7 @@ export default function BottomPanel({
                     >
                       {isSummarizingBacktest ? 'Summarizing...' : 'Generate'}
                     </button>
+                    )}
                   </div>
                   <div className="text-[11px] text-gray-300 whitespace-pre-wrap">
                     {backtestSummary || 'Generate a concise summary of the latest backtest.'}

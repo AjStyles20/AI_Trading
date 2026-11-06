@@ -8,9 +8,14 @@ from `claude-work` before it is merged into `master` are marked **pre-release**.
 
 ## [Unreleased]
 
+### Mobile
+- On a paired phone the app switches to a read-only view: trading, strategy and AI
+  actions the phone gateway refuses are hidden, chat and Settings are hidden, and
+  the header reads "Phone · read-only". Arm kill switch stays available.
+
 ## [0.5.0] - 2026-11-05
 
-Pre-release from `claude-work` (PR #13), not yet reviewed or merged into `master`.
+Pre-release from `claude-work` (PR #13); merged into `master` on 2026-11-06.
 
 ### Mobile
 - Read-only phone access over Tailscale: a separate phone gateway that listens

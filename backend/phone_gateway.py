@@ -137,6 +137,14 @@ def create_gateway_app(forward=_forward, dist_dir: str = DIST_DIR, desktop_token
         response.set_cookie(COOKIE, token, httponly=True, samesite="strict", max_age=60 * 60 * 24 * 365)
         return response
 
+    async def session(request: Request):
+        # Tells the web app it is running on a paired phone, so it can hide
+        # controls the gateway would refuse anyway.
+        device = device_for(request)
+        if device is None:
+            return JSONResponse({"detail": "This phone is not paired."}, status_code=401)
+        return JSONResponse({"phone": True, "read_only": True, "device": device["name"]})
+
     async def arm(request: Request):
         if device_for(request) is None:
             return JSONResponse({"detail": "This phone is not paired."}, status_code=401)
@@ -184,6 +192,7 @@ def create_gateway_app(forward=_forward, dist_dir: str = DIST_DIR, desktop_token
 
     routes = [
         Route("/pair", pair_page, methods=["GET", "POST"]),
+        Route("/phone/session", session, methods=["GET"]),
         Route("/phone/arm", arm, methods=["POST"]),
         Route("/api/{rest:path}", api, methods=["GET", "POST", "PUT", "PATCH", "DELETE"]),
         Route("/{rest:path}", app_files, methods=["GET"]),
