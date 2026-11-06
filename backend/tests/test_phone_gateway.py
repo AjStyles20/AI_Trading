@@ -193,3 +193,24 @@ def test_the_app_can_tell_it_is_on_a_paired_phone(gateway):
     assert gateway.get("/phone/session").status_code == 401
     paired(gateway)
     assert gateway.get("/phone/session").json() == {"phone": True, "read_only": True, "device": "My phone"}
+
+
+def test_the_desktop_turns_phone_access_on_and_off_for_the_next_launch(tmp_path):
+    config = tmp_path / "phone_gateway.json"
+    assert desktop.get("/api/phone/gateway").json() == {"host": None}
+
+    assert desktop.put("/api/phone/gateway", json={"host": "100.101.102.103"}).json() == {"host": "100.101.102.103"}
+    assert json.loads(config.read_text()) == {"host": "100.101.102.103"}
+    assert desktop.get("/api/phone/gateway").json() == {"host": "100.101.102.103"}
+
+    assert desktop.put("/api/phone/gateway", json={"host": None}).json() == {"host": None}
+    assert not config.exists()
+    actions = [e["action"] for e in sqlite_manager.get_audit_events(5)]
+    assert actions[:2] == ["gateway_disabled", "gateway_enabled"]
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "0.0.0.0", "192.168.1.20", "100.128.0.1", "my-pc", "::1"])
+def test_the_packaged_app_is_only_ever_told_a_tailscale_address(tmp_path, host):
+    response = desktop.put("/api/phone/gateway", json={"host": host})
+    assert response.status_code == 400
+    assert not (tmp_path / "phone_gateway.json").exists()

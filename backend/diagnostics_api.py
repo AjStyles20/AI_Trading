@@ -199,3 +199,82 @@ def run_connection_checks(settings: dict, timer: Callable[[], float] = time.mono
 def connection_checks():
     """Runs read-only connection checks; only when the user asks (POST)."""
     return run_connection_checks(get_settings() or {})
+
+
+def build_diagnostics_report() -> str:
+    """A plain-text summary for the user to copy when asking for help.
+
+    Local facts only; nothing is sent anywhere. Credentials appear by name and
+    presence only, and the home folder is replaced with ~.
+    """
+    import platform
+    import sqlite3
+
+    from core.credential_provider import credential_presence
+    from database import sqlite_manager
+
+    def scrub(text: str) -> str:
+        home = os.path.expanduser("~")
+        return text.replace(home, "~") if home and home != "~" else text
+
+    settings = get_settings() or {}
+    lines = [
+        "Astral AI diagnostics report",
+        f"Created: {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC",
+        f"App version: {_app_version()}",
+        f"Platform: {platform.system()} {platform.release()} ({platform.machine()}), Python {platform.python_version()}",
+        f"Data folder: {scrub(os.path.dirname(sqlite_manager.DB_PATH))}",
+        "",
+        "Safety",
+        f"- Kill switch armed: {bool(settings.get('autonomy_kill_switch', True))}",
+        f"- Live trading enabled: {bool(settings.get('risk_live_trading_enabled', False))}",
+        f"- Max order notional: {settings.get('risk_max_order_notional')}",
+        "",
+        "Configuration",
+        f"- AI provider: {settings.get('ai_provider') or 'none'}",
+        f"- Binance environment: {settings.get('binance_environment')}, Bitget environment: {settings.get('bitget_environment')}",
+    ]
+    try:
+        stored = sorted(name for name, present in credential_presence(settings).items() if present)
+    except Exception:
+        stored = ["(could not be read)"]
+    lines.append(f"- Stored credentials (names only): {', '.join(stored) or 'none'}")
+    try:
+        with open(os.path.join(os.path.dirname(sqlite_manager.DB_PATH), "phone_gateway.json"), encoding="utf-8") as handle:
+            phone = "on" if json.load(handle).get("host") else "off"
+    except (OSError, ValueError):
+        phone = "off"
+    lines.append(f"- Phone access: {phone}")
+
+    lines += ["", "Records"]
+    conn = sqlite3.connect(sqlite_manager.DB_PATH)
+    try:
+        for table in ("trades", "strategies", "price_alerts", "chat_logs", "trading_journal", "phone_devices"):
+            try:
+                count = conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            except sqlite3.Error:
+                count = "missing"
+            lines.append(f"- {table}: {count}")
+    finally:
+        conn.close()
+
+    lines += ["", "Last journal lines (UTC)"]
+    journal = sqlite_manager.get_journal_entries(15)
+    lines += [f"- {e['created_at']} {scrub(e['message'])}" for e in reversed(journal)] or ["- none"]
+    lines += ["", "Last settings changes (UTC)"]
+    audit = sqlite_manager.get_audit_events(10)
+    lines += [f"- {e['created_at']} {e['category']} {e['action']}: {json.dumps(e['details'])}" for e in audit] or ["- none"]
+    return "\n".join(lines) + "\n"
+
+
+def _app_version() -> str:
+    try:
+        from main import app
+        return app.version
+    except Exception:
+        return "unknown"
+
+
+@router.get("/api/diagnostics/report")
+def diagnostics_report():
+    return {"report": build_diagnostics_report()}

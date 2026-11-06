@@ -8,10 +8,23 @@ from `claude-work` before it is merged into `master` are marked **pre-release**.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-06
+
+Pre-release from `claude-work`; merged into `master` when its PR is green.
+
 ### Mobile
 - On a paired phone the app switches to a read-only view: trading, strategy and AI
   actions the phone gateway refuses are hidden, chat and Settings are hidden, and
   the header reads "Phone · read-only". Arm kill switch stays available.
+- The packaged desktop app can run the phone gateway: Settings → Phone access →
+  **Turn on** saves the Tailscale address, and the app starts the gateway on the
+  next launch with its session token. Only Tailscale addresses are accepted.
+
+### Support
+- Settings → **Diagnostics report** creates a plain-text summary to share when
+  asking for help. Credential values and the home folder path are never included.
+- `NEXT_STEPS.md` lists everything only the owner can do (accounts, keys,
+  signing, encryption) and in what order.
 
 ## [0.5.0] - 2026-11-05
 

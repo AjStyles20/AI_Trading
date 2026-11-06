@@ -56,4 +56,49 @@ async function launchBackend({ resourcesPath, userDataPath, fetchHealth = fetch,
   throw new Error(`${exitDetail || 'Backend startup timed out'}. See ${path.join(logsDir, 'backend.log')}`);
 }
 
-module.exports = { launchBackend };
+// Read-only phone gateway (see backend/phone_gateway.py). Off unless the user
+// saved a Tailscale address in Settings; the address is checked again here
+// rather than trusted from the file.
+const PHONE_GATEWAY_CONFIG = 'phone_gateway.json';
+
+function isTailscaleAddress(value) {
+  const parts = String(value).split('.');
+  if (parts.length !== 4 || !parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)) return false;
+  return Number(parts[0]) === 100 && Number(parts[1]) >= 64 && Number(parts[1]) <= 127;
+}
+
+function readPhoneGatewayHost(dataDir) {
+  try {
+    const { host } = JSON.parse(fs.readFileSync(path.join(dataDir, PHONE_GATEWAY_CONFIG), 'utf8'));
+    return typeof host === 'string' && isTailscaleAddress(host) ? host : null;
+  } catch {
+    return null;
+  }
+}
+
+// Starts the gateway from the same bundled executable. Returns null when phone
+// access is off or the executable or web app is missing; never throws.
+function launchPhoneGateway({ resourcesPath, userDataPath, token, spawnProcess = spawn }) {
+  const host = readPhoneGatewayHost(path.join(userDataPath, 'data'));
+  if (!host) return null;
+  const executable = path.join(resourcesPath, 'backend', 'astral-backend.exe');
+  const distDir = path.join(resourcesPath, 'app.asar.unpacked', 'dist');
+  if (!fs.existsSync(executable) || !fs.existsSync(path.join(distDir, 'index.html'))) return null;
+  const logsDir = path.join(userDataPath, 'logs');
+  fs.mkdirSync(logsDir, { recursive: true });
+  const logFd = fs.openSync(path.join(logsDir, 'phone-gateway.log'), 'a');
+  try {
+    return spawnProcess(executable, ['--phone-gateway', '--host', host, '--dist', distDir], {
+      cwd: resourcesPath,
+      windowsHide: true,
+      env: { ...process.env, ASTRAL_DATA_DIR: path.join(userDataPath, 'data'), ASTRAL_DESKTOP_TOKEN: token },
+      stdio: ['ignore', logFd, logFd],
+    });
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(logFd);
+  }
+}
+
+module.exports = { launchBackend, launchPhoneGateway, readPhoneGatewayHost, isTailscaleAddress };

@@ -122,18 +122,26 @@ Tailscale, a free private network, so nothing is opened to the internet.
 
 1. Install Tailscale on this computer and on the phone, and sign in to the same
    account on both. Note this computer's Tailscale address (it starts with 100.).
-2. Build the web app once: in `frontend/`, run `npm run build`.
-3. Start Astral's backend from source (`python backend/main.py`), then start the
-   gateway in a second terminal:
+2. **Desktop app:** in Settings → **Phone access**, enter that address and click
+   **Turn on**, then quit and reopen Astral. The app starts the gateway itself.
+   **From source instead:** build the web app once (`npm run build` in `frontend/`),
+   start the backend (`python backend/main.py`), then in a second terminal run
    `python backend/phone_gateway.py --host 100.x.y.z` (your Tailscale address).
-4. In Settings → **Phone access**, enter that address and a name, then click
-   **Pair a phone**. Open the link it shows on the phone. It is shown once.
-5. To cut a phone off, click **Revoke**. Pairing and revoking are recorded in the
-   audit log.
+3. In Settings → **Phone access**, enter a name and click **Pair a phone**. Open
+   the link it shows on the phone. It is shown once.
+4. To cut a phone off, click **Revoke**. To stop phone access entirely, click
+   **Turn off** and restart Astral. Pairing, revoking and turning access on or off
+   are recorded in the audit log.
 
 The gateway refuses to listen anywhere except a Tailscale address or this
-computer. It does not yet work with the packaged desktop app; use the backend
-from source for now.
+computer. In the desktop app its log is in the data folder under `logs/`.
+
+## Diagnostics report
+
+**Settings → Diagnostics report → Create report** shows a plain-text summary:
+version, safety settings, which credentials are stored (names only, never
+values), record counts and recent journal and audit lines. Read it, then click
+**Copy report** to paste it when asking for help. Nothing is sent anywhere.
 
 ## Backups
 

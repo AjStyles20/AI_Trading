@@ -11,6 +11,7 @@ import ProposalCards from './ProposalCards';
 import { extractProposals, type Proposal } from '../lib/aiProposals';
 import MemorySection from './MemorySection';
 import PhoneAccessSection from './PhoneAccessSection';
+import DiagnosticsSection from './DiagnosticsSection';
 import {
   ACCEPTED_IMAGE_TYPES,
   ACCEPTED_VIDEO_TYPES,
@@ -1043,6 +1044,8 @@ export default function Sidebar({
               <MemorySection />
 
               <PhoneAccessSection />
+
+              <DiagnosticsSection />
 
               <div className="pt-2">
                 <button

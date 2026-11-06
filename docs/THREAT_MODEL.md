@@ -87,7 +87,6 @@ Last reviewed: 2026-11-05, version 0.3.0.
 | Dev server runs without the desktop token | During development, any local program can call the API | Acceptable for development; never expose the dev server |
 | Legacy Python strategies run in-process | Not an OS sandbox | Prefer declarative strategies; never run third-party Python |
 | Unsigned installer | Users can't verify the installer's origin | Code-signing certificate before sharing with others |
-| Phone gateway works only with the backend run from source | Packaged users can't use it yet | Have the desktop app start it with its session token |
 | Phone gateway speaks HTTP inside Tailscale | Relies on Tailscale's WireGuard encryption | Keep it bound to the Tailscale address only (enforced) |
 
 ## When to update this document

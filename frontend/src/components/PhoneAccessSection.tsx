@@ -22,9 +22,19 @@ export default function PhoneAccessSection() {
   const [link, setLink] = useState('');
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
+  // The address the desktop app starts the gateway on at launch, or null (off).
+  const [gatewayHost, setGatewayHost] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    axios.get(`${BACKEND_URL}/api/phone/gateway`)
+      .then((res) => {
+        if (cancelled) return;
+        const host = typeof res.data?.host === 'string' ? res.data.host : null;
+        setGatewayHost(host);
+        if (host) setAddress(host);
+      })
+      .catch(() => { /* Older backend or offline: the status simply shows as off. */ });
     axios.get(`${BACKEND_URL}/api/phone/devices`)
       .then((res) => { if (!cancelled) setDevices(Array.isArray(res.data?.items) ? res.data.items : []); })
       .catch((err: unknown) => { if (!cancelled) setError(`Could not list phones: ${errorDetail(err, 'check the backend connection.')}`); });
@@ -65,6 +75,21 @@ export default function PhoneAccessSection() {
     }
   };
 
+  const setGateway = async (host: string | null) => {
+    setError('');
+    if (host !== null && !isTailscaleAddress(host)) {
+      setError("Enter this computer's Tailscale address (100.x.y.z), shown in the Tailscale app.");
+      return;
+    }
+    try {
+      const res = await axios.put(`${BACKEND_URL}/api/phone/gateway`, { host });
+      setGatewayHost(typeof res.data?.host === 'string' ? res.data.host : null);
+      if (host) storePreference(ADDRESS_KEY, host);
+    } catch (err) {
+      setError(`Could not change phone access: ${errorDetail(err, 'check the backend connection.')}`);
+    }
+  };
+
   const active = devices.filter((d) => !d.revoked_at);
 
   return (
@@ -72,9 +97,23 @@ export default function PhoneAccessSection() {
       <span className="text-xs font-bold text-gray-300 uppercase tracking-wider">Phone access (read-only)</span>
       <p className="text-gray-500 leading-relaxed">
         A paired phone can view charts, positions, the journal and alerts, and arm the kill switch. It cannot trade,
-        disarm or change settings. It needs Tailscale on this computer and the phone, and the phone gateway running
-        (see the user guide).
+        disarm or change settings. It needs Tailscale on this computer and the phone (see the user guide).
       </p>
+      <div data-testid="gateway-status" className="flex flex-wrap items-center gap-2">
+        <span className={gatewayHost ? 'text-emerald-300' : 'text-gray-400'}>
+          {gatewayHost ? `On at ${gatewayHost}` : 'Off'}
+        </span>
+        {gatewayHost ? (
+          <button type="button" onClick={() => void setGateway(null)} className="px-2 py-0.5 rounded border border-[#2a2a35] text-gray-300 hover:text-white">
+            Turn off
+          </button>
+        ) : (
+          <button type="button" onClick={() => void setGateway(address.trim())} className="px-2 py-0.5 rounded border border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/10">
+            Turn on
+          </button>
+        )}
+        <span className="text-gray-600">The desktop app applies this when Astral next starts.</span>
+      </div>
       <div className="flex flex-wrap gap-2">
         <input
           aria-label="This computer's Tailscale address"
