@@ -8,6 +8,10 @@ from `claude-work` before it is merged into `master` are marked **pre-release**.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-06
+
+Pre-release from `claude-work`; merged into `master` when its PR is green.
+
 ### Mobile
 - On a paired phone the app switches to a read-only view: trading, strategy and AI
   actions the phone gateway refuses are hidden, chat and Settings are hidden, and
