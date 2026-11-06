@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
 import asyncio
@@ -16,7 +16,7 @@ from core.risk_engine import risk_engine
 from core.position_ledger import reconstruct_confirmed_position
 from core.position_protection import evaluate_position_protection
 from core.autonomy_readiness import evaluate_autonomous_readiness
-from database.sqlite_manager import record_trade, get_settings, get_trades, get_trades_for_scope, get_trade_by_id, get_strategy, update_trade_order_state, update_risk_equity_state
+from database.sqlite_manager import get_journal_entries, record_audit_event, record_journal_entry, record_trade, update_settings, get_settings, get_trades, get_trades_for_scope, get_trade_by_id, get_strategy, update_trade_order_state, update_risk_equity_state
 
 router = APIRouter()
 
@@ -92,6 +92,7 @@ class LiveTradingManager:
             "strategy_record": None
         }
         self.logs = []
+        self.session_id = None
         self.last_evaluated_candle = None
         self.cooldown_remaining = 0
         self.recovery_verified = False
@@ -102,8 +103,16 @@ class LiveTradingManager:
         self.logs.append(f"[{timestamp}] {message}")
         if len(self.logs) > 50:
             self.logs.pop(0)
+        # Best effort: the journal must never disturb the loop, including while it
+        # is reporting a problem with the database itself.
+        try:
+            record_journal_entry(self.session_id, message)
+        except Exception as exc:
+            print(f"WARNING: Failed to write the session journal: {type(exc).__name__}")
 
     async def run_loop(self):
+        import datetime
+        self.session_id = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         self.log(
             f"Starting {self.config['execution_mode']} trading loop for {self.config['symbol']} via {self.config['broker_id']}..."
         )
@@ -630,8 +639,16 @@ def submit_guarded_order(
         raise ValueError("Broker-normalized order quantity must be finite and greater than zero.")
     # A venue may round a requested quantity upward. Apply central risk to the
     # actual quantity that will be submitted, not only the initial estimate.
+    # A capped-limit BUY (e.g. Bitget's IOC) may fill up to its limit price, so
+    # price the check at the worst case rather than the quote.
+    risk_price = order.price
+    if order.side.upper() == "BUY" and broker_validation.get("limit_price") is not None:
+        limit_price = float(broker_validation["limit_price"])
+        if not math.isfinite(limit_price) or limit_price <= 0:
+            raise ValueError("Broker limit price must be finite and greater than zero.")
+        risk_price = max(order.price, limit_price)
     normalized_risk = risk_engine.evaluate_order(
-        side=order.side, qty=normalized_qty, price=order.price,
+        side=order.side, qty=normalized_qty, price=risk_price,
         execution_mode=execution_mode, settings=settings,
         current_position_qty=current_position_qty, account_equity=account_equity,
         day_start_equity=day_start_equity, peak_equity=peak_equity,
@@ -965,12 +982,64 @@ async def toggle_trading(status: TradingStatus):
 
 @router.get("/api/trading/status")
 def get_status():
+    # None means unreadable, which the app shows as unknown. A missing setting reads
+    # as armed, matching how the order path treats it.
+    try:
+        kill_switch_armed = bool((get_settings() or {}).get("autonomy_kill_switch", True))
+    except Exception as exc:
+        print(f"WARNING: Could not read the kill switch state: {type(exc).__name__}")
+        kill_switch_armed = None
     return {
         "is_active": trading_manager.is_running,
         "config": trading_manager.config,
         "logs": trading_manager.logs,
         "recovery_verified": trading_manager.recovery_verified,
+        "autonomy_kill_switch": kill_switch_armed,
     }
+
+DISARM_CONFIRMATION = "DISARM"
+
+
+class DisarmRequest(BaseModel):
+    confirmation: str
+
+
+@router.post("/api/trading/kill-switch/disarm")
+def disarm_kill_switch(request: DisarmRequest):
+    """Disarm from the Trading session panel: typed confirmation, paper trading only.
+
+    The kill switch is one global setting, so "paper only" is enforced here: this
+    is refused while live trading is enabled or a live session runs, and the
+    settings API refuses to enable live trading while the switch is disarmed.
+    """
+    if request.confirmation != DISARM_CONFIRMATION:
+        raise HTTPException(status_code=400, detail=f"Type {DISARM_CONFIRMATION} to confirm.")
+    settings = get_settings() or {}
+    if bool(settings.get("risk_live_trading_enabled", False)):
+        raise HTTPException(
+            status_code=400,
+            detail="Live trading is enabled. This control only disarms for paper trading; turn live trading off first.",
+        )
+    if trading_manager.is_running and trading_manager.config.get("execution_mode") == "live":
+        raise HTTPException(status_code=400, detail="A live session is running. This control only disarms for paper trading.")
+    if not bool(settings.get("autonomy_kill_switch", True)):
+        return {"autonomy_kill_switch": False}
+    if not update_settings(autonomy_kill_switch=False):
+        raise HTTPException(status_code=500, detail="Could not disarm the kill switch.")
+    try:
+        record_audit_event("settings", "updated", {
+            "changes": {"autonomy_kill_switch": {"from": True, "to": False}},
+            "source": "trading session panel (paper only)",
+        })
+    except Exception as exc:
+        print(f"WARNING: Failed to record the disarm in the audit log: {type(exc).__name__}")
+    return {"autonomy_kill_switch": False}
+
+
+@router.get("/api/trading/journal")
+def get_journal(limit: int = Query(200, ge=1, le=1000)):
+    """What the trading loop did and why, across restarts. Read-only."""
+    return {"items": get_journal_entries(limit)}
 
 @router.get("/api/trading/history")
 def get_history():

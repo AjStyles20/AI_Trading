@@ -133,11 +133,17 @@ class MarketDataService:
         except Exception as e:
             raise MarketDataError(f"Failed to fetch stock data for {symbol}: {e}") from e
 
-    def get_crypto_data(self, symbol: str, interval: str = "1d", limit: int = 500) -> pd.DataFrame:
-        """Fetch historical crypto data bypassing ccxt Binance region blocks using yfinance."""
+    def get_crypto_data(
+        self, symbol: str, interval: str = "1d", limit: int = 500, period: Optional[str] = None
+    ) -> pd.DataFrame:
+        """Fetch historical crypto data bypassing ccxt Binance region blocks using yfinance.
+
+        Research callers pass the period the user chose; without one, the longest
+        period the provider allows for the interval is used.
+        """
         try:
             yf_symbol = symbol.replace('/', '-').replace('USDT', 'USD')
-            period = self._get_balanced_period(interval)
+            period = period or self._get_balanced_period(interval)
             
             print(f"FETCH: Crypto data for {yf_symbol} ({interval}, {period})")
             ticker = yf.Ticker(yf_symbol)
@@ -168,6 +174,19 @@ class MarketDataService:
             raise
         except Exception as e:
             raise MarketDataError(f"Failed to fetch latest price for {symbol}: {e}") from e
+
+    def get_daily_history(self, symbol: str, asset_type: str = "stock") -> pd.DataFrame:
+        """The last few daily candles, for watchlist quotes and daily change."""
+        if asset_type not in {"stock", "crypto"}:
+            raise ValueError("asset_type must be stock or crypto")
+        query_symbol = symbol.replace('/', '-').replace('USDT', 'USD') if asset_type == "crypto" else symbol
+        try:
+            df = yf.Ticker(query_symbol).history(period="5d", interval="1d")
+            return self._validate_frame(df, symbol)
+        except MarketDataError:
+            raise
+        except Exception as e:
+            raise MarketDataError(f"Failed to fetch daily history for {symbol}: {e}") from e
 
 # Singleton instance
 market_data = MarketDataService()

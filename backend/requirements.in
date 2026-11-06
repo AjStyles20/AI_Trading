@@ -1,0 +1,14 @@
+# Direct runtime dependencies of the backend. Edit this file, then run
+# scripts/lock_backend.sh to regenerate the hashed lock in requirements.txt.
+fastapi==0.161.1
+uvicorn==0.54.0
+langchain==1.4.7
+langchain-openai==1.7.2
+langchain-core==1.7.0
+pydantic==2.14.1
+chromadb==1.5.9
+pandas==3.1.0
+numpy==2.5.4
+yfinance==1.7.0
+ccxt==4.5.89
+keyring==25.7.0

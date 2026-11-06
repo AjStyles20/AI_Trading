@@ -114,7 +114,7 @@ export default function StrategyBuilder({ setStrategyCode, initialGraph, onGraph
       return;
     }
 
-    const strategyNodes = nodes.map((node) => ({ id: node.id, type: node.data?.label || node.type }));
+    const strategyNodes = nodes.map((node) => ({ id: node.id, type: node.data?.label || node.type, settings: node.data?.payload }));
     const flowEdges = edges.map((edge) => ({ source: edge.source, target: edge.target }));
 
     try {

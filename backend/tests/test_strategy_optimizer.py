@@ -333,3 +333,44 @@ def test_optimizer_legacy_artifact_preserves_canonical_cooldown():
     code = strategy_optimizer._build_strategy_code("sma_cross", params)
 
     assert "df['cooldown_bars'] = 3" in code
+
+
+def test_optimizer_rejects_searches_too_large_to_finish():
+    # The old desktop defaults produced 13,122 ema_rsi candidates: hours of backtests.
+    huge = {
+        "ema_fast": [8, 12, 21],
+        "ema_slow": [26, 34, 55],
+        "rsi_period": [10, 14],
+        "rsi_buy": [25, 30, 35],
+        "rsi_sell": [65, 70, 75],
+        "stop_loss_pct": [2, 3, 5],
+        "take_profit_pct": [4, 6, 8],
+        "cooldown_bars": [0, 2, 4],
+        "position_size_pct": [25, 50, 100],
+    }
+    with pytest.raises(ValueError, match="more than 1,000 parameter combinations"):
+        strategy_optimizer.optimize(frame(), strategy_type="ema_rsi", custom_ranges=huge)
+
+
+@pytest.mark.parametrize("builder", ["_ema_rsi_candidates", "_sma_cross_candidates", "_macd_rsi_candidates"])
+def test_default_optimizer_grids_fit_under_the_limit(builder):
+    from core.strategy_optimizer import MAX_CANDIDATES
+
+    assert 0 < len(list(getattr(strategy_optimizer, builder)({}))) <= MAX_CANDIDATES
+
+
+def test_optimizer_rejects_huge_ranges_without_building_them():
+    # About 4 billion combinations: building the list first would exhaust memory.
+    import time
+
+    huge = {
+        "ema_fast": list(range(1, 400)),
+        "ema_slow": list(range(400, 800)),
+        "rsi_period": list(range(2, 30)),
+        "rsi_buy": list(range(5, 45)),
+        "rsi_sell": list(range(55, 95)),
+    }
+    started = time.perf_counter()
+    with pytest.raises(ValueError, match="more than 1,000 parameter combinations"):
+        strategy_optimizer.optimize(frame(), strategy_type="ema_rsi", custom_ranges=huge)
+    assert time.perf_counter() - started < 2.0

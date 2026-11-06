@@ -19,6 +19,23 @@ jobs:
       - run: pip install -r backend/requirements.txt -r backend/requirements-test.txt
       - run: pytest backend/tests -q
 
+  backend-locks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          # Keep in step with the uv used to generate the committed locks.
+          version: "0.13.5"
+          enable-cache: false
+      - run: bash scripts/lock_backend.sh
+      - name: Fail if the committed locks are stale
+        run: |
+          if ! git diff --exit-code -- backend/requirements.txt backend/requirements-test.txt backend/requirements-build.txt; then
+            echo "::error::backend lock files are out of date with backend/*.in. Run scripts/lock_backend.sh and commit the result."
+            exit 1
+          fi
+
   frontend:
     runs-on: ubuntu-latest
     defaults:
@@ -32,5 +49,6 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --legacy-peer-deps
+      - run: npm run lint
       - run: npm test
       - run: npm run build

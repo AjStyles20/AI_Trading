@@ -1,0 +1,155 @@
+# Astral AI: user guide
+
+Astral is a personal trading companion: charts, research, backtests and paper
+trading on your own computer. It is engineering and research software, not
+financial advice, and no backtest proves future profit.
+
+For AI setup see `AI_GUIDE.md`. For the safety rules see `SAFETY_BASELINE.md`.
+
+## The screen
+
+- **Left:** watchlist, price alerts and the AI chat.
+- **Centre:** the price chart and its indicator panels, or the Strategy Builder.
+- **Below the chart:** strategy actions, backtest settings, the account panel,
+  and the tabs Strategy Code, Backtest Results, Optimize, Open Positions and
+  Terminal Logs.
+
+## Watchlist
+
+- Click a symbol to chart it. Each symbol shows its price and change since the
+  previous daily close, refreshed about once a minute.
+- Search with a ticker (`AAPL`) or a pair (`SOL-USD`, `BTC/USDT`). A symbol is
+  added only if market data loads for it. Yahoo Finance sometimes returns
+  nothing for a moment, so if a real ticker fails, try again shortly.
+- Hover over a symbol and click **×** to remove it. Your list is remembered.
+
+**Gold** is in the watchlist as COMEX gold futures (`GC=F`), priced in US dollars
+per troy ounce. Yahoo's spot gold symbol returns no data, and `GOLD` is a mining
+company's stock, not the metal. Gold is treated like a stock: data comes from
+Yahoo through the backend, so prices can lag, and futures can differ slightly
+from spot gold.
+
+Watchlist prices come from Yahoo Finance. The crypto chart header streams from
+Binance, so the two can differ slightly.
+
+## Chart
+
+Your symbol, timeframe and indicators are remembered between sessions.
+
+| Keys | Action |
+|---|---|
+| `1` to `6` | Timeframe 1m, 5m, 15m, 1h, 4h, 1D |
+| `S` `E` `R` | Toggle SMA 20, EMA 21, RSI 14 |
+| `M` `B` `A` | Toggle MACD, Bollinger Bands, ATR 14 |
+| `/` | Jump to the watchlist search |
+| `?` | Show or hide the shortcut list |
+| `Esc` | Close the shortcut list or the expanded chat |
+
+Shortcuts are ignored while you type in a field.
+
+The sentiment badge shows a score only when an AI provider actually scored
+recent headlines. Otherwise it reads **Sentiment needs AI** or **No sentiment**;
+hover over it for the reason.
+
+## Price alerts
+
+Open **Price alerts** under the watchlist, choose at-or-above or at-or-below for
+the symbol on screen, enter a price and click **Add**.
+
+- Alerts are checked about every 30 seconds **only while Astral is open**. They
+  do not fire while it is closed.
+- A triggered alert stays listed with the price it hit, and raises a desktop
+  notification where notifications are allowed.
+- Alerts only notify you. They never place orders.
+
+## Strategies and backtests
+
+1. Create a strategy with **Generate** (needs an AI provider) or the Strategy
+   Builder's **Local Export** (no AI needed).
+2. Click **Validate**, then **Run Backtest**. Results appear in Backtest Results,
+   and if a run fails, the reason appears there too.
+3. **Save** keeps a strategy as a workspace you can reload, tag and archive.
+
+**Optimize** tries combinations of parameter values, up to 1,000 per search.
+Larger searches are refused, because more combinations mostly add overfitting.
+Results include warnings about weak evidence, so read them.
+
+## AI chat
+
+With a provider configured, the chat can see what is on your screen. **Share
+chart** in the chat header sends the symbol, timeframe, price, indicator values, your
+simulated paper position and latest backtest summary with each message. That data goes to the provider
+you chose. Real account data is never included. Turn the switch off to stop sending it.
+
+The AI can explain and suggest. It cannot place, change or cancel orders.
+
+## Trading and safety
+
+Paper trading is the default and uses simulated money. The account panel always
+labels the kind of money shown.
+
+- **Kill switch:** on by default. While armed, the trading loop only observes and
+  creates no orders. The **Trading session** panel above the account shows its state
+  and has **Arm kill switch**. If the state can't be read it says UNKNOWN; treat that
+  as a reason to check, not as safe.
+- **Disarm for paper trading:** in the same panel, type `DISARM` to confirm. This is
+  refused while live trading is enabled or a live session is running, and live
+  trading cannot be enabled until you arm the kill switch again. Each disarm is
+  recorded in Settings history.
+- **Stop session:** the same panel shows what is running and can stop it.
+- **Risk limits:** order size, position size, daily loss and drawdown limits are
+  checked before any order.
+- **Live trading:** locked unless you deliberately enable it. Real-money
+  autonomous trading remains gated; see the README's maturity gates.
+
+## Settings history
+
+**Terminal Logs** lists recent settings changes, including kill switch and risk
+limit changes with their old and new values. API keys are listed by name only;
+their values are never recorded.
+
+## Session journal
+
+**Terminal Logs** also keeps a journal of what the trading loop did and why, so
+it survives a restart. It holds the most recent 5,000 lines. Times in the journal
+and in Settings history are in UTC.
+
+## Using Astral from your phone (read-only)
+
+Your phone can view charts, the watchlist, positions, the journal and alerts, and
+arm the kill switch. It cannot trade, disarm or change settings. It works through
+Tailscale, a free private network, so nothing is opened to the internet.
+
+1. Install Tailscale on this computer and on the phone, and sign in to the same
+   account on both. Note this computer's Tailscale address (it starts with 100.).
+2. Build the web app once: in `frontend/`, run `npm run build`.
+3. Start Astral's backend from source (`python backend/main.py`), then start the
+   gateway in a second terminal:
+   `python backend/phone_gateway.py --host 100.x.y.z` (your Tailscale address).
+4. In Settings → **Phone access**, enter that address and a name, then click
+   **Pair a phone**. Open the link it shows on the phone. It is shown once.
+5. To cut a phone off, click **Revoke**. Pairing and revoking are recorded in the
+   audit log.
+
+The gateway refuses to listen anywhere except a Tailscale address or this
+computer. It does not yet work with the packaged desktop app; use the backend
+from source for now.
+
+## Backups
+
+**Settings → Backups → Back up now** saves a complete copy of the database
+(settings, strategies, trades, alerts, journal and chat history) in a `backups`
+folder next to it, shown in that panel. The newest 10 are kept. Backups never
+leave your computer; the GitHub repository is public, so data must not go there.
+API keys live in your system's credential store and are not in backups.
+
+To restore one: close Astral completely, rename the current `astral.db` (keep it
+as a fallback), copy the chosen backup next to it, rename the copy to `astral.db`,
+then start Astral.
+
+## Where your data lives
+
+Settings, strategies, trades, alerts and chat history are in a local SQLite
+database. API keys are in your operating system's credential store. Nothing is
+sent anywhere except your chosen AI provider (when you use the AI), and the
+market-data and broker services the app connects to.

@@ -1,12 +1,13 @@
 import sys
 import os
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from pydantic import BaseModel
+from typing import Optional
 
 # Add root folder to sys.path for local imports
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -15,7 +16,9 @@ if ROOT_DIR not in sys.path:
 
 from ai_engine.assistant import ai_assistant
 from ai_engine.strategy_generator import StrategyGenerator
-from database.sqlite_manager import init_db
+from ai_engine.attachments import validate_image_data_urls
+from ai_engine.workspace_context import WorkspaceContext
+from database.sqlite_manager import get_recent_chat_messages, init_db
 from indicators_api import router as indicators_router
 from data_api import router as data_router
 from research_api import router as research_router
@@ -25,11 +28,15 @@ from strategy_store_api import router as strategy_store_router
 from validation_api import router as validation_router
 from settings_api import router as settings_router
 from trading_api import router as trading_router
+from diagnostics_api import router as diagnostics_router
+from alerts_api import router as alerts_router
+from backup_api import router as backup_router
+from phone_api import router as phone_router
 
 app = FastAPI(
     title="Astral AI Backend",
     description="Backend API for the Astral AI Desktop Application",
-    version="1.0.0"
+    version="0.5.0"
 )
 
 # Ensure database is initialized on startup
@@ -82,18 +89,58 @@ app.include_router(strategy_store_router)
 app.include_router(validation_router)
 app.include_router(settings_router)
 app.include_router(trading_router)
+app.include_router(diagnostics_router)
+app.include_router(alerts_router)
+app.include_router(backup_router)
+app.include_router(phone_router)
 
 class ChatRequest(BaseModel):
     query: str
     conversation_id: str = "default"
+    # Base64 data URLs of attached images; validated before use, never stored.
+    images: list[str] = []
+    # What the user is looking at (symbol, price, indicators, latest backtest).
+    # Validated by the model; an invalid snapshot rejects the request (422).
+    context: Optional[WorkspaceContext] = None
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
     try:
-        response = ai_assistant.analyze_market_query(request.query, request.conversation_id)
+        images = validate_image_data_urls(request.images)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        response = ai_assistant.analyze_market_query(request.query, request.conversation_id, images, request.context)
         return {"response": response, "status": "success"}
     except Exception as e:
         return {"response": f"Error: {str(e)}", "status": "error"}
+
+@app.get("/api/chat/history")
+def chat_history(conversation_id: str = "default", limit: int = Query(200, ge=1, le=1000)):
+    """Saved messages of one conversation, oldest first, so the chat survives a reload."""
+    return {"conversation_id": conversation_id, "messages": get_recent_chat_messages(conversation_id, limit=limit)}
+
+# Long-term AI memory: past exchanges the assistant recalls into new prompts.
+@app.get("/api/ai/memory")
+def list_ai_memory(limit: int = Query(200, ge=1, le=1000)):
+    memory = ai_assistant.memory_manager
+    return {"total": memory.count_memories(), "items": memory.list_memories(limit)}
+
+@app.delete("/api/ai/memory/{memory_id}")
+def forget_ai_memory(memory_id: str):
+    if not ai_assistant.memory_manager.forget(memory_id):
+        raise HTTPException(status_code=404, detail="That memory no longer exists.")
+    return {"status": "forgotten"}
+
+class ForgetAllRequest(BaseModel):
+    confirm: bool = False
+
+@app.post("/api/ai/memory/forget-all")
+def forget_all_ai_memory(request: ForgetAllRequest):
+    # Cannot be undone, so the request must say so explicitly.
+    if not request.confirm:
+        raise HTTPException(status_code=400, detail="Confirm to forget all AI memory.")
+    return {"forgotten": ai_assistant.memory_manager.forget_all()}
 
 class StrategyRequest(BaseModel):
     prompt: str

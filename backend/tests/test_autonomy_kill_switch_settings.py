@@ -96,3 +96,36 @@ def test_kill_switch_disarm_and_rearm_persist_without_field_shift(tmp_path, monk
     assert rearmed["risk_max_drawdown_pct"] == 8.0
     assert rearmed["binance_environment"] == "testnet"
     assert rearmed["bitget_environment"] == "demo"
+
+
+def _status(monkeypatch, read_settings):
+    import os
+    import sys
+    from fastapi.testclient import TestClient
+
+    # main runs as a script from backend/, so its routers load as top-level modules.
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import main
+    import trading_api
+
+    monkeypatch.setattr(trading_api, "get_settings", read_settings)
+    response = TestClient(main.app, base_url="http://127.0.0.1:8000").get("/api/trading/status")
+    assert response.status_code == 200
+    return response.json()["autonomy_kill_switch"]
+
+
+def test_status_reports_the_persisted_kill_switch(monkeypatch):
+    assert _status(monkeypatch, lambda: {"autonomy_kill_switch": True}) is True
+    assert _status(monkeypatch, lambda: {"autonomy_kill_switch": False}) is False
+
+
+def test_status_reads_a_missing_setting_as_armed(monkeypatch):
+    assert _status(monkeypatch, lambda: {}) is True
+    assert _status(monkeypatch, lambda: None) is True
+
+
+def test_status_reports_unknown_when_settings_cannot_be_read(monkeypatch):
+    def broken():
+        raise OSError("database is locked")
+
+    assert _status(monkeypatch, broken) is None

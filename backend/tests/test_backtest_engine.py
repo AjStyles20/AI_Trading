@@ -314,3 +314,28 @@ def test_risk_exit_starts_same_fill_based_cooldown():
     assert sells[0]["timestamp"] == idx[3]
     assert sells[0]["exit_reason"] == "risk"
     assert [trade["timestamp"] for trade in buys] == [idx[1], idx[6]]
+
+
+def test_long_backtest_is_fast_enough_for_optimizer_sweeps():
+    # Optimizer sweeps run thousands of backtests. Per-row pandas indexing made
+    # one 20k-row run take seconds; reading columns once keeps it well under that.
+    import time
+
+    rows = 20_000
+    closes = [100.0 + (i % 50) for i in range(rows)]
+    df = pd.DataFrame(
+        {
+            "open": closes,
+            "close": closes,
+            "signal": [1 if i % 50 == 0 else (-1 if i % 50 == 25 else 0) for i in range(rows)],
+            "stop_loss_pct": 2.0,
+            "take_profit_pct": 4.0,
+            "cooldown_bars": 1,
+            "position_size_pct": 50.0,
+        },
+        index=pd.date_range("2024-01-01", periods=rows, freq="h"),
+    )
+    started = time.perf_counter()
+    result = BacktestEngine().run_backtest(df, initial_balance=10000, fee_pct=0.1, slippage_pct=0.05)
+    assert time.perf_counter() - started < 2.0
+    assert result["closed_round_trips"] > 0

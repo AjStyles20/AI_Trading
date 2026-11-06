@@ -52,7 +52,9 @@ def init_db():
         binance_environment TEXT DEFAULT 'live',
         bitget_environment TEXT DEFAULT 'live',
         ai_provider TEXT DEFAULT 'openai',
-        ai_model TEXT DEFAULT ''
+        ai_model TEXT DEFAULT '',
+        ai_vision_model TEXT DEFAULT '',
+        bitget_account_type TEXT DEFAULT 'classic'
     )
     ''')
 
@@ -68,6 +70,8 @@ def init_db():
         "bitget_environment": "ALTER TABLE settings ADD COLUMN bitget_environment TEXT DEFAULT 'live'",
         "ai_provider": "ALTER TABLE settings ADD COLUMN ai_provider TEXT DEFAULT 'openai'",
         "ai_model": "ALTER TABLE settings ADD COLUMN ai_model TEXT DEFAULT ''",
+        "ai_vision_model": "ALTER TABLE settings ADD COLUMN ai_vision_model TEXT DEFAULT ''",
+        "bitget_account_type": "ALTER TABLE settings ADD COLUMN bitget_account_type TEXT DEFAULT 'classic'",
     }
     for column, statement in settings_column_migrations.items():
         if column not in existing_settings_columns:
@@ -188,6 +192,56 @@ def init_db():
     )
     ''')
 
+    # Audit log of user-visible configuration changes. Never holds credential values.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        category TEXT NOT NULL,
+        action TEXT NOT NULL,
+        details TEXT DEFAULT '{}'
+    )
+    ''')
+
+    # Phones paired with the read-only phone gateway. Only a hash of each token
+    # is stored; the token itself is shown once, when pairing.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS phone_devices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_seen_at TIMESTAMP,
+        revoked_at TIMESTAMP
+    )
+    ''')
+
+    # Session journal: what the trading loop did and why, kept across restarts.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS trading_journal (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        session_id TEXT,
+        message TEXT NOT NULL
+    )
+    ''')
+
+    # Price alerts. Checked by the desktop app while it is open; a triggered
+    # alert keeps its trigger price and time as a record.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS price_alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        asset_type TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        price REAL NOT NULL,
+        note TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        triggered_at TIMESTAMP,
+        triggered_price REAL
+    )
+    ''')
+
     existing_trade_columns = {
         row[1] for row in cursor.execute("PRAGMA table_info(trades)").fetchall()
     }
@@ -223,7 +277,7 @@ def get_settings():
             SELECT id, api_keys, theme, paper_trading,
                    risk_live_trading_enabled, autonomy_kill_switch, risk_max_order_notional, risk_max_position_pct,
                    risk_max_daily_loss_pct, risk_max_drawdown_pct,
-                   binance_environment, bitget_environment, ai_provider, ai_model
+                   binance_environment, bitget_environment, ai_provider, ai_model, ai_vision_model, bitget_account_type
             FROM settings WHERE id=1
         """)
         row = cursor.fetchone()
@@ -244,6 +298,8 @@ def get_settings():
                 "bitget_environment": row[11] or "live",
                 "ai_provider": row[12] or "openai",
                 "ai_model": row[13] or "",
+                "ai_vision_model": row[14] or "",
+                "bitget_account_type": row[15] or "classic",
             }
     except sqlite3.Error:
         return None
@@ -303,6 +359,8 @@ def update_settings(
     bitget_environment: str = None,
     ai_provider: str = None,
     ai_model: str = None,
+    ai_vision_model: str = None,
+    bitget_account_type: str = None,
 ):
     current = get_settings()
     if not current:
@@ -340,6 +398,12 @@ def update_settings(
     next_ai_model = ai_model.strip() if ai_model is not None else current["ai_model"]
     if len(next_ai_model) > 128 or any(ord(char) < 32 for char in next_ai_model):
         raise ValueError("Invalid AI model name")
+    next_ai_vision_model = ai_vision_model.strip() if ai_vision_model is not None else current["ai_vision_model"]
+    if len(next_ai_vision_model) > 128 or any(ord(char) < 32 for char in next_ai_vision_model):
+        raise ValueError("Invalid AI vision model name")
+    next_bitget_account_type = bitget_account_type if bitget_account_type is not None else current["bitget_account_type"]
+    if next_bitget_account_type not in {"classic", "unified"}:
+        raise ValueError("bitget_account_type must be 'classic' or 'unified'")
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -348,7 +412,7 @@ def update_settings(
         SET api_keys = ?, theme = ?, paper_trading = ?,
             risk_live_trading_enabled = ?, autonomy_kill_switch = ?, risk_max_order_notional = ?, risk_max_position_pct = ?,
             risk_max_daily_loss_pct = ?, risk_max_drawdown_pct = ?,
-            binance_environment = ?, bitget_environment = ?, ai_provider = ?, ai_model = ?
+            binance_environment = ?, bitget_environment = ?, ai_provider = ?, ai_model = ?, ai_vision_model = ?, bitget_account_type = ?
         WHERE id = 1
     """, (
         json.dumps(_preserve_legacy_api_keys(api_keys, current["api_keys"])),
@@ -364,6 +428,8 @@ def update_settings(
         next_bitget_environment,
         next_ai_provider,
         next_ai_model,
+        next_ai_vision_model,
+        next_bitget_account_type,
     ))
     conn.commit()
     conn.close()
@@ -989,3 +1055,246 @@ def duplicate_strategy(strategy_id: int):
 if __name__ == "__main__":
     init_db()
     print("SQLite database initialized successfully.")
+
+
+ALERT_COLUMNS = ("id", "symbol", "asset_type", "direction", "price", "note", "created_at", "triggered_at", "triggered_price")
+
+
+def create_price_alert(symbol: str, asset_type: str, direction: str, price: float, note: str = "") -> dict:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute(
+            "INSERT INTO price_alerts (symbol, asset_type, direction, price, note) VALUES (?, ?, ?, ?, ?)",
+            (symbol, asset_type, direction, price, note),
+        )
+        conn.commit()
+        return get_price_alert(cursor.lastrowid)
+    finally:
+        conn.close()
+
+
+def get_price_alert(alert_id: int) -> dict | None:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        row = conn.execute(f"SELECT {', '.join(ALERT_COLUMNS)} FROM price_alerts WHERE id = ?", (alert_id,)).fetchone()
+        return dict(zip(ALERT_COLUMNS, row)) if row else None
+    finally:
+        conn.close()
+
+
+def get_price_alerts() -> list[dict]:
+    """Active alerts first (oldest first), then triggered ones (most recent first)."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute(
+            f"SELECT {', '.join(ALERT_COLUMNS)} FROM price_alerts "
+            "ORDER BY triggered_at IS NOT NULL, CASE WHEN triggered_at IS NULL THEN id END, triggered_at DESC, id DESC"
+        ).fetchall()
+        return [dict(zip(ALERT_COLUMNS, row)) for row in rows]
+    finally:
+        conn.close()
+
+
+def trigger_price_alert(alert_id: int, price: float) -> dict | None:
+    """Mark an alert triggered once. A second call leaves the first record unchanged."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "UPDATE price_alerts SET triggered_at = CURRENT_TIMESTAMP, triggered_price = ? "
+            "WHERE id = ? AND triggered_at IS NULL",
+            (price, alert_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return get_price_alert(alert_id)
+
+
+def delete_price_alert(alert_id: int) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute("DELETE FROM price_alerts WHERE id = ?", (alert_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def record_audit_event(category: str, action: str, details: dict | None = None) -> None:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "INSERT INTO audit_log (category, action, details) VALUES (?, ?, ?)",
+            (category, action, json.dumps(details or {})),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_audit_events(limit: int = 100) -> list[dict]:
+    """Most recent audit events first."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute(
+            "SELECT id, created_at, category, action, details FROM audit_log ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {"id": row[0], "created_at": row[1], "category": row[2], "action": row[3], "details": json.loads(row[4] or "{}")}
+        for row in rows
+    ]
+
+
+JOURNAL_MAX_ROWS = 5000
+
+
+def record_journal_entry(session_id: str | None, message: str) -> None:
+    # A short timeout: the trading loop writes this and must not wait on a busy database.
+    conn = sqlite3.connect(DB_PATH, timeout=1)
+    try:
+        cursor = conn.execute(
+            "INSERT INTO trading_journal (session_id, message) VALUES (?, ?)",
+            (session_id, message),
+        )
+        conn.execute("DELETE FROM trading_journal WHERE id <= ?", (cursor.lastrowid - JOURNAL_MAX_ROWS,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_journal_entries(limit: int = 200) -> list[dict]:
+    """Most recent journal entries first."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute(
+            "SELECT id, created_at, session_id, message FROM trading_journal ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [{"id": row[0], "created_at": row[1], "session_id": row[2], "message": row[3]} for row in rows]
+
+
+BACKUP_KEEP = 10
+
+
+def backup_dir() -> str:
+    """Backups live next to the database, on this computer only."""
+    return os.path.join(os.path.dirname(DB_PATH), "backups")
+
+
+def create_backup(keep: int | None = None) -> dict:
+    """Write a consistent snapshot of the database, then keep only the newest ones.
+
+    Uses SQLite's online backup, so the copy is complete even if the app is
+    writing at the same time. A plain file copy could capture a half-written page.
+    """
+    keep = BACKUP_KEEP if keep is None else keep
+    folder = backup_dir()
+    os.makedirs(folder, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    name = f"astral-{stamp}.db"
+    counter = 1
+    while os.path.exists(os.path.join(folder, name)):
+        counter += 1
+        name = f"astral-{stamp}-{counter}.db"
+    target = os.path.join(folder, name)
+    source = sqlite3.connect(DB_PATH)
+    destination = sqlite3.connect(target)
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
+    for old in list_backups()[keep:]:
+        os.remove(os.path.join(folder, old["name"]))
+    return next(item for item in list_backups() if item["name"] == name)
+
+
+def list_backups() -> list[dict]:
+    """Backups, newest first."""
+    folder = backup_dir()
+    if not os.path.isdir(folder):
+        return []
+    items = []
+    for name in os.listdir(folder):
+        if name.startswith("astral-") and name.endswith(".db"):
+            stat = os.stat(os.path.join(folder, name))
+            items.append({"name": name, "size_bytes": stat.st_size, "modified_ns": stat.st_mtime_ns})
+    # Nanosecond times order backups made within the same second; names would not
+    # ("astral-T-2.db" sorts before "astral-T.db").
+    items.sort(key=lambda item: item["modified_ns"], reverse=True)
+    for item in items:
+        item["created"] = datetime.fromtimestamp(item.pop("modified_ns") / 1e9).strftime("%Y-%m-%d %H:%M:%S")
+    return items
+
+
+def _hash_phone_token(token: str) -> str:
+    import hashlib
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_phone_device(name: str) -> dict:
+    """Pair a phone. Returns its record plus the token, which is never stored or shown again."""
+    import secrets
+    token = secrets.token_urlsafe(32)
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute(
+            "INSERT INTO phone_devices (name, token_hash) VALUES (?, ?)",
+            (name, _hash_phone_token(token)),
+        )
+        conn.commit()
+        device_id = cursor.lastrowid
+    finally:
+        conn.close()
+    return {**next(d for d in list_phone_devices() if d["id"] == device_id), "token": token}
+
+
+def list_phone_devices() -> list[dict]:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute(
+            "SELECT id, name, created_at, last_seen_at, revoked_at FROM phone_devices ORDER BY id DESC"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {"id": r[0], "name": r[1], "created_at": r[2], "last_seen_at": r[3], "revoked_at": r[4]}
+        for r in rows
+    ]
+
+
+def revoke_phone_device(device_id: int) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute(
+            "UPDATE phone_devices SET revoked_at = CURRENT_TIMESTAMP WHERE id = ? AND revoked_at IS NULL",
+            (device_id,),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def verify_phone_token(token: str | None) -> dict | None:
+    """The paired, unrevoked device a token belongs to, or None. Records when it was last seen."""
+    if not token or len(token) > 200:
+        return None
+    conn = sqlite3.connect(DB_PATH, timeout=2)
+    try:
+        row = conn.execute(
+            "SELECT id, name FROM phone_devices WHERE token_hash = ? AND revoked_at IS NULL",
+            (_hash_phone_token(token),),
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute("UPDATE phone_devices SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?", (row[0],))
+        conn.commit()
+        return {"id": row[0], "name": row[1]}
+    finally:
+        conn.close()

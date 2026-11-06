@@ -1,19 +1,44 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 import sys, os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.data_service import MarketDataError, market_data
+from backend.history_cache import HistoryCache
 
 router = APIRouter()
+# Shared by all open copies of the app; see backend/history_cache.py.
+history_cache = HistoryCache()
 
 class DataRequest(BaseModel):
     symbol: str
     asset_type: str = "stock" # "stock" or "crypto"
     interval: str = "1d"
     period: Optional[str] = None
-    limit: int = 500
+    limit: int = Field(500, ge=1, le=5000)
+
+@router.get("/api/market/quote/{asset_type}/{symbol}")
+def get_quote(asset_type: str, symbol: str):
+    """Latest price and change since the previous daily close, for the watchlist."""
+    try:
+        if asset_type not in {"stock", "crypto"}:
+            raise ValueError("asset_type must be stock or crypto")
+        key = ("quote", asset_type, symbol.strip().upper())
+        # Shares the chart's cache so polling every watchlist symbol can't
+        # trigger Yahoo rate-limiting; the 1h window reuses a quote for a minute.
+        closes = history_cache.get_or_fetch(
+            key, "1h", lambda: market_data.get_daily_history(symbol, asset_type)
+        )["close"]
+        price = float(closes.iloc[-1])
+        previous = float(closes.iloc[-2]) if len(closes) >= 2 else None
+        change_pct = (price - previous) / previous * 100 if previous else None
+        return {"symbol": symbol, "price": price, "previous_close": previous, "change_pct": change_pct}
+    except MarketDataError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 @router.get("/api/market/price/{asset_type}/{symbol}")
 def get_price(asset_type: str, symbol: str):
@@ -30,12 +55,21 @@ def get_history(request: DataRequest):
     try:
         print(f"DEBUG: history request: {request}")
         if request.asset_type == "stock":
-            df = market_data.get_stock_data(request.symbol, request.interval, request.period)
+            fetch = lambda: market_data.get_stock_data(request.symbol, request.interval, request.period)  # noqa: E731
         elif request.asset_type == "crypto":
-            df = market_data.get_crypto_data(request.symbol, request.interval, request.limit)
+            fetch = lambda: market_data.get_crypto_data(request.symbol, request.interval, request.limit)  # noqa: E731
         else:
             raise ValueError("asset_type must be stock or crypto")
-        
+        # The limit is applied below, per request, so it is not part of the key.
+        key = (request.asset_type, request.symbol.strip().upper(), request.interval, request.period)
+        df = history_cache.get_or_fetch(key, request.interval, fetch)
+
+        # The provider returns a whole period (7 days of 1m candles is ~10k
+        # rows, ~1.5 MB of JSON). Return only the most recent `limit` candles;
+        # the chart polls this endpoint. The limit is applied here rather than in
+        # the data service so the trading loop's history is unchanged.
+        df = df.tail(request.limit)
+
         # Pandas 3 may store the index in seconds, while earlier versions
         # commonly use nanoseconds. Convert the unit explicitly before exposing
         # Unix milliseconds to the frontend.

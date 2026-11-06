@@ -12,6 +12,14 @@ import data_api
 
 client = TestClient(app, base_url="http://127.0.0.1:8000")
 
+
+@pytest.fixture(autouse=True)
+def _fresh_history_cache():
+    # Chart history is cached between requests; each test supplies its own data.
+    data_api.history_cache.clear()
+    yield
+    data_api.history_cache.clear()
+
 def test_health_check():
     response = client.get("/health")
     assert response.status_code == 200
@@ -45,6 +53,36 @@ def test_market_history_crypto(monkeypatch):
     assert isinstance(data, list)
     if len(data) > 0:
         assert data[0]["timestamp"] == 1790467200000
+
+def _long_history_frame(rows):
+    return pd.DataFrame(
+        {
+            "open": [100.0 + i for i in range(rows)],
+            "high": [102.0 + i for i in range(rows)],
+            "low": [99.0 + i for i in range(rows)],
+            "close": [101.0 + i for i in range(rows)],
+            "volume": [5.0] * rows,
+        },
+        index=pd.date_range("2026-09-27", periods=rows, freq="1min", tz="UTC", name="timestamp"),
+    )
+
+
+@pytest.mark.parametrize("asset_type, provider", [("crypto", "get_crypto_data"), ("stock", "get_stock_data")])
+def test_market_history_returns_only_the_latest_limit_candles(monkeypatch, asset_type, provider):
+    monkeypatch.setattr(data_api.market_data, provider, lambda *args, **kwargs: _long_history_frame(50))
+    payload = {"symbol": "BTC/USDT", "asset_type": asset_type, "interval": "1m", "limit": 3}
+    response = client.post("/api/market/history", json=payload)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert [row["close"] for row in data] == [148.0, 149.0, 150.0]
+
+
+@pytest.mark.parametrize("limit", [0, -1, 5001])
+def test_market_history_rejects_out_of_range_limits(limit):
+    payload = {"symbol": "BTC/USDT", "asset_type": "crypto", "interval": "1m", "limit": limit}
+    response = client.post("/api/market/history", json=payload)
+    assert response.status_code == 422
+
 
 def test_market_history_stock(monkeypatch):
     monkeypatch.setattr(data_api.market_data, "get_stock_data", lambda *args, **kwargs: _history_frame())
@@ -83,3 +121,73 @@ def strategy(data):
     # The backtest might fail with 400 if yfinance has no data, which is acceptable handled behavior, 
     # but we just want to ensure it doesn't 500 crash.
     assert response.status_code in [200, 400]
+
+
+def test_crypto_backtest_uses_the_period_the_user_chose(monkeypatch):
+    # Crypto research used to ignore the chosen period and always fetch ~600 days,
+    # while the report claimed the selected one.
+    import backtest_api
+
+    seen = {}
+
+    def fake_crypto(symbol, interval, limit=500, period=None):
+        seen["period"] = period
+        closes = [100.0 + i for i in range(40)]
+        return pd.DataFrame(
+            {"open": closes, "high": closes, "low": closes, "close": closes, "volume": [1.0] * 40},
+            index=pd.date_range("2026-01-01", periods=40, freq="h"),
+        )
+
+    monkeypatch.setattr(backtest_api.market_data, "get_crypto_data", fake_crypto)
+    response = client.post("/api/backtest/run", json={
+        "symbol": "BTC/USDT",
+        "asset_type": "crypto",
+        "interval": "1h",
+        "period": "3mo",
+        "strategy_code": "def strategy(df):\n    df['signal'] = 0\n    return df\n",
+    })
+    assert response.status_code == 200, response.text
+    assert seen["period"] == "3mo"
+
+
+def _daily_closes(*closes):
+    return pd.DataFrame(
+        {"open": closes, "high": closes, "low": closes, "close": closes, "volume": [1.0] * len(closes)},
+        index=pd.date_range("2026-10-20", periods=len(closes), freq="D"),
+    )
+
+
+def test_quote_reports_price_and_change_since_previous_close(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        data_api.market_data, "get_daily_history",
+        lambda symbol, asset_type: calls.append((symbol, asset_type)) or _daily_closes(100.0, 200.0, 210.0),
+    )
+    response = client.get("/api/market/quote/stock/AAPL")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["price"] == 210.0
+    assert body["previous_close"] == 200.0
+    assert body["change_pct"] == pytest.approx(5.0)
+
+    # A second watchlist poll within the window reuses the cached quote.
+    client.get("/api/market/quote/stock/aapl")
+    assert calls == [("AAPL", "stock")]
+
+
+def test_quote_with_one_candle_has_no_change(monkeypatch):
+    monkeypatch.setattr(data_api.market_data, "get_daily_history", lambda *args: _daily_closes(50.0))
+    body = client.get("/api/market/quote/crypto/BTC-USDT").json()
+    assert body["price"] == 50.0
+    assert body["change_pct"] is None
+
+
+def test_quote_reports_unknown_symbols_and_bad_asset_types(monkeypatch):
+    from core.data_service import MarketDataError
+
+    def no_data(*args):
+        raise MarketDataError("No market data returned for ZZZZ.")
+
+    monkeypatch.setattr(data_api.market_data, "get_daily_history", no_data)
+    assert client.get("/api/market/quote/stock/ZZZZ").status_code == 503
+    assert client.get("/api/market/quote/forex/EURUSD").status_code == 400

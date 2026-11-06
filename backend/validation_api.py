@@ -26,7 +26,7 @@ def validate_strategy(request: ValidationRequest):
         if request.asset_type == "stock":
             df = market_data.get_stock_data(request.symbol, request.interval, request.period)
         else:
-            df = market_data.get_crypto_data(request.symbol, request.interval)
+            df = market_data.get_crypto_data(request.symbol, request.interval, period=request.period)
 
         if df.empty:
             raise ValueError("No market data available for validation.")
@@ -58,7 +58,7 @@ def research_evaluate_strategy(request: ResearchEvaluationRequest):
         if request.asset_type == "stock":
             df = market_data.get_stock_data(request.symbol, request.interval, request.period)
         else:
-            df = market_data.get_crypto_data(request.symbol, request.interval)
+            df = market_data.get_crypto_data(request.symbol, request.interval, period=request.period)
         if df.empty:
             raise ValueError("No market data available for research evaluation.")
         df.columns = [column.lower() for column in df.columns]
@@ -99,7 +99,7 @@ def walk_forward_strategy(request: WalkForwardRequest):
         if request.asset_type == "stock":
             df = market_data.get_stock_data(request.symbol, request.interval, request.period)
         else:
-            df = market_data.get_crypto_data(request.symbol, request.interval)
+            df = market_data.get_crypto_data(request.symbol, request.interval, period=request.period)
         if df.empty:
             raise ValueError("No market data available for walk-forward evaluation.")
         df.columns = [column.lower() for column in df.columns]

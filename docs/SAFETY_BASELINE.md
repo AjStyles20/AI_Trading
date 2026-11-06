@@ -118,6 +118,16 @@ When armed:
 
 This is an emergency pause, not an automatic flatten-position instruction.
 
+Disarming from the desktop app (`POST /api/trading/kill-switch/disarm`) requires the
+typed confirmation `DISARM` and is limited to paper trading:
+
+- it is refused while `risk_live_trading_enabled` is on or a live session is running;
+- while the switch is disarmed, the settings API refuses to enable live trading
+  unless the same request arms the switch;
+- each disarm is recorded in the audit log.
+
+Arming needs no confirmation.
+
 ### Broker capability readiness
 
 Required autonomous capabilities are:

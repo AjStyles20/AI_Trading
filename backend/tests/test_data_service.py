@@ -76,3 +76,11 @@ def test_freshness_rejects_unsupported_asset_type():
         market_data.assert_fresh(
             frame, "1m", now=pd.Timestamp("2026-09-26T14:00:30Z"), asset_type="forex"
         )
+
+
+@pytest.mark.parametrize("period, expected", [("6mo", "6mo"), (None, "600d")])
+def test_crypto_data_uses_requested_period_or_the_interval_default(period, expected):
+    with patch("core.data_service.yf.Ticker") as mock_ticker:
+        mock_ticker.return_value.history.return_value = _frame_at("2026-09-26T10:00:00Z")
+        market_data.get_crypto_data("BTC/USDT", "1h", period=period)
+        assert mock_ticker.return_value.history.call_args.kwargs["period"] == expected

@@ -65,15 +65,25 @@ class BacktestEngine:
 
         execution_delay_bars = int(execution_delay_bars)
 
+        # Read each column once: per-row pandas indexing dominated run time and
+        # made optimizer sweeps (thousands of backtests) take hours.
+        price_column = 'open' if execution_delay_bars > 0 and 'open' in df.columns else 'close'
+        signal_values = df['signal'].tolist()
+        price_values = df[price_column].tolist()
+        close_values = df['close'].tolist()
+        size_values = df['position_size_pct'].tolist() if 'position_size_pct' in df.columns else None
+        cooldown_values = df['cooldown_bars'].tolist() if 'cooldown_bars' in df.columns else None
+        stop_values = df['stop_loss_pct'].tolist() if 'stop_loss_pct' in df.columns else None
+        take_values = df['take_profit_pct'].tolist() if 'take_profit_pct' in df.columns else None
+
         for index in range(len(df)):
             signal_index = index - execution_delay_bars
-            signal = df['signal'].iloc[signal_index] if signal_index >= 0 else 0
-            price_column = 'open' if execution_delay_bars > 0 and 'open' in df.columns else 'close'
-            price = float(df[price_column].iloc[index])
+            signal = signal_values[signal_index] if signal_index >= 0 else 0
+            price = float(price_values[index])
             position_size_pct = 100.0
-            if 'position_size_pct' in df.columns:
+            if size_values is not None:
                 try:
-                    position_size_pct = float(df['position_size_pct'].iloc[index])
+                    position_size_pct = float(size_values[index])
                 except Exception:
                     position_size_pct = 100.0
             allocation_rate = min(max(position_size_pct, 0.0), 100.0) / 100.0
@@ -119,8 +129,8 @@ class BacktestEngine:
                 last_buy_value = None
                 entry_fill_price = None
                 cooldown_bars = 0
-                if 'cooldown_bars' in df.columns:
-                    raw_cooldown = df['cooldown_bars'].iloc[index]
+                if cooldown_values is not None:
+                    raw_cooldown = cooldown_values[index]
                     try:
                         cooldown_bars = int(raw_cooldown)
                     except (TypeError, ValueError):
@@ -134,15 +144,15 @@ class BacktestEngine:
                 cooldown_remaining -= 1
 
             if position > 0 and entry_fill_price is not None:
-                stop_pct = float(df['stop_loss_pct'].iloc[index]) if 'stop_loss_pct' in df.columns else 0.0
-                take_pct = float(df['take_profit_pct'].iloc[index]) if 'take_profit_pct' in df.columns else 0.0
-                current_close = float(df['close'].iloc[index])
+                stop_pct = float(stop_values[index]) if stop_values is not None else 0.0
+                take_pct = float(take_values[index]) if take_values is not None else 0.0
+                current_close = float(close_values[index])
                 stop_hit = stop_pct > 0 and current_close <= entry_fill_price * (1 - stop_pct / 100)
                 take_hit = take_pct > 0 and current_close >= entry_fill_price * (1 + take_pct / 100)
                 pending_risk_exit = stop_hit or take_hit
 
             if position > 0:
-                mark_price = float(df['close'].iloc[index])
+                mark_price = float(close_values[index])
                 liquidation_price = mark_price * (1 - slippage_rate)
                 liquidation_gross = position * liquidation_price
                 liquidation_fee_mark = liquidation_gross * fee_rate

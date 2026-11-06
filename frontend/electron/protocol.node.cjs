@@ -1,17 +1,24 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { createProtocolHandler } = require('./protocol.cjs');
 
 test('serves only bundled files under the desktop origin', async () => {
   const fetched = [];
+  // Platform-native absolute path: on Windows this gains the current drive letter.
+  const distDir = path.resolve('/app/dist');
   const handler = createProtocolHandler({
-    distDir: '/app/dist',
+    distDir,
     net: { fetch: async (url) => { fetched.push(url); return new Response('ok'); } },
   });
 
   assert.equal((await handler({ url: 'astral://app/' })).status, 200);
   assert.equal((await handler({ url: 'astral://app/assets/main.js' })).status, 200);
-  assert.deepEqual(fetched, ['file:///app/dist/index.html', 'file:///app/dist/assets/main.js']);
+  assert.deepEqual(fetched, [
+    pathToFileURL(path.join(distDir, 'index.html')).href,
+    pathToFileURL(path.join(distDir, 'assets', 'main.js')).href,
+  ]);
   assert.equal((await handler({ url: 'astral://other/assets/main.js' })).status, 404);
   assert.equal((await handler({ url: 'astral://app/%2fetc/passwd' })).status, 400);
   assert.equal(fetched.length, 2);

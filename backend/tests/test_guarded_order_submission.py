@@ -180,3 +180,25 @@ def test_broker_quote_fails_closed_without_valid_price():
 
     with pytest.raises(ValueError, match="no valid execution reference"):
         quote.execution_reference("BUY")
+
+
+@pytest.mark.parametrize("limit_price, match", [
+    # 2 x 100 sits exactly at the 200 limit; a fill at the 100.5 cap would be 201.
+    (100.5, "RISK BLOCKED BROKER-NORMALIZED"),
+    (float("nan"), "limit price must be finite"),
+    (0.0, "limit price must be finite"),
+])
+def test_guarded_submission_prices_capped_buy_risk_at_the_limit(monkeypatch, limit_price, match):
+    item = order()
+    broker = SimpleNamespace(
+        validate_order=lambda *args, **kwargs: {"ok": True, "normalized_qty": 2.0, "limit_price": limit_price},
+        execute_order=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not execute")),
+    )
+    monkeypatch.setattr(trading_api, "get_settings", lambda: {"autonomy_kill_switch": False})
+    monkeypatch.setattr(trading_api, "record_trade", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not persist")))
+    with pytest.raises(ValueError, match=match):
+        trading_api.submit_guarded_order(
+            broker=broker, order=item, settings={"risk_max_order_notional": 200},
+            execution_mode="paper", broker_id="paper", account_equity=1000.0,
+            current_position_qty=0.0, day_start_equity=1000.0, peak_equity=1000.0,
+        )

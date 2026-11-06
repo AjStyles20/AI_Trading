@@ -1,0 +1,5 @@
+# Test-only dependencies. Edit this file, then run scripts/lock_backend.sh to
+# regenerate requirements-test.txt (constrained to the runtime lock).
+pytest==8.1.1
+httpx==0.27.0
+pytest-asyncio==0.23.6
